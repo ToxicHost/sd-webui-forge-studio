@@ -1,0 +1,13 @@
+repository=https://github.com/Haoming02/sd-webui-forge-classic.git
+branch=neo
+commit=97ff3a4024be2f0d5316f16e868e5ef822768872
+commit_date=2026-07-23T14:06:00+08:00
+synced=2026-07-23
+distribution_repository=https://github.com/ToxicHost/sd-webui-forge-studio
+baseline_tag=neo-baseline-2026-07-23
+current_work_branch=docs/project-bootstrap
+neo_upstream_left_right=0 0
+working_tree_at_phase_0_start=clean
+studio_source_version=4.10.0-public-beta
+studio_source_commit=b316a4d87abd69837cd723403a7a41e22f97482d
+distribution_version=0.0.0-planning
