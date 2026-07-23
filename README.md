@@ -1,5 +1,11 @@
 <h1 align="center">Stable Diffusion WebUI Forge - Neo</h1>
 
+> [!NOTE]
+> This branch contains the Phase 0 project foundation for an independent Forge
+> Studio distribution based on Forge Neo. Begin with
+> [`00_START_HERE.md`](00_START_HERE.md). The planning scaffold does not import
+> the Studio implementation or change generation behavior.
+
 <p align="center"><sup>
 [ <b>Neo</b> | <a href="https://github.com/Haoming02/sd-webui-forge-classic/tree/classic#stable-diffusion-webui-forge---classic">Classic</a> ]
 </sup></p>

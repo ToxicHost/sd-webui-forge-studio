@@ -1,0 +1,44 @@
+name: Performance regression
+description: Report a measured performance regression
+title: "[Perf] "
+labels: ["performance", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Performance claims require same-session A/B runs with fixed settings."
+  - type: input
+    id: version
+    attributes:
+      label: Distribution version and upstream commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and launch arguments
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Fixed generation settings
+    validations:
+      required: true
+  - type: textarea
+    id: runs
+    attributes:
+      label: A/B run order and all results
+    validations:
+      required: true
+  - type: textarea
+    id: traces
+    attributes:
+      label: Trace IDs and raw logs
+    validations:
+      required: true
+  - type: textarea
+    id: correctness
+    attributes:
+      label: Output correctness comparison
+    validations:
+      required: true
