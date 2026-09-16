@@ -1,0 +1,6 @@
+# Keep the pinned Forge Studio frontend byte-stable across Windows checkouts.
+forge_studio/frontend/** text eol=lf
+forge_studio/frontend/** whitespace=-trailing-space
+forge_studio/frontend/fonts/OFL.txt -text
+forge_studio/frontend/**/*.png -text
+forge_studio/frontend/**/*.ttf -text

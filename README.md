@@ -1,4 +1,70 @@
+# Studio Standalone
+
+A standalone, locally served image-generation application built on Forge Neo,
+with Studio's Canvas, model selection, queue and Gallery.
+
+This checkout is a tester candidate, not a certified public release. Some
+inherited extension/Neo features are not wired into Standalone.
+
+- [Install and update from GitHub (Windows/NVIDIA)](docs/studio/GIT_INSTALL.md)
+- [Optional portable Windows/NVIDIA package and build instructions](docs/studio/PORTABLE_RUNTIME.md)
+- [ZIP tester guide and shared testing notes](docs/studio/FRIENDS_ALPHA_TESTER_GUIDE.md)
+- [Current features and limitations](docs/studio/TESTER_FEATURE_STATUS.md)
+- [Release notes](docs/studio/FRIENDS_ALPHA_RELEASE_NOTES.md)
+- [Preparation and validation](docs/studio/RELEASE_PREPARATION_REVIEW.md)
+- [License](LICENSE) and [asset provenance](docs/studio/BUNDLED_MODEL_ASSETS.md)
+
+The initial target is Windows with an NVIDIA GPU. Install Git and Python 3.13,
+then clone the candidate branch and run its launcher:
+
+```powershell
+git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Studio-Standalone
+cd Studio-Standalone
+.\Start-Studio.bat
+```
+
+First setup creates the local environment and downloads required libraries and
+six hash-verified auxiliary assets. Later launches reuse them. Close Studio and
+run `git pull --ff-only` inside the checkout to update source. No runtime libraries
+or weights are stored in Git. Generation checkpoints, VAE and text encoders are
+supplied by the user. See the Git installation guide for locations and requirements.
+The optional portable package includes its own Python and libraries.
+
+Release launchers are versioned in packaging/windows. The ZIP builder copies
+them to the extraction root and verifies packaging/assets.json before including
+the six auxiliary files:
+
+    python scripts/build_distributable.py
+
+Build from a clean checkout with the documented auxiliary files already present.
+The output is a ZIP, SHA-256 checksum and manifest. No personal configuration,
+developer environment or generated images are included.
+
+<details>
+<summary>Inherited Neo README — upstream reference, not Standalone feature certification</summary>
+
 <h1 align="center">Stable Diffusion WebUI Forge - Neo</h1>
+
+> [!NOTE]
+> **This branch is an independent Forge Studio distribution built on Forge Neo,
+> not a planning scaffold.** It carries a Studio-owned HTTP server, application
+> layer, job queue and headless boundary, launched by `launch_studio.py`. The
+> README below this note is Forge Neo's own and describes the Neo interface,
+> which remains available and unchanged.
+>
+> Generation behaviour is **not** modified: `backend/`, `ldm_patched/` and
+> `extensions-builtin/` are untouched. The only Neo-owned changes are two
+> patches — an import-graph decoupling and install-time platform selection —
+> catalogued in [`docs/14_PATCH_INVENTORY.md`](docs/14_PATCH_INVENTORY.md).
+>
+> Studio is an **internal alpha on one validated Windows/NVIDIA configuration**.
+> Its interface is the shipping Forge Studio frontend, so it shows controls whose
+> services do not exist yet; entry points for absent services are capability-gated
+> rather than implemented. There is no installer, no Docker acceptance, and
+> nothing has been exercised on macOS or Linux.
+>
+> Start with [`00_START_HERE.md`](00_START_HERE.md) and
+> [`CHANGELOG.md`](CHANGELOG.md).
 
 <p align="center"><sup>
 [ <b>Neo</b> | <a href="https://github.com/Haoming02/sd-webui-forge-classic/tree/classic#stable-diffusion-webui-forge---classic">Classic</a> ]
@@ -457,3 +523,6 @@ Buy me a <a href="https://ko-fi.com/Haoming">Coffee</a> ☕~
 		<img src="https://api.star-history.com/chart?repos=Haoming02/sd-webui-forge-classic&type=date&legend=top-left">
 	</a>
 </p>
+
+
+</details>

@@ -5,7 +5,19 @@ import sys
 from collections import namedtuple
 from dataclasses import dataclass
 
-import gradio as gr
+# Gradio is imported inside the four UI-construction methods that use it, not
+# here. This module is on the generation path -- `modules/processing.py:30`
+# imports `scripts`, and processing calls into the script callbacks
+# (`before_process`, `postprocess_image`, `on_mask_blend`, and the rest) for
+# every generation. A module-scope `import gradio as gr` therefore loaded 119
+# Gradio modules into any process that generates, and Studio's runtime must
+# import none.
+#
+# Of 1069 lines here, nine reference Gradio: one import, one dataclass
+# annotation (quoted below), and seven calls inside `setup_ui`,
+# `setup_ui_for_section`, `select_script` and `onload_script_visibility`. None
+# of the callbacks processing actually invokes touch it. A host that builds
+# script UI imports Gradio the moment it does so.
 
 from modules import errors, extensions, paths, script_callbacks, script_loading, scripts_postprocessing, shared, timer, util
 
@@ -52,7 +64,10 @@ class PostprocessBatchListArgs:
 
 @dataclass
 class OnComponent:
-    component: gr.blocks.Block
+    # Quoted so the annotation is not evaluated when this class body runs.
+    # It is the only import-time use of Gradio in this module; the other seven
+    # are inside UI-construction methods. See the note beside the imports.
+    component: "gr.blocks.Block"
 
 
 class Script:
@@ -702,6 +717,8 @@ class ScriptRunner:
         script.args_to = len(self.inputs)
 
     def setup_ui_for_section(self, section, scriptlist=None):
+        import gradio as gr
+
         if scriptlist is None:
             scriptlist = self.alwayson_scripts
 
@@ -723,6 +740,8 @@ class ScriptRunner:
         self.inputs = [None]
 
     def setup_ui(self):
+        import gradio as gr
+
         all_titles = [wrap_call(script.title, script.filename, "title") or script.filename for script in self.scripts]
         self.title_map = {title.lower(): script for title, script in zip(all_titles, self.scripts)}
         self.titles = [wrap_call(script.title, script.filename, "title") or f"{script.filename} [error]" for script in self.selectable_scripts]
@@ -735,6 +754,8 @@ class ScriptRunner:
         self.setup_ui_for_section(None, self.selectable_scripts)
 
         def select_script(script_index):
+            import gradio as gr
+
             if script_index is None:
                 script_index = 0
             selected_script = self.selectable_scripts[script_index - 1] if script_index > 0 else None
@@ -757,6 +778,8 @@ class ScriptRunner:
         self.script_load_ctr = 0
 
         def onload_script_visibility(params):
+            import gradio as gr
+
             title = params.get("Script", None)
             if title:
                 try:

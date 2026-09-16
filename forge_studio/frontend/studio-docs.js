@@ -1,0 +1,712 @@
+/**
+ * Forge Studio — Document System (StudioDocs)
+ * by ToxicHost & Moritz
+ *
+ * Multi-file tabs for the canvas workspace. Each document has its own
+ * layers, mask, regions, undo stack, and zoom state. Uses a multi-page
+ * pattern: working state is a window into the active document.
+ *
+ * Loaded after canvas-core.js, canvas-ui.js, app.js, and module-system.js.
+ *
+ * API:
+ *   StudioDocs.newDoc(name?)       — create a new document
+ *   StudioDocs.switchDoc(idx)      — switch to document at index
+ *   StudioDocs.closeDoc(idx)       — close document (guarded against last)
+ *   StudioDocs.renameDoc(idx,name) — rename
+ *   StudioDocs.activeIdx           — current document index
+ *   StudioDocs.count               — number of open documents
+ */
+(function () {
+"use strict";
+
+var TAG = "[Docs]";
+var _docs = [];
+var _activeIdx = 0;
+var _nextDocId = 1;
+var _stripEl = null;
+
+// ========================================================================
+// GENERATION PANEL — per-document prompt & settings
+// ========================================================================
+//
+// Delegates to window.StudioWorkflowState. Tab snapshots and Workflow
+// Profiles share that helper so the field list cannot drift between the
+// two systems. Old flat-snapshot payloads still load: applyWorkflowState
+// accepts either { settings: {...} } or a bare { paramSteps: ... } shape.
+
+function _saveGenPanel() {
+  var WF = window.StudioWorkflowState;
+  if (WF && typeof WF.captureWorkflowState === "function") {
+    return WF.captureWorkflowState({
+      includePrompt: true,
+      includeNegativePrompt: true,
+      includeDimensions: true,
+      mode: "tab",
+    });
+  }
+  return {};
+}
+
+function _loadGenPanel(gen) {
+  if (!gen) return;
+  var WF = window.StudioWorkflowState;
+  if (WF && typeof WF.applyWorkflowState === "function") {
+    WF.applyWorkflowState(gen, {
+      applyDimensions: true,
+      silent: true,
+      fromTabSwitch: true,
+    });
+  }
+}
+
+// ========================================================================
+// DOCUMENT SNAPSHOT FORMAT
+// ========================================================================
+
+function _saveDoc(idx) {
+  var S = window.StudioCore.state;
+  // BE12. Snapshotting a document is the last moment before it can be
+  // swapped out. A deposition timer that survived would write into the
+  // layer canvases of a document the owner has left.
+  if (window.StudioCore.stopAirbrush) window.StudioCore.stopAirbrush();
+  if (idx === undefined) idx = _activeIdx;
+  var doc = _docs[idx];
+  if (!doc) return;
+
+  // Generation panel
+  doc.genPanel = _saveGenPanel();
+
+  // Layer pixel data
+  doc.W = S.W;
+  doc.H = S.H;
+  doc.layers = S.layers.map(function (L) {
+    if (L.type === "adjustment") {
+      return {
+        id: L.id, name: L.name, type: L.type,
+        adjustType: L.adjustType,
+        adjustParams: JSON.parse(JSON.stringify(L.adjustParams || {})),
+        visible: L.visible, opacity: L.opacity,
+        blendMode: L.blendMode, locked: L.locked,
+        imageData: null
+      };
+    }
+    return {
+      id: L.id, name: L.name, type: L.type,
+      visible: L.visible, opacity: L.opacity,
+      blendMode: L.blendMode, locked: L.locked,
+      imageData: L.ctx.getImageData(0, 0, S.W, S.H)
+    };
+  });
+  doc.activeLayerIdx = S.activeLayerIdx;
+  doc.nextLayerId = S.nextLayerId;
+
+  // BE10. The document's paper. Copied rather than referenced: `S.paper` is
+  // replaced wholesale by the panel, but a shared object here would let one
+  // document's surface follow the owner into another tab.
+  doc.paper = Object.assign({ texture: "none", scale: 1, depth: 0 }, S.paper || {});
+
+  // Mask
+  doc.maskData = S.mask.ctx.getImageData(0, 0, S.W, S.H);
+  doc.maskVisible = S.mask.visible;
+  doc.maskOpacity = S.mask.opacity;
+
+  // Regions
+  doc.regions = S.regions.map(function (r) {
+    return {
+      id: r.id, color: r.color,
+      prompt: r.prompt || "", negPrompt: r.negPrompt || "",
+      weight: r.weight, denoise: r.denoise,
+      imageData: r.ctx.getImageData(0, 0, S.W, S.H)
+    };
+  });
+  doc.activeRegionId = S.activeRegionId;
+  doc.regionMode = S.regionMode;
+  doc._nextRegionId = S._nextRegionId;
+
+  // Canvas state
+  doc.editingMask = S.editingMask;
+  doc._userMaskMode = S._userMaskMode;
+  doc._canvasDirty = S._canvasDirty;
+
+  // Zoom/pan
+  doc.zoom = { scale: S.zoom.scale, ox: S.zoom.ox, oy: S.zoom.oy };
+
+  // Undo/redo — swap wholesale (entries contain self-contained ImageData)
+  doc.undoStack = S.undoStack;
+  doc.redoStack = S.redoStack;
+
+  // Develop (global non-destructive post-processing) — see develop.js
+  if (S.developParams) {
+    doc.developParams = JSON.parse(JSON.stringify(S.developParams));
+  }
+
+  // Document identity travels WITH the tab. Before AR4.4 the identity lived
+  // only on the live canvas, so every tab reported the same `document_id`
+  // and per-document crash recovery could not tell two tabs apart.
+  var ident = window.StudioCore.documentIdentity
+    ? window.StudioCore.documentIdentity() : null;
+  if (ident) {
+    doc.documentId = ident.document_id;
+    doc.canvasRevision = ident.revision;
+  }
+}
+
+function _loadDoc(idx) {
+  var S = window.StudioCore.state;
+  var C = window.StudioCore;
+  var doc = _docs[idx];
+  if (!doc) return;
+
+  // Re-adopt this tab's own identity. `restoreDocumentIdentity` rather than
+  // a reset: switching back to a document is REOPENING it, not creating one,
+  // and minting a new id here would orphan its recovery on disk.
+  if (doc.documentId && C.restoreDocumentIdentity) {
+    C.restoreDocumentIdentity({
+      document_id: doc.documentId, revision: doc.canvasRevision || 0 });
+  }
+
+  // Clear selection
+  C.selectionClear();
+
+  // Dimensions
+  S.W = doc.W;
+  S.H = doc.H;
+
+  // Stroke buffer — resize to match doc
+  S.stroke.canvas.width = S.W;
+  S.stroke.canvas.height = S.H;
+  S.stroke.ctx = S.stroke.canvas.getContext("2d", { colorSpace: "srgb" });
+
+  // Layers
+  S.layers = doc.layers.map(function (saved) {
+    if (saved.type === "adjustment") {
+      var migrated = (C._migrateAdjustParams
+        ? C._migrateAdjustParams(saved.adjustType, saved.adjustParams)
+        : JSON.parse(JSON.stringify(saved.adjustParams || {})));
+      return {
+        id: saved.id, name: saved.name, type: saved.type,
+        adjustType: saved.adjustType,
+        adjustParams: migrated,
+        visible: saved.visible, opacity: saved.opacity,
+        blendMode: saved.blendMode, locked: saved.locked,
+        canvas: null, ctx: null,
+        _lutCache: null
+      };
+    }
+    var c = C.createLayerCanvas();
+    var ctx = c.getContext("2d", { colorSpace: "srgb" });
+    if (saved.type === "reference") {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, S.W, S.H);
+    }
+    if (saved.imageData) ctx.putImageData(saved.imageData, 0, 0);
+    return {
+      id: saved.id, name: saved.name, type: saved.type,
+      visible: saved.visible, opacity: saved.opacity,
+      blendMode: saved.blendMode, locked: saved.locked,
+      canvas: c, ctx: ctx
+    };
+  });
+  S.activeLayerIdx = doc.activeLayerIdx;
+  S.nextLayerId = doc.nextLayerId;
+
+  // Mask
+  S.mask.canvas.width = S.W;
+  S.mask.canvas.height = S.H;
+  S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
+  if (doc.maskData) S.mask.ctx.putImageData(doc.maskData, 0, 0);
+  S.mask.visible = doc.maskVisible !== undefined ? doc.maskVisible : true;
+  S.mask.opacity = doc.maskOpacity !== undefined ? doc.maskOpacity : 0.5;
+
+  // Regions
+  S.regions = doc.regions.map(function (saved) {
+    var c = C.createLayerCanvas();
+    var ctx = c.getContext("2d", { colorSpace: "srgb" });
+    if (saved.imageData) ctx.putImageData(saved.imageData, 0, 0);
+    return {
+      id: saved.id, color: saved.color, canvas: c, ctx: ctx,
+      prompt: saved.prompt || "", negPrompt: saved.negPrompt || "",
+      weight: saved.weight, denoise: saved.denoise
+    };
+  });
+  S.activeRegionId = doc.activeRegionId;
+  S.regionMode = doc.regionMode || false;
+  S._nextRegionId = doc._nextRegionId || 1;
+
+  // BE10. Paper. Defaulted rather than left alone for documents that predate
+  // the field: leaving `S.paper` untouched would hand the previous tab's
+  // surface to a document that has never had one.
+  //
+  // BE19. THIS FALLBACK STAYS OFF, and the asymmetry is the migration policy.
+  // A document created since BE19 carries `paper` from `_createBlankDoc`, so
+  // it opens with the shipped surface. A document that LACKS the field predates
+  // it entirely and reopens looking exactly as it did. The ruling was "ship it
+  // on", not "repaint what people already made".
+  S.paper = Object.assign({ texture: "none", scale: 1, depth: 0 }, doc.paper || {});
+
+  // Canvas state
+  S.editingMask = doc.editingMask || false;
+  S._userMaskMode = doc._userMaskMode || false;
+  S._canvasDirty = doc._canvasDirty || false;
+
+  // Zoom/pan
+  if (doc.zoom) {
+    S.zoom.scale = doc.zoom.scale;
+    S.zoom.ox = doc.zoom.ox;
+    S.zoom.oy = doc.zoom.oy;
+  }
+
+  // Undo/redo
+  S.undoStack = doc.undoStack || [];
+  S.redoStack = doc.redoStack || [];
+
+  // Develop (global non-destructive post-processing). Older docs predate
+  // this field — fall back to identity defaults so they composite unchanged.
+  if (doc.developParams) {
+    S.developParams = JSON.parse(JSON.stringify(doc.developParams));
+  } else if (window.StudioDevelop && window.StudioDevelop.defaultParams) {
+    S.developParams = window.StudioDevelop.defaultParams();
+  } else {
+    S.developParams = { _version: 1, enabled: false };
+  }
+  // Caches are document-scoped — invalidate on tab switch
+  S._developLutCache = null;
+  S._developBlurCache = null;
+  S._developGrainCache = null;
+  S._developBeforeBuf = null;
+  // Composite cache too — different doc = different layers + dims
+  if (window.StudioCore && window.StudioCore.markCompositeDirty) window.StudioCore.markCompositeDirty();
+
+  // Generation panel
+  _loadGenPanel(doc.genPanel);
+
+  // Sync Develop panel UI if the module is open
+  if (window.StudioDevelop && window.StudioDevelop.syncPanel) {
+    try { window.StudioDevelop.syncPanel(); } catch (e) {}
+  }
+}
+
+// ========================================================================
+// UI REFRESH — sync all panels after document switch
+// ========================================================================
+
+function _refreshUI() {
+  var S = window.StudioCore.state;
+  var UI = window.StudioUI;
+  if (!UI) return;
+
+  // Sync dimension inputs
+  var wEl = document.getElementById("paramWidth");
+  var hEl = document.getElementById("paramHeight");
+  if (wEl) wEl.value = S.W;
+  if (hEl) hEl.value = S.H;
+  if (window.StatusBar) window.StatusBar.setDimensions(S.W, S.H);
+
+  // Resize canvas element and sync viewport
+  UI.syncCanvasToViewport();
+
+  // Re-render all panels
+  UI.renderLayerPanel();
+  UI.renderHistoryPanel();
+  UI.renderRegionPanel();
+
+  // Redraw composite
+  UI.redraw();
+}
+
+// ========================================================================
+// DOCUMENT OPERATIONS
+// ========================================================================
+
+function _createBlankDoc(name) {
+  var S = window.StudioCore.state;
+  var C = window.StudioCore;
+  return {
+    id: _nextDocId++,
+    name: name || "Untitled",
+    // Its own identity from birth, so recovery for this tab is distinct from
+    // every other tab's from the first stroke.
+    documentId: (C && C.newDocumentId) ? C.newDocumentId() : "",
+    canvasRevision: 0,
+    W: S.W, H: S.H,
+    layers: [
+      {
+        id: 0, name: "Background", type: "reference",
+        visible: true, opacity: 1, blendMode: "source-over", locked: false,
+        imageData: null // will be filled white on restore
+      },
+      {
+        id: 1, name: "Layer 1", type: "paint",
+        visible: true, opacity: 1, blendMode: "source-over", locked: false,
+        imageData: null
+      }
+    ],
+    activeLayerIdx: 1,
+    nextLayerId: 2,
+    // BE19. THE NEW DOCUMENT CARRIES THE SHIPPED SURFACE, EXPLICITLY.
+    //
+    // Without this line `doc.paper` is undefined, `_loadDoc` falls back to its
+    // own literal, and the state default in canvas-core.js reaches NOTHING --
+    // which is exactly how BE10's whole paper package came to touch zero
+    // pixels. Setting it here is also what makes the migration decidable: a
+    // document that HAS the field gets what it was given, and a document that
+    // lacks it predates the field and is left alone by `_loadDoc`.
+    paper: (C && C.DEFAULT_PAPER)
+      ? Object.assign({}, C.DEFAULT_PAPER)
+      : { texture: "none", scale: 1, depth: 0 },
+    maskData: null, maskVisible: true, maskOpacity: 0.5,
+    regions: [], activeRegionId: null, regionMode: false, _nextRegionId: 1,
+    editingMask: false, _userMaskMode: false, _canvasDirty: false,
+    zoom: { scale: 1, ox: 0, oy: 0 },
+    undoStack: [], redoStack: [],
+    developParams: (window.StudioDevelop && window.StudioDevelop.defaultParams)
+      ? window.StudioDevelop.defaultParams()
+      : { _version: 1, enabled: false },
+    genPanel: (function () {
+      var gen = _saveGenPanel();
+      // Clear content-specific fields — keep settings (sampler, steps, CFG, etc.)
+      // captureWorkflowState now returns { version, settings, dynamic }; mutate
+      // the settings sub-object using stable schema keys.
+      var s = (gen && gen.settings) ? gen.settings : (gen.settings = {});
+      s.prompt = "";
+      s.negative_prompt = "";
+      s.seed = -1;
+      s.ad1_prompt = "";
+      s.ad2_prompt = "";
+      s.ad3_prompt = "";
+      return gen;
+    })()
+  };
+}
+
+function newDoc(name) {
+  // Save current, then capture it BEFORE switching away. `scheduleCapture`
+  // would be wrong here: by the time its debounce fires, `_activeIdx` is the
+  // NEW document, so the outgoing one's last strokes would never be written.
+  // Same reasoning as `switchDoc` -- a background tab's revision never bumps
+  // again, so if it is not captured on the way out it is not captured at all.
+  _saveDoc(_activeIdx);
+  if (window.StudioRecovery) window.StudioRecovery.captureNow();
+
+  var doc = _createBlankDoc(name || ("Untitled " + _nextDocId));
+  _docs.push(doc);
+  var newIdx = _docs.length - 1;
+
+  // Switch to new
+  _activeIdx = newIdx;
+  _loadDoc(newIdx);
+
+  // Apply user defaults to the new document. _createBlankDoc deliberately
+  // clears prompt / negPrompt / seed, and inherits other settings from
+  // the current doc; defaults override that with the user's saved
+  // workflow. Synchronous: reads from the cached defaults populated at
+  // app init by _studioLoadDefaults. _applyDefaults handles canvas
+  // resizing + viewport sync internally.
+  if (typeof window._studioReapplyDefaults === "function") {
+    window._studioReapplyDefaults();
+  }
+
+  window.StudioCore.zoomFit();
+  _refreshUI();
+  _renderStrip();
+
+  if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();  // the new one
+  console.log(TAG, "New document:", doc.name);
+  return newIdx;
+}
+
+function switchDoc(idx) {
+  if (idx === _activeIdx) return;
+  if (idx < 0 || idx >= _docs.length) return;
+
+  // Save current, then capture it: the tab being LEFT is the one whose
+  // recovery would otherwise go stale, because nothing bumps its revision
+  // again while it sits in the background.
+  _saveDoc(_activeIdx);
+  if (window.StudioRecovery) window.StudioRecovery.captureNow();
+
+  // Load target
+  _activeIdx = idx;
+  _loadDoc(idx);
+  _refreshUI();
+  _renderStrip();
+
+  console.log(TAG, "Switched to:", _docs[idx].name);
+}
+
+function closeDoc(idx) {
+  if (_docs.length <= 1) {
+    if (window.showToast) window.showToast((window.I18N && window.I18N.t) ? window.I18N.t("docs.cantCloseLast", "Can\u2019t close the last document") : "Can\u2019t close the last document", "info");
+    return;
+  }
+
+  // Confirm if doc has content
+  if (_docs[idx]._canvasDirty) {
+    if (!confirm("Close \"" + _docs[idx].name + "\"? Unsaved changes will be lost.")) return;
+  }
+
+  // An EXPLICIT close. This is the only path that removes recovery -- an
+  // ordinary image export is not a project save and must leave it alone,
+  // because the owner still has unsaved layers behind that flat picture.
+  var closingId = _docs[idx].documentId;
+
+  _docs.splice(idx, 1);
+
+  // Adjust active index
+  if (_activeIdx >= _docs.length) _activeIdx = _docs.length - 1;
+  else if (_activeIdx > idx) _activeIdx--;
+  else if (_activeIdx === idx) {
+    _activeIdx = Math.min(idx, _docs.length - 1);
+    _loadDoc(_activeIdx);
+    _refreshUI();
+  }
+
+  if (closingId && window.StudioRecovery) window.StudioRecovery.discard(closingId);
+
+  _renderStrip();
+  console.log(TAG, "Closed document at index", idx);
+}
+
+function renameDoc(idx, name) {
+  if (!_docs[idx]) return;
+  _docs[idx].name = name;
+  _renderStrip();
+}
+
+// ========================================================================
+// TAB STRIP UI
+// ========================================================================
+
+function _buildStrip() {
+  var canvasArea = document.getElementById("canvasArea");
+  if (!canvasArea || document.getElementById("docStrip")) return;
+
+  var strip = document.createElement("div");
+  strip.className = "doc-strip";
+  strip.id = "docStrip";
+  canvasArea.insertBefore(strip, canvasArea.firstChild);
+  canvasArea.classList.add("has-docs");
+  _stripEl = strip;
+
+  // Delegated events
+  strip.addEventListener("click", function (e) {
+    var tab = e.target.closest(".doc-tab");
+    var close = e.target.closest(".doc-tab-close");
+    var add = e.target.closest(".doc-add");
+
+    if (close && tab) {
+      e.stopPropagation();
+      var ci = parseInt(tab.dataset.idx);
+      if (!isNaN(ci)) closeDoc(ci);
+      return;
+    }
+    if (tab) {
+      var ti = parseInt(tab.dataset.idx);
+      if (!isNaN(ti)) switchDoc(ti);
+      return;
+    }
+    if (add) {
+      newDoc();
+      return;
+    }
+  });
+
+  // Double-click to rename
+  strip.addEventListener("dblclick", function (e) {
+    var tab = e.target.closest(".doc-tab");
+    if (!tab || e.target.closest(".doc-tab-close")) return;
+    var idx = parseInt(tab.dataset.idx);
+    if (isNaN(idx) || !_docs[idx]) return;
+
+    var label = tab.querySelector(".doc-tab-name");
+    if (!label) return;
+    var input = document.createElement("input");
+    input.className = "doc-tab-rename";
+    input.value = _docs[idx].name;
+    input.style.width = Math.max(60, label.offsetWidth + 10) + "px";
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+
+    var commit = function () {
+      var val = input.value.trim();
+      if (val) renameDoc(idx, val);
+      _renderStrip();
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
+      if (ev.key === "Escape") { ev.preventDefault(); _renderStrip(); }
+    });
+  });
+
+  _renderStrip();
+
+  // Re-sync viewport to account for the 26px strip height
+  setTimeout(function () {
+    if (window.StudioUI) {
+      window.StudioUI.syncCanvasToViewport();
+      window.StudioCore.zoomFit();
+      window.StudioUI.redraw();
+    }
+  }, 50);
+}
+
+function _renderStrip() {
+  if (!_stripEl) return;
+
+  var html = "";
+  for (var i = 0; i < _docs.length; i++) {
+    var active = (i === _activeIdx) ? " active" : "";
+    var dirty = _docs[i]._canvasDirty ? " \u2022" : "";
+    html += '<div class="doc-tab' + active + '" data-idx="' + i + '">'
+      + '<span class="doc-tab-name">' + _esc(_docs[i].name) + dirty + '</span>'
+      + (_docs.length > 1 ? '<span class="doc-tab-close" title="Close">\u00d7</span>' : '')
+      + '</div>';
+  }
+  html += '<button class="doc-add" title="New document">+</button>';
+  _stripEl.innerHTML = html;
+}
+
+function _esc(s) {
+  if (!s) return "";
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// ========================================================================
+// KEYBOARD SHORTCUTS
+// ========================================================================
+
+function _onKeyDown(e) {
+  // Don't fire while a different module (Gallery, Workshop, etc.) is active
+  if (window.StudioModules && window.StudioModules.activeId !== null) return;
+
+  // Don't fire while the user is typing in an input, textarea, or contenteditable
+  var t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+
+  // Ctrl+] / Ctrl+[ to cycle documents
+  // (Ctrl+Tab is reserved by the browser and can't be intercepted reliably)
+  if (e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (e.key === "]") {
+      e.preventDefault();
+      if (_docs.length <= 1) return;
+      switchDoc(_activeIdx < _docs.length - 1 ? _activeIdx + 1 : 0);
+      return;
+    }
+    if (e.key === "[") {
+      e.preventDefault();
+      if (_docs.length <= 1) return;
+      switchDoc(_activeIdx > 0 ? _activeIdx - 1 : _docs.length - 1);
+      return;
+    }
+  }
+}
+
+// ========================================================================
+// INIT
+// ========================================================================
+
+function _init() {
+  if (!window.StudioCore || !window.StudioCore.state) {
+    console.warn(TAG, "StudioCore not available, deferring init");
+    setTimeout(_init, 500);
+    return;
+  }
+
+  // THE ORDERING INVARIANT (AR4.4):
+  //
+  //     read session -> resolve document recovery -> establish the active
+  //     document -> enable session/recovery writes
+  //
+  // Nothing may be written until recovery has been CONSIDERED. The defect
+  // this closes was measured: a blank document was minted here at boot and
+  // the debounced session write replaced the stored `document_id` about two
+  // seconds later, so the pointer to the owner's work was overwritten by an
+  // empty canvas on every launch, before anything could have used it.
+  var R = window.StudioRecovery;
+  if (R && !R.resolved) {
+    R.whenResolved().then(_initWithRecovery);
+    return;
+  }
+  _initWithRecovery();
+}
+
+function _initWithRecovery() {
+  var R = window.StudioRecovery;
+  var recovered = R ? R.restored() : null;
+
+  if (recovered && recovered.docs && recovered.docs.length) {
+    // Adopt the recovered documents as the open set. These are real
+    // documents -- layers, ordering, mask, Regional state, geometry and
+    // identity -- not a flattened stand-in.
+    _docs = recovered.docs;
+    for (var i = 0; i < _docs.length; i++) _docs[i].id = _nextDocId++;
+    _activeIdx = Math.min(Math.max(recovered.activeIdx | 0, 0), _docs.length - 1);
+    _loadDoc(_activeIdx);
+    _refreshUI();
+    console.log(TAG, "Restored", _docs.length, "document(s) from recovery");
+    if (window.showToast) {
+      window.showToast(_docs.length === 1
+        ? "Recovered your open document."
+        : ("Recovered " + _docs.length + " open documents."), "info");
+    }
+  } else {
+    // Create initial document from current canvas state
+    var initial = _createBlankDoc("Untitled");
+    _docs.push(initial);
+    _activeIdx = 0;
+    // Immediately snapshot current state into doc 0
+    _saveDoc(0);
+  }
+
+  _buildStrip();
+  document.addEventListener("keydown", _onKeyDown);
+
+  // The active document is now established, so -- and only now -- writes are
+  // safe to enable.
+  if (R) R.enableWrites();
+  if (typeof window._studioEnableSessionWrites === "function") {
+    window._studioEnableSessionWrites();
+  }
+
+  console.log(TAG, "Document system initialized");
+}
+
+// ========================================================================
+// PUBLIC API
+// ========================================================================
+
+// The document crash recovery captures. Refreshes the active tab's snapshot
+// first, because the live canvas -- not the doc object -- is where the owner
+// has been painting.
+function docForRecovery(idx) {
+  if (idx === undefined) idx = _activeIdx;
+  if (idx === _activeIdx) _saveDoc(_activeIdx);
+  return _docs[idx];
+}
+
+window.StudioDocs = {
+  docForRecovery: docForRecovery,
+  newDoc: newDoc,
+  switchDoc: switchDoc,
+  closeDoc: closeDoc,
+  renameDoc: renameDoc,
+  saveActiveDoc: function () {
+    _saveDoc(_activeIdx);
+    _renderStrip();
+  },
+  get activeIdx() { return _activeIdx; },
+  get count() { return _docs.length; },
+  get activeDoc() { return _docs[_activeIdx]; },
+  get docs() { return _docs; },
+};
+
+// Boot after DOM and canvas are ready
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", function () { setTimeout(_init, 300); });
+} else {
+  setTimeout(_init, 300);
+}
+
+})();

@@ -9,7 +9,7 @@ import torch
 from backend import memory_management
 from backend.args import dynamic_args
 from backend.loader import forge_loader
-from modules import cache, errors, extra_networks, hashes, modelloader, paths, processing, script_callbacks, sd_unet, sd_vae, shared  # noqa
+from modules import cache, errors, extra_networks, hashes, modelloader, paths, script_callbacks, sd_unet, sd_vae, shared  # noqa
 from modules.prompt_parser import DictWithShape, SdConditioning  # noqa
 from modules.shared import cmd_opts, opts
 from modules.timer import Timer
@@ -380,6 +380,13 @@ def forge_model_reload():
 
     shared.opts.data["sd_checkpoint_hash"] = checkpoint_info.sha256
     model_data.set_sd_model(sd_model)
+
+    # Local import breaks the modules.sd_models <-> modules.processing cycle:
+    # processing.py imports apply_token_merging/forge_model_reload back from
+    # this module, so a module-scope import here makes the load order matter.
+    # This is a legacy compatibility assignment; a later RuntimeContext should
+    # own it.
+    from modules import processing
 
     processing.opt_f = sd_model.forge_objects.vae.upscale_ratio if isinstance(sd_model.forge_objects.vae.upscale_ratio, int) else 8
     script_callbacks.model_loaded_callback(sd_model)

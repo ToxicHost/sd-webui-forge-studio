@@ -1,7 +1,6 @@
 import html
 import sys
 
-from modules import script_callbacks, scripts, ui_components
 from modules.options import OptionHTML, OptionInfo
 
 
@@ -114,6 +113,10 @@ def ui_reorder_categories():
 
 
 def callbacks_order_settings():
+    # These three are UI-layer modules and are only needed here; importing them
+    # at module scope put Gradio on every path that touches shared options.
+    from modules import script_callbacks, scripts, ui_components
+
     options = {
         "sd_vae_explanation": OptionHTML(
             """

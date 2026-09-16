@@ -11,7 +11,7 @@ import gradio as gr
 from PIL import Image
 
 from backend.text_processing.emphasis import uses_emphasis
-from modules import errors, images, processing, script_callbacks, shared, ui_tempdir
+from modules import errors, images, infotext_core, script_callbacks, shared, ui_tempdir
 from modules.paths import data_path
 from modules_forge import main_entry
 
@@ -52,24 +52,11 @@ def reset():
     registered_param_bindings.clear()
 
 
-def quote(text: str) -> str:
-    if "," not in str(text) and "\n" not in str(text) and ":" not in str(text):
-        return text
-
-    try:
-        return json.dumps(text, ensure_ascii=False)
-    except Exception:
-        return text
-
-
-def unquote(text: str) -> str:
-    if not text or not (text.startswith('"') and text.endswith('"')):
-        return text
-
-    try:
-        return json.loads(text)
-    except Exception:
-        return text
+# Compatibility re-export: the implementations now live in
+# `modules/infotext_core.py` so that `modules/processing.py` no longer imports
+# this Gradio-importing module just to quote a value.
+quote = infotext_core.quote
+unquote = infotext_core.unquote
 
 
 def _parse_info(output: gr.components.Component, key: str, params: dict[str, Any]) -> gr.update:
@@ -285,6 +272,13 @@ def restore_old_hires_fix_params(res: dict):
     height = int(res.get("Size-2", 512))
 
     if firstpass_width == 0 or firstpass_height == 0:
+        # Local import breaks the modules.sd_models <-> modules.processing
+        # cycle: this module is reached during sd_models initialization via
+        # modules_forge.main_entry, so a module-scope import here makes the
+        # load order matter. Legacy compatibility delegation; a later
+        # RuntimeContext should own it.
+        from modules import processing
+
         firstpass_width, firstpass_height = processing.old_hires_fix_first_pass_dimensions(width, height)
 
     res["Size-1"] = firstpass_width

@@ -41,6 +41,19 @@ gradio_hf_hub_themes = [
 ]
 
 
+def ensure_gradio_theme():
+    """Construct the placeholder theme on first use.
+
+    `modules/shared.py` used to build `gr.themes.Base()` at import time, which
+    put Gradio on every import path that touches shared options. The placeholder
+    is only ever observed before `reload_gradio_theme` runs, so it is built here
+    -- inside the UI/compatibility boundary -- on demand instead.
+    """
+    if shared.gradio_theme is None:
+        shared.gradio_theme = gr.themes.Base()
+    return shared.gradio_theme
+
+
 def reload_gradio_theme(theme_name=None):
     if not theme_name:
         theme_name = shared.opts.gradio_theme
@@ -93,7 +106,7 @@ def resolve_var(name: str, gradio_theme=None, history=None):
         if history is None:
             history = []
         if gradio_theme is None:
-            gradio_theme = shared.gradio_theme
+            gradio_theme = ensure_gradio_theme()
 
         name = name.strip()
         name = name[1:] if name.startswith("*") else name

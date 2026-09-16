@@ -1,6 +1,21 @@
 import torch
 
-from modules import shared, ui_gradio_extensions
+from modules import shared
+
+# `ui_gradio_extensions` is imported inside `webpath()` rather than here.
+#
+# `ui_gradio_extensions.py:3` is `import gradio as gr`, and this module is on
+# the generation path -- `modules/processing.py:30` imports `profiling`. So a
+# module-scope import here put Gradio behind every generation:
+#
+#     modules.processing -> modules.profiling -> modules.ui_gradio_extensions
+#                        -> gradio  (119 modules)
+#
+# The irony is that the borrowed function needs none of it.
+# `ui_gradio_extensions.webpath()` is a pure string formatter over
+# `util.truncate_path` and `os.path.getmtime`; it only happens to live in a
+# module that imports Gradio for its other contents. One call site, one
+# function, no behaviour to preserve beyond the string it returns.
 
 
 class Profiler:
@@ -42,4 +57,6 @@ class Profiler:
 
 
 def webpath():
+    from modules import ui_gradio_extensions
+
     return ui_gradio_extensions.webpath(shared.opts.profiling_filename)

@@ -8,7 +8,7 @@ import threading
 
 from rich import print
 
-from modules import cache, errors, scripts, shared
+from modules import cache, errors, shared
 from modules.gitpython_hack import Repo
 from modules.paths_internal import extensions_builtin_dir, extensions_dir, script_path  # noqa: F401
 from modules_forge.config import always_disabled_extensions, prefer_official_extensions
@@ -179,6 +179,10 @@ class Extension:
         self.have_info_from_repo = True
 
     def list_files(self, subdir, extension):
+        # `modules.scripts` imports Gradio and imports this module back; keeping
+        # the import here breaks that cycle off the inference path.
+        from modules import scripts
+
         dirpath = os.path.join(self.path, subdir)
         if not os.path.isdir(dirpath):
             return []

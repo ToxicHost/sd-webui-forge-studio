@@ -1,0 +1,986 @@
+// Display-only WebGL viewport backend.
+//
+// Replaces the PR #155/#157 <img> preview path. Same goal — let the on-
+// screen document render via a surface that doesn't go through the
+// <canvas> color pipeline that's been desaturating chromatic pixels for
+// Moritz on Firefox + a calibrated wide-gamut display — but via WebGL
+// instead of an <img>, so view updates (zoom, pan, resize) are GPU
+// transforms instead of PNG re-encodes.
+//
+// Architecture (three planes in #studio-viewport):
+//
+//   z-index 0   #studio-canvas-webgl-preview   void + checker + document
+//                                              GPU-rendered each frame
+//   z-index 2   #studio-canvas                 transparent UI overlay;
+//                                              cursor, wet stroke,
+//                                              selections, masks, regions,
+//                                              transform handles
+//   offscreen   layer canvases                 canonical pixels (export,
+//                                              undo, getFlattenedImageData)
+//
+// Export remains unchanged. exportFlattened reads layer canvases via
+// StudioCore._renderFlattenedToContext; saved files are byte-faithful as
+// before. The WebGL preview is never used as a save source.
+//
+// View-only operations (zoom, pan, viewport resize) re-render WebGL
+// immediately. Pixel-changing operations (stroke commit, layer
+// add/delete, transform, paste, fill, Develop change, etc.) bump
+// StudioCore._compositeVersion which we track to know when to re-upload
+// the document texture.
+//
+// Public API:
+//   window.StudioCanvasWebGLPreview.setEnabled(bool)
+//   window.StudioCanvasWebGLPreview.isEnabled()
+//   window.StudioCanvasWebGLPreview.renderNow()
+//   window.StudioCanvasWebGLPreview.markViewDirty()
+//   window.StudioCanvasWebGLPreview.markPixelsDirty()
+//   window.StudioCanvasWebGLPreview.beginLiveCanvasFallback(reason?)
+//   window.StudioCanvasWebGLPreview.endLiveCanvasFallback(reason?)
+//   window.StudioCanvasWebGLPreview.isLiveCanvasFallbackActive()
+//   window.StudioCanvasWebGLPreview.dispose()
+//
+// On by default for fresh installs; explicit user opt-out is respected.
+// Toggle: Settings → Canvas → "GPU canvas preview" (same toggle id from
+// PR #155).
+
+(function () {
+  "use strict";
+
+  // Reuse the existing toggle's storage key so users who had image-
+  // preview enabled get WebGL preview automatically after update.
+  var STORAGE_KEY = "studio-canvas-image-preview-enabled";
+  var TAG = "[Studio CanvasWebGLPreview]";
+
+  var _enabled = false;
+  var _initFailed = false;
+
+  // Temporary fallback mode for continuous heavy tools (smudge, blur,
+  // pixelate, dodge, liquify, clone). Independent of the user toggle —
+  // when these tools start dragging, canvas-ui calls
+  // beginLiveCanvasFallback() to route the document display back through
+  // Canvas 2D so the user sees per-frame edits without waiting for the
+  // full WebGL texture re-upload. On pointer-up the fallback ends, we
+  // refresh the texture once, and WebGL takes over again at rest.
+  // Never persisted. Never flips the user toggle.
+  var _liveFallback = false;
+
+  var _glCanvas = null;
+  var _gl = null;
+  var _isGL2 = false;
+
+  var _docProgram = null;
+  var _docUniforms = null;
+  var _checkerProgram = null;
+  var _checkerUniforms = null;
+  var _quadBuffer = null;
+
+  var _docTexture = null;
+  var _texW = 0, _texH = 0;
+  var _texMagFilter = 0; // last-applied TEXTURE_MAG_FILTER (NEAREST or LINEAR)
+  var _texMinFilter = 0; // last-applied TEXTURE_MIN_FILTER
+
+  // Develop "Before/After" split state. The before texture holds
+  // pre-develop layer pixels; the after texture is the existing
+  // _docTexture. While active, renderNow draws the after texture as
+  // usual, then re-renders the same quad with the before texture
+  // bound and a gl.scissor clip to the left of _developSplitPos.
+  // Split position is in canvas-display coordinates (0..1 of the
+  // GL canvas width) — matches the Canvas 2D fallback's semantics.
+  var _beforeTexture = null;
+  var _beforeTexW = 0, _beforeTexH = 0;
+  var _developSplitActive = false;
+  var _developSplitPos = 0.5;
+
+  var _viewDirty = true;
+  var _pixelsDirty = true;
+  var _rafId = 0;
+
+  var _redrawHookInstalled = false;
+  var _commitHookInstalled = false;
+  var _lastRenderedVersion = -1;
+
+  // U2 ROLLBACK. Forces the pre-U2 behaviour -- every present is a full
+  // document flatten and a full texture upload. Internal only: there is no
+  // setting, no i18n string and no settings-page entry, because the engine
+  // choice is a migration detail and not a product one. Kept for one Alpha
+  // cycle so a bounded-update defect can be switched off without a revert.
+  var _forceFullUploads = false;
+  // Set while the GL context is lost. Every present is refused until it is
+  // restored, and the first present after restoration is a full upload --
+  // a bounded upload into a texture that no longer exists would leave the
+  // display permanently showing one correct rectangle on a blank document.
+  var _contextLost = false;
+  var _voidColor = [0.118, 0.129, 0.188, 1.0]; // approximate --bg-void #1e2130
+
+  // --- persistence ------------------------------------------------------
+
+  function _readEnabled() {
+    // Default-on for fresh installs (no saved value). Respect explicit
+    // user opt-out / opt-in if present. Anything other than "0" is
+    // treated as on so the WebGL backend is the default display path.
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (raw === "0") return false;
+      if (raw === "1") return true;
+      return true;
+    } catch (e) {
+      return true;
+    }
+  }
+  function _writeEnabled(on) {
+    try { localStorage.setItem(STORAGE_KEY, on ? "1" : "0"); }
+    catch (e) { /* ignore */ }
+  }
+
+  // --- void color from CSS variable -------------------------------------
+  // Read the same --bg-void the Canvas 2D mode uses so themes apply.
+
+  function _refreshVoidColor() {
+    try {
+      var hex = getComputedStyle(document.documentElement)
+        .getPropertyValue("--bg-void").trim();
+      if (!hex) return;
+      var rgb = _hexToRgb01(hex);
+      if (rgb) _voidColor = [rgb[0], rgb[1], rgb[2], 1.0];
+    } catch (e) { /* ignore */ }
+  }
+  function _hexToRgb01(s) {
+    s = s.replace("#", "");
+    if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+    if (s.length !== 6) return null;
+    var n = parseInt(s, 16);
+    if (isNaN(n)) return null;
+    return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255];
+  }
+
+  // --- shaders ----------------------------------------------------------
+  //
+  // One vertex shader for both passes: takes a unit-quad attribute (0..1)
+  // in document UV space, transforms via uDocSize/uOffset/uScale/uViewSize
+  // to clip space. DPR doesn't appear here because the GL viewport itself
+  // is set to backing pixels — the canvas style is CSS pixels, and the
+  // shader's uViewSize is CSS pixels too.
+
+  var VERT_SRC = [
+    "attribute vec2 aPos;",
+    "uniform vec2 uDocSize;",
+    "uniform vec2 uOffset;",  // CSS px
+    "uniform float uScale;",
+    "uniform vec2 uViewSize;", // CSS px (viewport)
+    "varying vec2 vUV;",
+    "varying vec2 vDocPos;",
+    "void main() {",
+    "  vDocPos = aPos * uDocSize;",
+    "  vec2 cssPx = vDocPos * uScale + uOffset;",
+    "  vec2 clip = vec2(",
+    "    2.0 * cssPx.x / uViewSize.x - 1.0,",
+    "    1.0 - 2.0 * cssPx.y / uViewSize.y",
+    "  );",
+    "  gl_Position = vec4(clip, 0.0, 1.0);",
+    "  vUV = aPos;",
+    "}",
+  ].join("\n");
+
+  // Checker fragment: solid 10-doc-pixel squares, alternating shades.
+  // Matches the existing Canvas 2D checker (#3a3a3a / #444).
+  var FRAG_CHECKER_SRC = [
+    "precision mediump float;",
+    "varying vec2 vDocPos;",
+    "void main() {",
+    "  vec2 cell = floor(vDocPos / 10.0);",
+    "  float odd = mod(cell.x + cell.y, 2.0);",
+    "  vec3 c = mix(vec3(0.267), vec3(0.227), odd);",
+    "  gl_FragColor = vec4(c, 1.0);",
+    "}",
+  ].join("\n");
+
+  // Document fragment: straight sample from the flattened texture. Alpha
+  // preserved; blending against the checker pass happens in the
+  // framebuffer via gl.blendFunc.
+  var FRAG_DOC_SRC = [
+    "precision mediump float;",
+    "uniform sampler2D uTex;",
+    "varying vec2 vUV;",
+    "void main() {",
+    "  gl_FragColor = texture2D(uTex, vUV);",
+    "}",
+  ].join("\n");
+
+  // --- WebGL boilerplate -----------------------------------------------
+
+  function _compileShader(gl, type, src) {
+    var sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      var info = gl.getShaderInfoLog(sh);
+      gl.deleteShader(sh);
+      throw new Error("shader compile failed: " + info);
+    }
+    return sh;
+  }
+  function _linkProgram(gl, vsSrc, fsSrc) {
+    var vs = _compileShader(gl, gl.VERTEX_SHADER, vsSrc);
+    var fs = _compileShader(gl, gl.FRAGMENT_SHADER, fsSrc);
+    var p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      var info = gl.getProgramInfoLog(p);
+      gl.deleteProgram(p);
+      throw new Error("program link failed: " + info);
+    }
+    return p;
+  }
+  function _uniformLocs(gl, program, names) {
+    var out = {};
+    for (var i = 0; i < names.length; i++) out[names[i]] = gl.getUniformLocation(program, names[i]);
+    return out;
+  }
+
+  // --- init / teardown --------------------------------------------------
+
+  function _ensureCanvas() {
+    if (_glCanvas) return _glCanvas;
+    var vp = document.getElementById("studio-viewport");
+    if (!vp) return null;
+    _glCanvas = document.createElement("canvas");
+    _glCanvas.id = "studio-canvas-webgl-preview";
+    _glCanvas.setAttribute("aria-hidden", "true");
+    // Insert at the start so DOM order matches z-index (the #studio-canvas
+    // overlay above us comes later in the viewport).
+    if (vp.firstChild) vp.insertBefore(_glCanvas, vp.firstChild);
+    else vp.appendChild(_glCanvas);
+    return _glCanvas;
+  }
+
+  function _initGL() {
+    if (_gl) return true;
+    if (_initFailed) return false;
+    var cv = _ensureCanvas();
+    if (!cv) return false;
+
+    // U2. CONTEXT LOSS WAS NOT HANDLED AT ALL BEFORE THIS.
+    //
+    // There were no `webglcontextlost`/`webglcontextrestored` listeners and no
+    // `isContextLost` checks anywhere in this module. That was survivable while
+    // every present re-uploaded the whole document: a restored context got a
+    // complete texture on the next invalidation by accident.
+    //
+    // It is NOT survivable with bounded uploads. A restored context has an
+    // empty texture, and a sub-upload would fill in one rectangle and leave the
+    // rest blank -- permanently, because nothing else would invalidate it. So
+    // handling this is part of U2's correctness, not polish attached to it.
+    if (!cv._u2ContextHooks) {
+      cv._u2ContextHooks = true;
+      cv.addEventListener("webglcontextlost", function (ev) {
+        // Preventing the default is what makes restoration possible at all.
+        ev.preventDefault();
+        _contextLost = true;
+        _uploadStats.lostContexts += 1;
+        _texW = 0; _texH = 0;
+        _beforeTexW = 0; _beforeTexH = 0;
+        if (_rafId) { cancelAnimationFrame(_rafId); _rafId = 0; }
+        console.warn(TAG, "WebGL context lost; Canvas 2D remains authoritative");
+      }, false);
+      cv.addEventListener("webglcontextrestored", function () {
+        _contextLost = false;
+        _uploadStats.restores += 1;
+        _gl = null; _initFailed = false;
+        _texW = 0; _texH = 0;
+        _beforeTexW = 0; _beforeTexH = 0;
+        if (!_initGL()) return;
+        var Core = window.StudioCore;
+        if (Core && typeof Core.invalidatePresentation === "function") {
+          Core.invalidatePresentation("webgl-context-restored");
+        }
+        _pixelsDirty = true;
+        _viewDirty = true;
+        _scheduleRender();
+      }, false);
+    }
+
+    var opts = { alpha: false, premultipliedAlpha: false, preserveDrawingBuffer: false, antialias: false };
+    var gl = cv.getContext("webgl2", opts);
+    _isGL2 = !!gl;
+    if (!gl) gl = cv.getContext("webgl", opts);
+    if (!gl) {
+      _initFailed = true;
+      console.warn(TAG, "WebGL unavailable");
+      return false;
+    }
+    try { if ("drawingBufferColorSpace" in gl) gl.drawingBufferColorSpace = "srgb"; } catch (e) { /* unsupported */ }
+    try { if ("unpackColorSpace" in gl) gl.unpackColorSpace = "srgb"; } catch (e) { /* unsupported */ }
+
+    try {
+      _docProgram = _linkProgram(gl, VERT_SRC, FRAG_DOC_SRC);
+      _checkerProgram = _linkProgram(gl, VERT_SRC, FRAG_CHECKER_SRC);
+    } catch (e) {
+      _initFailed = true;
+      console.warn(TAG, "shader compile/link failed:", e.message || e);
+      return false;
+    }
+
+    _docUniforms = _uniformLocs(gl, _docProgram,
+      ["uDocSize", "uOffset", "uScale", "uViewSize", "uTex"]);
+    _checkerUniforms = _uniformLocs(gl, _checkerProgram,
+      ["uDocSize", "uOffset", "uScale", "uViewSize"]);
+
+    // Unit quad: two triangles covering (0,0)-(1,1) in UV space.
+    var quadVerts = new Float32Array([0, 0,  1, 0,  0, 1,  0, 1,  1, 0,  1, 1]);
+    _quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, _quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+
+    _docTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, _docTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    // Filters get reassigned dynamically per frame in renderNow() based on
+    // S.zoom.scale: NEAREST when zoomed in so pixels stay crisp, LINEAR
+    // when zoomed out so downscaled previews stay smooth. Seed with
+    // NEAREST mag (the visible-pixel case) and LINEAR min as a sensible
+    // starting state before the first render.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    _texMinFilter = gl.LINEAR;
+    _texMagFilter = gl.NEAREST;
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+
+    // Allocate the Before/After texture lazily on the first
+    // setDevelopSplit({beforeImageData}) call so users who never
+    // open Develop don't pay for a texture they won't use. Same
+    // wrap/filter setup happens in _ensureBeforeTexture().
+
+    _gl = gl;
+    _refreshVoidColor();
+    return true;
+  }
+
+  function _disposeGL() {
+    if (!_gl) return;
+    try { _gl.deleteProgram(_docProgram); } catch (e) {}
+    try { _gl.deleteProgram(_checkerProgram); } catch (e) {}
+    try { _gl.deleteBuffer(_quadBuffer); } catch (e) {}
+    try { _gl.deleteTexture(_docTexture); } catch (e) {}
+    try { if (_beforeTexture) _gl.deleteTexture(_beforeTexture); } catch (e) {}
+    _docProgram = _checkerProgram = _quadBuffer = _docTexture = null;
+    _beforeTexture = null;
+    _beforeTexW = _beforeTexH = 0;
+    _developSplitActive = false;
+    _docUniforms = _checkerUniforms = null;
+    _gl = null;
+    _isGL2 = false;
+    _texW = _texH = 0;
+    _lastRenderedVersion = -1;
+  }
+
+  // --- texture upload ---------------------------------------------------
+
+  function _ensureBeforeTexture() {
+    if (!_gl || _beforeTexture) return;
+    var gl = _gl;
+    _beforeTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, _beforeTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  }
+
+  // Upload pre-develop pixels into the before-texture. Caller passes
+  // an ImageData-shaped object (anything with .width/.height/.data —
+  // the develop module hands us the result of
+  // StudioCore.getFlattenedImageData({applyDevelop:false})).
+  function _uploadBeforeTexture(imgData) {
+    if (!_gl || !imgData || !imgData.data) return;
+    _ensureBeforeTexture();
+    var gl = _gl;
+    var w = imgData.width | 0, h = imgData.height | 0;
+    if (!w || !h) return;
+    gl.bindTexture(gl.TEXTURE_2D, _beforeTexture);
+    if (_beforeTexW !== w || _beforeTexH !== h) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0,
+        gl.RGBA, gl.UNSIGNED_BYTE, imgData.data);
+      _beforeTexW = w; _beforeTexH = h;
+    } else {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h,
+        gl.RGBA, gl.UNSIGNED_BYTE, imgData.data);
+    }
+  }
+
+  // U2 upload accounting. Counts rather than clocks: a bounded upload is
+  // proved by the bytes it moved, and a clock cannot tell a small upload from
+  // a large one on a fast machine.
+  var _uploadStats = {
+    fullUploads: 0, subUploads: 0, uploadedPixels: 0,
+    flattenedPixels: 0, fullReasons: [], lostContexts: 0, restores: 0,
+    refusedAcks: 0,
+  };
+
+  function _noteFullReason(reason) {
+    _uploadStats.fullReasons.push(reason);
+    if (_uploadStats.fullReasons.length > 32) _uploadStats.fullReasons.shift();
+  }
+
+  /**
+   * Upload what the display owes.
+   *
+   * U2. A BOUNDED UPDATE MUST BE BOUNDED ALL THE WAY DOWN. Cropping only the
+   * GPU upload while still flattening and reading back the whole document
+   * would move the cost rather than remove it, so the region drives
+   * `getFlattenedRegionImageData` too -- the layer composition, the readback
+   * and the upload are all scoped to the same rectangle.
+   *
+   * Returns true when everything owed has been presented and acknowledged.
+   */
+  function _uploadTexture() {
+    if (!_gl) return false;
+    var Core = window.StudioCore;
+    if (!Core || typeof Core.getFlattenedImageData !== "function") return false;
+    var S = Core.state;
+    if (!S || !S.W || !S.H) return false;
+
+    var pending = (typeof Core.takePresentationDirty === "function")
+      ? Core.takePresentationDirty() : null;
+    var sizeChanged = (_texW !== S.W || _texH !== S.H);
+
+    // A full upload is required whenever the texture does not yet exist at
+    // this size, the region path is unavailable, or Canvas asked for one.
+    var wantFull = !pending || pending.full || sizeChanged || _forceFullUploads
+      || typeof Core.getFlattenedRegionImageData !== "function";
+    if (!wantFull && pending.empty) {
+      // Nothing owed. Still acknowledge, so the generation does not drift.
+      if (typeof Core.acknowledgePresentation === "function") {
+        Core.acknowledgePresentation(pending.generation);
+      }
+      return true;
+    }
+
+    if (wantFull) {
+      var reason = sizeChanged ? "texture-size"
+        : (_forceFullUploads ? "rollback-flag"
+          : (!pending ? "no-dirty-contract"
+            : (pending.full ? "canvas-requested-full" : "no-region-api")));
+      var imgData;
+      try { imgData = Core.getFlattenedImageData(); }
+      catch (e) {
+        console.warn(TAG, "getFlattenedImageData failed:",
+                     e && e.message ? e.message : e);
+        return false;
+      }
+      if (!imgData || !imgData.data) return false;
+      _gl.bindTexture(_gl.TEXTURE_2D, _docTexture);
+      if (sizeChanged) {
+        _gl.texImage2D(_gl.TEXTURE_2D, 0, _gl.RGBA, S.W, S.H, 0,
+          _gl.RGBA, _gl.UNSIGNED_BYTE, imgData.data);
+        _texW = S.W; _texH = S.H;
+      } else {
+        _gl.texSubImage2D(_gl.TEXTURE_2D, 0, 0, 0, S.W, S.H,
+          _gl.RGBA, _gl.UNSIGNED_BYTE, imgData.data);
+      }
+      _uploadStats.fullUploads += 1;
+      _uploadStats.uploadedPixels += S.W * S.H;
+      _uploadStats.flattenedPixels += S.W * S.H;
+      _noteFullReason(reason);
+    } else {
+      var rw = pending.x1 - pending.x0, rh = pending.y1 - pending.y0;
+      var region = null;
+      try {
+        region = Core.getFlattenedRegionImageData(
+          pending.x0, pending.y0, pending.x1, pending.y1);
+      } catch (e) {
+        console.warn(TAG, "region flatten failed:", e && e.message ? e.message : e);
+        region = null;
+      }
+      if (!region || !region.data) {
+        // FAIL CLOSED TO A FULL INVALIDATION rather than present stale pixels.
+        // The region path is an optimisation; the display being right is not.
+        if (typeof Core.invalidatePresentation === "function") {
+          Core.invalidatePresentation("region-flatten-unavailable");
+        }
+        _noteFullReason("region-flatten-unavailable");
+        return false;
+      }
+      _gl.bindTexture(_gl.TEXTURE_2D, _docTexture);
+      _gl.texSubImage2D(_gl.TEXTURE_2D, 0, pending.x0, pending.y0, rw, rh,
+        _gl.RGBA, _gl.UNSIGNED_BYTE, region.data);
+      _uploadStats.subUploads += 1;
+      _uploadStats.uploadedPixels += rw * rh;
+      _uploadStats.flattenedPixels += rw * rh;
+    }
+
+    // ACKNOWLEDGE THE GENERATION WE TOOK, not "now". If the document changed
+    // while this upload was being built, Canvas refuses the acknowledgement and
+    // keeps the region pending, so the edit is presented on the next frame
+    // instead of being silently lost.
+    if (pending && typeof Core.acknowledgePresentation === "function") {
+      if (!Core.acknowledgePresentation(pending.generation)) {
+        _uploadStats.refusedAcks += 1;
+        return false;      // still owed: renderNow keeps _pixelsDirty set
+      }
+      return true;
+    }
+    return true;
+  }
+
+  // --- canvas sizing ----------------------------------------------------
+
+  function _syncCanvasSize() {
+    if (!_glCanvas) return;
+    var S = window.StudioCore && window.StudioCore.state;
+    if (!S) return;
+    var cssW = S.viewportCssW || _glCanvas.clientWidth || 0;
+    var cssH = S.viewportCssH || _glCanvas.clientHeight || 0;
+    var dpr = S.displayDpr || 1;
+    var bufW = Math.max(1, Math.round(cssW * dpr));
+    var bufH = Math.max(1, Math.round(cssH * dpr));
+    if (_glCanvas.width !== bufW || _glCanvas.height !== bufH) {
+      _glCanvas.width = bufW;
+      _glCanvas.height = bufH;
+    }
+    if (_glCanvas.style.width !== cssW + "px") _glCanvas.style.width = cssW + "px";
+    if (_glCanvas.style.height !== cssH + "px") _glCanvas.style.height = cssH + "px";
+  }
+
+  // --- render -----------------------------------------------------------
+
+  function _drawQuad(program, uniforms, S, z, dpr, viewCssW, viewCssH, texOverride) {
+    var gl = _gl;
+    gl.useProgram(program);
+    var aPosLoc = gl.getAttribLocation(program, "aPos");
+    gl.bindBuffer(gl.ARRAY_BUFFER, _quadBuffer);
+    gl.enableVertexAttribArray(aPosLoc);
+    gl.vertexAttribPointer(aPosLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // Canvas 2D's applyDisplayTransform multiplies offset by DPR and the
+    // browser rounds the resulting device-pixel translate. Match that here
+    // so toggling WebGL on/off at high zoom doesn't shift the document by
+    // a subpixel — round to the device-pixel grid in CSS space.
+    var snappedOx = Math.round(z.ox * dpr) / dpr;
+    var snappedOy = Math.round(z.oy * dpr) / dpr;
+
+    gl.uniform2f(uniforms.uDocSize, S.W, S.H);
+    gl.uniform2f(uniforms.uOffset, snappedOx, snappedOy);
+    gl.uniform1f(uniforms.uScale, z.scale);
+    gl.uniform2f(uniforms.uViewSize, viewCssW, viewCssH);
+    if (uniforms.uTex) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texOverride || _docTexture);
+      gl.uniform1i(uniforms.uTex, 0);
+    }
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  function renderNow() {
+    if (!_enabled || !_gl) return;
+    // Live-fallback mode: Canvas 2D is responsible for the document
+    // display right now. Don't touch the texture or the GL surface.
+    if (_liveFallback) return;
+    // U2. A lost context has no texture to update and no surface to draw on.
+    // Canvas 2D still holds the canonical pixels, so nothing is lost by
+    // refusing; the restore handler forces a full upload when it returns.
+    if (_contextLost) return;
+    if (_gl.isContextLost && _gl.isContextLost()) { _contextLost = true; return; }
+    var Core = window.StudioCore;
+    var S = Core && Core.state;
+    if (!S || !S.W || !S.H) return;
+
+    _syncCanvasSize();
+
+    if (_pixelsDirty || _texW === 0) {
+      // `_pixelsDirty` is cleared ONLY when the upload says everything owed was
+      // presented AND acknowledged. It used to be cleared unconditionally, so a
+      // failed or partial present looked identical to a successful one and the
+      // display stayed stale until something unrelated invalidated it.
+      if (_uploadTexture()) {
+        _pixelsDirty = false;
+        if (typeof Core.getCompositeVersion === "function") {
+          _lastRenderedVersion = Core.getCompositeVersion();
+        }
+      } else {
+        _scheduleRender();
+      }
+    }
+
+    var gl = _gl;
+    var z = S.zoom || { scale: 1, ox: 0, oy: 0 };
+    var dpr = S.displayDpr || 1;
+    var viewCssW = S.viewportCssW || _glCanvas.clientWidth || 0;
+    var viewCssH = S.viewportCssH || _glCanvas.clientHeight || 0;
+
+    // Pick texture filters based on display scale. At >= 1x we want crisp
+    // pixel edges (zoomed in), below 1x we want smooth downscale. This is
+    // display-only — source/layer pixels and export are untouched.
+    var wantMag = (z.scale >= 1) ? gl.NEAREST : gl.LINEAR;
+    var wantMin = (z.scale >= 1) ? gl.NEAREST : gl.LINEAR;
+    if (wantMag !== _texMagFilter || wantMin !== _texMinFilter) {
+      gl.bindTexture(gl.TEXTURE_2D, _docTexture);
+      if (wantMag !== _texMagFilter) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, wantMag);
+        _texMagFilter = wantMag;
+      }
+      if (wantMin !== _texMinFilter) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, wantMin);
+        _texMinFilter = wantMin;
+      }
+    }
+
+    gl.viewport(0, 0, _glCanvas.width, _glCanvas.height);
+    gl.disable(gl.BLEND);
+    gl.clearColor(_voidColor[0], _voidColor[1], _voidColor[2], _voidColor[3]);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Checker fills the document rectangle (vertex shader maps the unit
+    // quad to (ox, oy)..(ox + S.W*scale, oy + S.H*scale) in CSS px).
+    _drawQuad(_checkerProgram, _checkerUniforms, S, z, dpr, viewCssW, viewCssH);
+
+    // Document over checker with straight alpha. Texture preserves
+    // transparency so the checker shows through where layers are.
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    _drawQuad(_docProgram, _docUniforms, S, z, dpr, viewCssW, viewCssH);
+
+    // Develop Before/After split — re-render the same doc quad with
+    // the before-texture bound, but with gl.scissor restricting the
+    // draw to the left half of the canvas (in device pixels). The
+    // after texture stays on the right side untouched. The split
+    // line + labels are positioned by develop.js as DOM overlays so
+    // their CSS handles font/contrast independently.
+    if (_developSplitActive && _beforeTexture) {
+      var splitDeviceX = Math.round(_developSplitPos * _glCanvas.width);
+      if (splitDeviceX > 0) {
+        gl.enable(gl.SCISSOR_TEST);
+        // gl.scissor uses bottom-left origin in device pixels; we
+        // want a left-anchored band the full canvas height.
+        gl.scissor(0, 0, splitDeviceX, _glCanvas.height);
+        _drawQuad(_docProgram, _docUniforms, S, z, dpr, viewCssW, viewCssH, _beforeTexture);
+        gl.disable(gl.SCISSOR_TEST);
+      }
+    }
+
+    _viewDirty = false;
+  }
+
+  function _scheduleRender() {
+    if (_rafId) return;
+    _rafId = requestAnimationFrame(function () {
+      _rafId = 0;
+      try { renderNow(); }
+      catch (e) { console.warn(TAG, "render error:", e && e.message ? e.message : e); }
+    });
+  }
+
+  function markViewDirty() {
+    if (!_enabled) return;
+    _viewDirty = true;
+    _scheduleRender();
+  }
+
+  function markPixelsDirty() {
+    if (!_enabled) return;
+    _pixelsDirty = true;
+    _viewDirty = true;
+    _scheduleRender();
+  }
+
+  // --- live-canvas fallback --------------------------------------------
+  //
+  // Temporary display routing for continuous heavy tools (smudge/blur/
+  // pixelate/dodge/liquify/clone) that mutate layer pixels every frame.
+  // Re-uploading the whole flattened document texture at 60 fps is too
+  // slow for those, so canvas-ui calls beginLiveCanvasFallback() at
+  // drag-start and endLiveCanvasFallback() at drag-stop. While active,
+  // the WebGL surface hides and S.imagePreviewActive is false so
+  // canvas-core.js composite() draws the document onto S.ctx normally.
+  // On end, the texture refreshes once and WebGL takes over again.
+  //
+  // The user's "GPU canvas preview" toggle is untouched —
+  // _enabled, the storage key, and the visual toggle state all stay
+  // exactly where they were. This is purely a render routing detour.
+
+  function beginLiveCanvasFallback(reason) {
+    if (!_enabled || _liveFallback) return;
+    _liveFallback = true;
+    if (_rafId) { cancelAnimationFrame(_rafId); _rafId = 0; }
+    var Core = window.StudioCore;
+    if (Core && Core.state) Core.state.imagePreviewActive = false;
+    _hideCanvas();
+    var UI = window.StudioUI;
+    if (UI && UI.redraw) UI.redraw();
+  }
+
+  function endLiveCanvasFallback(reason) {
+    if (!_liveFallback) return;
+    _liveFallback = false;
+    if (!_enabled) return;
+    var Core = window.StudioCore;
+    if (Core && Core.state) Core.state.imagePreviewActive = true;
+    _showCanvas();
+    // The just-committed layer pixels need to land in the WebGL texture
+    // before we hand display back from Canvas 2D. Force an immediate
+    // upload + render so there's no visual gap.
+    _pixelsDirty = true;
+    _viewDirty = true;
+    try { renderNow(); }
+    catch (e) { console.warn(TAG, "post-fallback render failed:", e && e.message ? e.message : e); }
+    // Trigger a Canvas 2D redraw so the overlay's document blit (drawn
+    // while fallback was active) gets cleared — composite() respects the
+    // imagePreviewActive flag we just re-set to true.
+    var UI = window.StudioUI;
+    if (UI && UI.redraw) UI.redraw();
+  }
+
+  function isLiveCanvasFallbackActive() { return _liveFallback; }
+
+  // --- develop before/after split --------------------------------------
+  //
+  // Public API used by develop.js to drive the split-render path.
+  // Caller hands us:
+  //   active: bool  — true to enable the split, false to clear it.
+  //   splitPos: number 0..1 — fraction of canvas width where the
+  //     split sits. Re-passed every drag tick.
+  //   beforeImageData: ImageData-shaped — pre-develop pixels from
+  //     StudioCore.getFlattenedImageData({applyDevelop:false}).
+  //     Optional on subsequent calls: pass once at toggle-on, omit
+  //     during drag-to-update splitPos so the cached texture stays.
+  //
+  // No-ops gracefully if the WebGL backend isn't initialized — the
+  // caller is expected to fall back to the Canvas 2D split overlay
+  // path in that case.
+  function setDevelopSplit(opts) {
+    opts = opts || {};
+    if (!opts.active) {
+      // Clear the split. Don't free the before texture — keep it
+      // around so re-toggling on doesn't have to re-upload pixels
+      // we may already have. Free happens via dispose().
+      if (_developSplitActive) {
+        _developSplitActive = false;
+        markViewDirty();
+      }
+      return;
+    }
+    if (!_initGL()) return;
+    _developSplitActive = true;
+    if (typeof opts.splitPos === "number" && isFinite(opts.splitPos)) {
+      var p = opts.splitPos;
+      if (p < 0) p = 0; else if (p > 1) p = 1;
+      _developSplitPos = p;
+    }
+    if (opts.beforeImageData) _uploadBeforeTexture(opts.beforeImageData);
+    markViewDirty();
+  }
+  function isDevelopSplitActive() { return _developSplitActive; }
+
+  // --- redraw hook ------------------------------------------------------
+  //
+  // StudioUI.onAfterRedraw fires for every internal _redraw() call (wheel
+  // zoom, pan, hover, stroke frame) AND every external StudioUI.redraw
+  // call. Version-gate the texture re-upload; always re-render for view
+  // updates.
+
+  function _onAfterRedraw() {
+    if (!_enabled) return;
+    // While Canvas 2D is taking over (live-fallback for heavy tools),
+    // canvas-core.js is drawing the document on S.ctx each frame and
+    // bumping _compositeVersion. Skip both texture upload and GL render
+    // so we don't queue work that endLiveCanvasFallback will redo.
+    if (_liveFallback) return;
+    var Core = window.StudioCore;
+    var v = (Core && typeof Core.getCompositeVersion === "function")
+      ? Core.getCompositeVersion() : 0;
+    if (v !== _lastRenderedVersion) {
+      _pixelsDirty = true;
+    }
+    markViewDirty();
+  }
+
+  function _installRedrawHook() {
+    if (_redrawHookInstalled) return;
+    var UI = window.StudioUI;
+    if (!UI || typeof UI.onAfterRedraw !== "function") {
+      setTimeout(_installRedrawHook, 250);
+      return;
+    }
+    UI.onAfterRedraw(_onAfterRedraw);
+    _redrawHookInstalled = true;
+  }
+
+  // commitStroke doesn't bump _compositeVersion — it modifies the layer
+  // canvas in place. Wrap it so brush/eraser release forces a texture
+  // re-upload before the next frame.
+  function _installCommitHook() {
+    if (_commitHookInstalled) return;
+    var Core = window.StudioCore;
+    if (!Core || typeof Core.commitStroke !== "function") {
+      setTimeout(_installCommitHook, 250);
+      return;
+    }
+    if (Core._webglCommitHooked) { _commitHookInstalled = true; return; }
+    Core._webglCommitHooked = true;
+    var orig = Core.commitStroke;
+    Core.commitStroke = function () {
+      var ret = orig.apply(this, arguments);
+      if (_enabled) {
+        _pixelsDirty = true;
+        renderNow();
+      }
+      return ret;
+    };
+    _commitHookInstalled = true;
+  }
+
+  // --- enable/disable ---------------------------------------------------
+
+  function _showCanvas() {
+    if (_glCanvas) _glCanvas.style.display = "block";
+  }
+  function _hideCanvas() {
+    if (_glCanvas) _glCanvas.style.display = "none";
+  }
+
+  function setEnabled(on, opts) {
+    on = !!on;
+    var silent = !!(opts && opts.silent);
+    if (on === _enabled) return;
+
+    if (on) {
+      if (!_initGL()) {
+        // Single toast only when the user explicitly toggles on and it
+        // fails — boot-time auto-enable on a WebGL-less device stays
+        // silent so users aren't nagged every reload.
+        if (!silent && typeof window.showToast === "function") {
+          window.showToast("WebGL preview unavailable — using standard canvas", "warning");
+        }
+        return;
+      }
+      _enabled = true;
+      _writeEnabled(true);
+      var Core = window.StudioCore;
+      if (Core && Core.state) Core.state.imagePreviewActive = true;
+      _showCanvas();
+      _pixelsDirty = true;
+      _viewDirty = true;
+      renderNow();
+      // Force a Canvas 2D redraw so the overlay clears its document
+      // pixels and the WebGL preview takes over visually.
+      var UI = window.StudioUI;
+      if (UI && UI.redraw) UI.redraw();
+    } else {
+      _enabled = false;
+      _writeEnabled(false);
+      var Core2 = window.StudioCore;
+      if (Core2 && Core2.state) Core2.state.imagePreviewActive = false;
+      _hideCanvas();
+      var UI2 = window.StudioUI;
+      if (UI2 && UI2.redraw) UI2.redraw();
+    }
+  }
+
+  function isEnabled() { return _enabled; }
+
+  function dispose() {
+    setEnabled(false);
+    _disposeGL();
+    if (_glCanvas && _glCanvas.parentNode) {
+      try { _glCanvas.parentNode.removeChild(_glCanvas); } catch (e) { /* ignore */ }
+    }
+    _glCanvas = null;
+  }
+
+  // --- init -------------------------------------------------------------
+
+  function _init() {
+    _ensureCanvas();
+    _installRedrawHook();
+    _installCommitHook();
+
+    // Listen for viewport resizes so the GL backing buffer follows. The
+    // existing window.resize handler in canvas-ui.js calls
+    // syncCanvasToViewport which updates S.viewportCssW/H — the redraw
+    // hook fires next and picks up the new size via _syncCanvasSize.
+    window.addEventListener("resize", function () { if (_enabled) markViewDirty(); });
+
+    var toggle = document.getElementById("toggleCanvasColorPreview");
+    if (toggle) {
+      if (_readEnabled()) toggle.classList.add("on");
+      else toggle.classList.remove("on");
+      toggle.addEventListener("click", function () {
+        var nowOn = !_enabled;
+        setEnabled(nowOn);
+        toggle.classList.toggle("on", _enabled);
+      });
+    }
+
+    if (_readEnabled()) {
+      // Default-on for fresh installs or restore explicit opt-in. Pass
+      // silent so a WebGL-less device doesn't toast on every boot; the
+      // app falls back to Canvas 2D and the toggle visually reflects
+      // whatever _enabled ends up being.
+      setEnabled(true, { silent: true });
+      if (toggle) toggle.classList.toggle("on", _enabled);
+    }
+  }
+
+  window.StudioCanvasWebGLPreview = {
+    setEnabled: setEnabled,
+    isEnabled: isEnabled,
+    renderNow: renderNow,
+    // U2 evidence surface. Counts, not clocks -- a bounded upload is proved by
+    // the pixels it moved, and no wall-clock can tell a small upload from a
+    // large one on a fast enough machine.
+    uploadStats: function () {
+      return {
+        fullUploads: _uploadStats.fullUploads,
+        subUploads: _uploadStats.subUploads,
+        uploadedPixels: _uploadStats.uploadedPixels,
+        flattenedPixels: _uploadStats.flattenedPixels,
+        fullReasons: _uploadStats.fullReasons.slice(),
+        lostContexts: _uploadStats.lostContexts,
+        restores: _uploadStats.restores,
+        refusedAcks: _uploadStats.refusedAcks,
+        contextLost: _contextLost,
+        forcingFullUploads: _forceFullUploads,
+      };
+    },
+    resetUploadStats: function () {
+      _uploadStats = {
+        fullUploads: 0, subUploads: 0, uploadedPixels: 0,
+        flattenedPixels: 0, fullReasons: [], lostContexts: 0, restores: 0,
+        refusedAcks: 0,
+      };
+    },
+    // U2 INTERNAL ROLLBACK. Not a product setting and deliberately not
+    // discoverable from the UI: no settings entry, no i18n string, no
+    // persistence. One Alpha cycle, then it goes.
+    _setForceFullUploads: function (on) {
+      _forceFullUploads = !!on;
+      var Core = window.StudioCore;
+      if (Core && typeof Core.invalidatePresentation === "function") {
+        Core.invalidatePresentation("rollback-toggled");
+      }
+      _pixelsDirty = true;
+      _scheduleRender();
+      return _forceFullUploads;
+    },
+    _isForcingFullUploads: function () { return _forceFullUploads; },
+    markViewDirty: markViewDirty,
+    markPixelsDirty: markPixelsDirty,
+    beginLiveCanvasFallback: beginLiveCanvasFallback,
+    endLiveCanvasFallback: endLiveCanvasFallback,
+    isLiveCanvasFallbackActive: isLiveCanvasFallbackActive,
+    setDevelopSplit: setDevelopSplit,
+    isDevelopSplitActive: isDevelopSplitActive,
+    dispose: dispose,
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", _init);
+  } else {
+    _init();
+  }
+})();

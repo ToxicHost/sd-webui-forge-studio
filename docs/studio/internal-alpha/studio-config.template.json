@@ -1,0 +1,16 @@
+{
+  "backend": "headless",
+  "host": "127.0.0.1",
+  "port": 7865,
+  "result_root": "Studio-Results",
+  "onboarding": "default",
+  "model_roots": {
+    "checkpoint": "<REPLACE-WITH-YOUR-CHECKPOINT-DIRECTORY>",
+    "text_encoder": "<REPLACE-WITH-YOUR-TEXT-ENCODER-DIRECTORY>",
+    "vae": "<REPLACE-WITH-YOUR-VAE-DIRECTORY>"
+  },
+  "load_access": {
+    "timeout_seconds": 600,
+    "vram_ceiling_gib": 14
+  }
+}

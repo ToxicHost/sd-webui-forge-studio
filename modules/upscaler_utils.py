@@ -86,15 +86,41 @@ def _model(model: Callable, x: torch.Tensor) -> torch.Tensor:
 
 
 def pil_rgb_to_tensor_bgr(img: Image.Image, param: torch.Tensor) -> torch.Tensor:
-    tensor = torch.from_numpy(np.asarray(img)).to(param.device)
+    # The CPU path converts before it makes an array (pil_image_to_torch_bgr).
+    # Without the same conversion here, a grayscale, palette or 16-bit image
+    # arrives at permute() with 2 dimensions and the upscale dies.
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    # np.array, not np.asarray: PIL hands out a read-only buffer, and torch
+    # warns on the owner's console that writing to such a tensor is undefined.
+    tensor = torch.from_numpy(np.array(img)).to(param.device)
     tensor = tensor.to(param.dtype).mul_(1.0 / 255.0).permute(2, 0, 1)
     return tensor[[2, 1, 0], ...].unsqueeze(0).contiguous()
 
 
 def tensor_bgr_to_pil_rgb(tensor: torch.Tensor) -> Image.Image:
-    tensor = tensor[:, [2, 1, 0], ...]
-    tensor = tensor.squeeze(0).permute(1, 2, 0).mul_(255.0).round_().clamp_(0.0, 255.0)
-    return Image.fromarray(tensor.to(torch.uint8).cpu().numpy())
+    """Consume a BGR float tensor and return an RGB image.
+
+    CONSUMES ITS ARGUMENT. The elementwise steps run in place on the caller's
+    storage. The one caller passes a view into the accumulator, which is dead
+    by the time this runs.
+
+    The channel swap used to come first, and `tensor[:, [2, 1, 0]]` is
+    advanced indexing, so it copied the whole frame in float WHILE the
+    accumulator it viewed was still alive. At a 2560 base that copy was
+    1200 MiB, and it made the conversion -- not the tile loop -- the peak of
+    the entire upscale.
+
+    Doing the swap last, on the host, removes the copy without touching the
+    arithmetic. Scaling, rounding and clamping are elementwise, so they
+    commute exactly with a permutation of the channel axis: same operations,
+    same operands, same order per element, only the destination index moves.
+    The host reversal is the same trick `torch_bgr_to_pil_image` below already
+    uses on the CPU path.
+    """
+    hwc = tensor.squeeze(0).permute(1, 2, 0)
+    hwc.mul_(255.0).round_().clamp_(0.0, 255.0)
+    return Image.fromarray(hwc.to(torch.uint8).cpu().numpy()[:, :, ::-1], "RGB")
 
 
 def pil_image_to_torch_bgr(img: Image.Image) -> torch.Tensor:
@@ -206,7 +232,15 @@ def upscale_with_model_gpu(
 
     tensor = pil_rgb_to_tensor_bgr(img, torch_utils.get_param(model))
     out = upscale_tensor_tiles(model, tensor, tile_size, tile_overlap, desc)
-    return img if out is None else tensor_bgr_to_pil_rgb(out)
+    if out is None:
+        return img
+    # Same mode the accumulator was built in. `upscale_tensor_tiles` is
+    # decorated `@torch.inference_mode()`, so what it returns is an inference
+    # tensor and torch refuses in-place updates to one from outside. The old
+    # conversion never noticed: its first step copied the frame into a normal
+    # tensor, which is exactly the copy this is removing.
+    with torch.inference_mode():
+        return tensor_bgr_to_pil_rgb(out)
 
 
 def upscale_pil_patch(model, img: Image.Image) -> Image.Image:
@@ -273,8 +307,20 @@ def upscale_with_model(
     tile_size: int,
     tile_overlap: int = 0,
     desc="tiled upscale",
+    composite_on_gpu: bool | None = None,
 ) -> Image.Image:
-    if shared.opts.composite_tiles_on_gpu:
+    """Composite on the device or on the host.
+
+    `composite_on_gpu` is the EFFECTIVE decision, not the owner's preference.
+    The caller preflights the device against the working set this image needs
+    and passes the answer, because the option alone cannot know whether the
+    frame fits. Left as None the option decides on its own, which is the old
+    behaviour and is kept for callers that have not preflighted.
+    """
+    if composite_on_gpu is None:
+        composite_on_gpu = shared.opts.composite_tiles_on_gpu
+
+    if composite_on_gpu:
         return upscale_with_model_gpu(model, img, tile_size=tile_size, tile_overlap=tile_overlap, desc=f"{desc} (GPU Composite)")
     else:
         return upscale_with_model_cpu(model, img, tile_size=tile_size, tile_overlap=tile_overlap, desc=f"{desc} (CPU Composite)")

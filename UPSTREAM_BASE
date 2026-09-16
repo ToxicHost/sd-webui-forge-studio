@@ -1,0 +1,50 @@
+repository=https://github.com/Haoming02/sd-webui-forge-classic.git
+branch=neo
+commit=97ff3a4024be2f0d5316f16e868e5ef822768872
+commit_date=2026-07-23T14:06:00+08:00
+synced=2026-07-23
+distribution_repository=https://github.com/ToxicHost/sd-webui-forge-studio
+baseline_tag=neo-baseline-2026-07-23
+current_work_branch=docs/phase0-complete-baseline
+studio_source_version=4.10.0-public-beta
+studio_source_commit=b316a4d87abd69837cd723403a7a41e22f97482d
+distribution_version=0.0.0-internal-alpha
+
+# Two DIFFERENT comparisons. Confusing them has already produced a false claim
+# that Studio was Neo-identical, so both are recorded with what each proves.
+#
+# neo_upstream_left_right: the local `neo` TRACKING branch against upstream/neo.
+#   0 0 means the tracking branch has not drifted. It says NOTHING about the
+#   product branch.
+# neo_head_left_right: the tracking branch against the product HEAD. This is
+#   the real divergence, and it is not small.
+neo_upstream_left_right=0 0
+neo_head_left_right=0 324
+# ...measured at THIS commit, not at HEAD. Every commit advances the right-hand
+# number, so a value pinned to a moving HEAD invalidates itself immediately --
+# the test that checks this field failed on the very next commit when it was
+# first written that way. Pinned to a named commit it stays verifiable forever.
+neo_head_left_right_at=91c04492
+neo_comparisons_checked=2026-08-18
+
+# What that divergence consists of, in Neo-owned files: 21 files under modules/
+# and modules_forge/, catalogued as THREE patch families in
+# docs/14_PATCH_INVENTORY.md. backend/, ldm_patched/ and extensions-builtin/
+# are untouched, so no diffusion inference, sampling, memory-management or
+# model-loading behaviour is patched. Everything else in the 324 is
+# Studio-owned code that did not exist in Neo.
+#
+# Read `neo_inference_paths_modified=0` narrowly. It means the DIFFUSION path
+# is unpatched, and that is still true. It does NOT mean no Neo compute
+# behaviour is patched: PATCH-003 changes upscale pixel handling and is the one
+# place Neo-owned code imports forge_headless. Until 2026-08-18 this block said
+# 15 files and two families, and described every patch as import-graph or
+# install-time. That was three days out of date and wrong about the third
+# family. Every number here is now recomputed from git by
+# tests/studio_alpha/test_patch_inventory.py rather than transcribed by hand.
+neo_owned_files_modified=21
+neo_inference_paths_modified=0
+neo_pixel_paths_modified=2
+
+# Historical, kept because it dates the baseline rather than describing now.
+working_tree_at_phase_0_start=clean

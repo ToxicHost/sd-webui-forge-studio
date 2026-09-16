@@ -27,7 +27,20 @@ from modules import (
     shared,
 )
 from modules.shared import opts, state
-from modules_forge import main_entry
+
+# `modules_forge.main_entry` is imported INSIDE `apply_refiner` rather than
+# here. It is a UI module -- `main_entry.py:4` is `import gradio as gr` -- and
+# importing it at module scope put Gradio behind the sampler registry: the
+# chain `sd_samplers -> sd_samplers_common -> main_entry -> gradio` loaded 119
+# Gradio modules before any sampler name could be read. Studio's runtime must
+# import no real Gradio (owner requirement; see the Backend Ownership Reset
+# handoff, 2026-08-11), and the sampler registry is needed at startup to
+# populate the sampler and scheduler menus truthfully.
+#
+# Deferring costs nothing here. Every use of `main_entry` in this module is a
+# refiner call inside that one function, so the import happens the first time
+# a refiner actually runs -- by which point a UI-bearing process has long since
+# imported it anyway. No behaviour changes on either path.
 
 SamplerDataTuple = namedtuple("SamplerData", ["name", "constructor", "aliases", "options"])
 
@@ -256,8 +269,13 @@ ORIGINAL_CHECKPOINT: str = None
 
 
 def apply_refiner(cfg_denoiser: "CFGDenoiser", x: torch.Tensor, sigma: torch.Tensor) -> bool:
+    # Deferred on purpose -- see the note beside the imports at the top of this
+    # module. Placed after the early return so a generation without a refiner
+    # never imports it at all.
     if not (refiner_switch_at := cfg_denoiser.p.refiner_switch_at):
         return False
+
+    from modules_forge import main_entry
 
     if opts.refiner_use_steps:
         if refiner_switch_at > cfg_denoiser.step / cfg_denoiser.total_steps:

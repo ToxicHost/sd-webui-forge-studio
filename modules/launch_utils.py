@@ -7,6 +7,7 @@ import importlib.util
 import json
 import logging
 import os
+import platform
 import re
 import shlex
 import subprocess
@@ -14,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any, Final, NamedTuple
 
-from modules import cmd_args, errors
+from modules import cmd_args, errors, platform_selection
 from modules.paths_internal import extensions_builtin_dir, extensions_dir, script_path
 from modules.timer import startup_timer
 from modules_forge import forge_version
@@ -286,9 +287,24 @@ def requirements_met(requirements_file):
 
 
 def prepare_environment():
-    torch_index_url = os.environ.get("TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu130")
-    torch_command = os.environ.get("TORCH_COMMAND", f"pip install torch==2.11.0+cu130 torchvision==0.26.0+cu130 --extra-index-url {torch_index_url}")
-    xformers_package = os.environ.get("XFORMERS_PACKAGE", f"xformers==0.0.35 --extra-index-url {torch_index_url}")
+    # Platform-aware selection. Windows and Linux keep the retained CUDA
+    # default; macOS gets a plain PyPI build with no CUDA suffix and no CUDA
+    # index; an unrecognized platform selects nothing rather than falling back
+    # to CUDA. Owner overrides are trusted verbatim.
+    torch_selection = platform_selection.select_torch_command(
+        system=platform.system(),
+        machine=platform.machine(),
+    )
+    if not torch_selection.supported or torch_selection.command is None:
+        raise SystemError(
+            f"No default PyTorch install command for this platform "
+            f"({platform.system()} {platform.machine()}). "
+            f"{torch_selection.reason}"
+        )
+    torch_index_url = torch_selection.index_url or platform_selection.CUDA_INDEX_URL
+    torch_command = torch_selection.command
+    # xformers is selected with the other optional accelerators below, in the
+    # platform branch, so macOS never constructs a CUDA index string for it.
     bnb_package = os.environ.get("BNB_PACKAGE", "bitsandbytes==0.49.2")
 
     packaging_package = os.environ.get("PACKAGING_PACKAGE", "packaging==26.0")
@@ -327,7 +343,9 @@ assert cuda or xpu or mps
 
         success, err = check_run_python(TORCH_CHECK, return_error=True)
         if not success:
-            if "older driver" in str(err).lower():
+            # NVIDIA driver guidance only reaches a CUDA selection. A macOS or
+            # CPU machine must never be told to update an NVIDIA driver.
+            if "older driver" in str(err).lower() and platform_selection.cuda_driver_guidance_applies(torch_selection):
                 raise SystemError("Please update your GPU driver to support cu130 ; or manually install older PyTorch")
             raise RuntimeError("PyTorch is not able to access GPU")
         startup_timer.record("torch GPU test")
@@ -347,16 +365,47 @@ assert cuda or xpu or mps
     if os.name == "nt":
         ver_TRITON += ".post26"
 
+        xformers_package = os.environ.get("XFORMERS_PACKAGE", f"{platform_selection.CUDA_XFORMERS_SPEC} --extra-index-url {torch_index_url}")
         sage_package = os.environ.get("SAGE_PACKAGE", f"https://github.com/woct0rdho/SageAttention/releases/download/v{ver_SAGE}-windows.post4/sageattention-{ver_SAGE}+{ver_CUDA}torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl")
         flash_package = os.environ.get("FLASH_PACKAGE", f"https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-{ver_FLASH}+{ver_CUDA}torch{v_TORCH}-{ver_PY}-{ver_PY}-win_amd64.whl")
         triton_package = os.environ.get("TRITION_PACKAGE", f"triton-windows=={ver_TRITON}")
         nunchaku_package = os.environ.get("NUNCHAKU_PACKAGE", f"https://github.com/nunchaku-ai/nunchaku/releases/download/v{ver_NUNCHAKU}/nunchaku-{ver_NUNCHAKU}+{v_CUDA}torch{v_TORCH}-{ver_PY}-{ver_PY}-win_amd64.whl")
 
+    elif torch_selection.platform_family == platform_selection.MACOS:
+        # Every retained optional accelerator is a CUDA build, a Windows wheel,
+        # or a linux_x86_64 wheel. None is installable on macOS, and no
+        # substitute is invented. Requesting one fails clearly below rather
+        # than attempting a wheel for another platform.
+        #
+        # xformers is included here so no CUDA index string is ever built for
+        # it on macOS -- the value is absent rather than present-but-guarded.
+        xformers_package = None
+        sage_package = None
+        flash_package = None
+        triton_package = None
+        nunchaku_package = None
+
     else:
+        xformers_package = os.environ.get("XFORMERS_PACKAGE", f"{platform_selection.CUDA_XFORMERS_SPEC} --extra-index-url {torch_index_url}")
         sage_package = os.environ.get("SAGE_PACKAGE", f"sageattention=={ver_SAGE}")
         flash_package = os.environ.get("FLASH_PACKAGE", f"https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-{ver_FLASH}+{ver_CUDA}torch{v_TORCH}-{ver_PY}-{ver_PY}-linux_x86_64.whl")
         triton_package = os.environ.get("TRITION_PACKAGE", f"triton=={ver_TRITON}")
         nunchaku_package = os.environ.get("NUNCHAKU_PACKAGE", f"https://github.com/nunchaku-ai/nunchaku/releases/download/v{ver_NUNCHAKU}/nunchaku-{ver_NUNCHAKU}+{v_CUDA}torch{v_TORCH}-{ver_PY}-{ver_PY}-linux_x86_64.whl")
+
+    def _require_accelerator(name: str, package: str | None) -> str:
+        """Fail clearly instead of installing another platform's wheel."""
+
+        if package is None:
+            selection = platform_selection.select_accelerator(
+                name,
+                system=platform.system(),
+                machine=platform.machine(),
+            )
+            raise SystemError(
+                f"--{name} is not supported on this platform. "
+                f"{selection.reason}"
+            )
+        return package
 
     def _verify_nunchaku() -> bool:
         if not is_installed("nunchaku"):
@@ -373,20 +422,20 @@ assert cuda or xpu or mps
         return current >= target
 
     if args.xformers and (not is_installed("xformers") or args.reinstall_xformers):
-        run_pip(f"install -U -I --no-deps {xformers_package}", "xformers")
+        run_pip(f"install -U -I --no-deps {_require_accelerator('xformers', xformers_package)}", "xformers")
         startup_timer.record("install xformers")
 
     if args.sage:
         if not is_installed("triton"):
             try:
-                run_pip(f"install -U -I --no-deps {triton_package}", "triton")
+                run_pip(f"install -U -I --no-deps {_require_accelerator('triton', triton_package)}", "triton")
             except RuntimeError:
                 print("Failed to install triton; Please manually install it")
             else:
                 startup_timer.record("install triton")
         if not is_installed("sageattention"):
             try:
-                run_pip(f"install -U -I --no-deps {sage_package}", "sageattention")
+                run_pip(f"install -U -I --no-deps {_require_accelerator('sage', sage_package)}", "sageattention")
             except RuntimeError:
                 print("Failed to install sageattention; Please manually install it")
             else:
@@ -394,7 +443,7 @@ assert cuda or xpu or mps
 
     if args.flash and not is_installed("flash_attn"):
         try:
-            run_pip(f"install {flash_package}", "flash_attn")
+            run_pip(f"install {_require_accelerator('flash', flash_package)}", "flash_attn")
         except RuntimeError:
             print("Failed to install flash_attn; Please manually install it")
         else:
@@ -402,7 +451,7 @@ assert cuda or xpu or mps
 
     if args.nunchaku and not _verify_nunchaku():
         try:
-            run_pip(f"install {nunchaku_package}", "nunchaku")
+            run_pip(f"install {_require_accelerator('nunchaku', nunchaku_package)}", "nunchaku")
         except RuntimeError:
             print("Failed to install nunchaku; Please manually install it")
         else:

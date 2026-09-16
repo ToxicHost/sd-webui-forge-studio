@@ -1,5 +1,4 @@
 import datetime
-import math
 import mimetypes
 import os
 import sys
@@ -14,7 +13,7 @@ from PIL import Image, PngImagePlugin  # noqa: F401
 import modules.infotext_utils as parameters_copypaste
 import modules.processing_scripts.comments as comments
 import modules.shared as shared
-from modules import extra_networks, gradio_extensions, launch_utils, paths_internal, processing, progress, prompt_parser, script_callbacks, scripts, sd_models, sd_samplers, sd_schedulers, shared_items, sysinfo, timer, ui_checkpoint_merger, ui_common, ui_extensions, ui_extra_networks, ui_loadsave, ui_postprocessing, ui_settings, ui_toprow  # noqa: F401
+from modules import extra_networks, gradio_extensions, launch_utils, paths_internal, processing, progress, prompt_parser, resolution, script_callbacks, scripts, sd_models, sd_samplers, sd_schedulers, shared_items, sysinfo, timer, ui_checkpoint_merger, ui_common, ui_extensions, ui_extra_networks, ui_loadsave, ui_postprocessing, ui_settings, ui_toprow  # noqa: F401
 from modules.call_queue import wrap_gradio_call, wrap_gradio_call_no_job, wrap_gradio_gpu_call, wrap_queued_call  # noqa: F401
 from modules.infotext_utils import PasteField
 from modules.paths import script_path
@@ -92,11 +91,11 @@ detect_image_size_symbol = "\U0001f4d0"  # 📐
 plaintext_to_html = ui_common.plaintext_to_html
 
 
-_STEP = int(opts.res_step)
+_STEP = resolution.resolution_step()
 
-
-def sRound(val: int | float) -> int:
-    return math.floor(val / _STEP + 0.5) * _STEP
+# Compatibility re-export: the implementation now lives in `modules/resolution.py`
+# so that `modules/processing.py` no longer imports the UI to round numbers.
+sRound = resolution.sRound
 
 
 def calc_resolution_hires(enable: bool, width: int, height: int, hr_scale: float, hr_resize_x: int, hr_resize_y: int) -> str:
@@ -884,7 +883,7 @@ def create_ui():
     for _interface, label, _ifid in interfaces:
         shared.tab_names.append(label)
 
-    with gr.Blocks(theme=shared.gradio_theme, analytics_enabled=False, title="Stable Diffusion", head=canvas_head) as demo:
+    with gr.Blocks(theme=shared.ensure_gradio_theme(), analytics_enabled=False, title="Stable Diffusion", head=canvas_head) as demo:
         settings.add_quicksettings()
 
         parameters_copypaste.connect_paste_params_buttons()

@@ -1,0 +1,2234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge Studio</title>
+<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.17.0">
+<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.17.0">
+<link rel="apple-touch-icon" href="/studio/static/brand/apple-touch-icon.png">
+<!-- All assets are local. The former font-CDN stylesheet is gone: the CSS
+     font stacks fall back to system faces, and the only bundled faces are
+     the OFL-licensed files under /studio/static/fonts/. -->
+<!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
+     of this file — stylesheets had no cache-buster, so deploys kept serving
+     stale CSS even after the versioned JS refreshed. -->
+<link rel="stylesheet" href="/studio/static/app.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.17.0">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════
+     TITLE BAR
+     ═══════════════════════════════════════════ -->
+
+<div class="titlebar">
+  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.17.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="tab-bar" id="appTabs">
+    <button class="active" data-app="studio">Canvas</button>
+    <button data-app="settings" data-i18n="tabs.settings">Settings</button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════ -->
+
+<div class="main">
+
+  <!-- =================== STUDIO PAGE =================== -->
+  <div class="app-page active" id="app-studio">
+
+    <!-- Toolstrip (left) -->
+    <div class="toolstrip" id="toolstrip">
+      <button class="tool-btn active" data-tool="brush" data-tool-tip="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
+      <button class="tool-btn" data-tool="eraser" data-tool-tip="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
+      <button class="tool-btn" data-tool="eyedropper" data-tool-tip="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" data-tool="fill" data-tool-tip="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
+      <button class="tool-btn" data-tool="gradient" data-tool-tip="gradient"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="21" x2="21" y2="3" opacity="0.4"/></svg></button>
+      <button class="tool-btn" data-tool="shape" data-tool-tip="shape"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
+      <button class="tool-btn" data-tool="text" data-tool-tip="text"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg></button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" data-tool="smudge" data-tool-tip="smudge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 21c-2 0-3-1-3-3s3-6 6-9c3-3 6-5 8-5s3 1 3 3-3 6-6 9-6 5-8 5z"/></svg></button>
+      <button class="tool-btn" data-tool="blur" data-tool-tip="blur"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9" opacity="0.4"/><circle cx="12" cy="12" r="5" opacity="0.7"/><circle cx="12" cy="12" r="2"/></svg></button>
+      <button class="tool-btn" data-tool="dodge" data-tool-tip="dodge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg></button>
+      <button class="tool-btn" data-tool="clone" data-tool-tip="clone"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="10" cy="12" r="7"/><circle cx="16" cy="12" r="7" stroke-dasharray="3 2"/></svg></button>
+      <button class="tool-btn" data-tool="liquify" data-tool-tip="liquify"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3c-2 4-6 5-6 9a6 6 0 0012 0c0-4-4-5-6-9z"/></svg></button>
+      <button class="tool-btn" data-tool="pixelate" data-tool-tip="pixelate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg></button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" data-tool="select" data-tool-tip="select"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="1"/></svg></button>
+      <button class="tool-btn" data-tool="ellipse" data-tool-tip="ellipse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg></button>
+      <button class="tool-btn" data-tool="lasso" data-tool-tip="lasso"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12c0-5 4-9 9-9s9 4 9 9-2 6-5 7"/><circle cx="16" cy="20" r="2.5"/></svg></button>
+      <button class="tool-btn" data-tool="wand" data-tool-tip="wand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21L15 9"/><path d="M15 3l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/></svg></button>
+      <button class="tool-btn" data-tool="crop" data-tool-tip="crop"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 2v4"/><path d="M6 6h12v12"/><path d="M18 22v-4"/><path d="M18 18H6V6"/></svg></button>
+      <button class="tool-btn" data-tool="transform" data-tool-tip="transform"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="5" width="14" height="14"/><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="19" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="19" r="2" fill="currentColor"/><circle cx="19" cy="19" r="2" fill="currentColor"/></svg></button>
+      <div class="tool-spacer"></div>
+      <div class="color-swatch" id="colorSwatch">
+        <div class="color-fg" id="colorFg" style="background:#000000;"></div>
+        <div class="color-bg" id="colorBg" style="background:#ffffff;"></div>
+      </div>
+    </div>
+
+    <!-- HSV Color Picker Popover -->
+    <div id="hsvPopup" style="display:none; position:fixed; z-index:100; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; padding:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <div style="display:flex;gap:10px;">
+        <div>
+          <canvas id="hsvWheel" width="160" height="160" style="cursor:crosshair;border-radius:4px;"></canvas>
+          <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+            <div id="fgBgSwap" style="position:relative;width:32px;height:32px;cursor:pointer;" data-tool-tip="colorsSwap">
+              <div id="bgSwatchInner" style="position:absolute;right:0;bottom:0;width:20px;height:20px;border:2px solid #555;border-radius:3px;background:#ffffff;"></div>
+              <div id="fgSwatchInner" style="position:absolute;left:0;top:0;width:20px;height:20px;border:2px solid #999;border-radius:3px;background:#000000;"></div>
+            </div>
+            <input id="hexInput" type="text" maxlength="7" value="#000000" style="width:70px;background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:11px;font-family:var(--mono);">
+          </div>
+        </div>
+        <div>
+          <canvas id="hsvSV" width="128" height="128" style="cursor:crosshair;border-radius:4px;"></canvas>
+          <div id="colorHistory" style="display:flex;gap:2px;margin-top:8px;flex-wrap:wrap;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Canvas workspace -->
+    <div class="canvas-area" id="canvasArea">
+      <div class="canvas-grid"></div>
+
+      <!-- Floating controls -->
+
+      <div id="ctxBarWrap" class="ctx-bar-wrap">
+      <div class="context-bar" id="contextBar">
+        <span class="ctx-drag-handle" id="ctxDragHandle" data-i18n-title="ctxBar.dragHandle.tooltip" title="Drag to reposition (double-click to reset)">&#x2801;&#x2801;</span>
+        <span class="ctx-scrub ctx-item" data-ctx="size" data-key="size" data-min="1" data-max="500" data-step="1" data-suffix="" data-scale="1">Size: 15</span>
+        <span class="ctx-scrub ctx-item" data-ctx="opacity" data-key="opacity" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Opacity: 100%</span>
+        <!-- CT3. Flow, beside Opacity because the pair is the point: Opacity
+             bounds the whole stroke and is applied once when it commits; Flow
+             is what ONE STAMP contributes. `S.brushFlow` existed as a field
+             with no writer anywhere and no control here, so it was a constant
+             1.0 that `pOp()` read and handed to every stamp. -->
+        <span class="ctx-scrub ctx-item" data-ctx="flow" data-key="flow" data-min="1" data-max="100" data-step="1" data-suffix="%" data-scale="100" data-help="help.canvas.flow">Flow: 100%</span>
+        <span class="ctx-scrub ctx-item" data-ctx="hardness" data-key="hardness" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Hardness: 100%</span>
+        <span class="ctx-scrub ctx-item" data-ctx="smoothing" data-key="smoothing" data-min="0" data-max="20" data-step="1" data-suffix="" data-scale="1">Smoothing: 4</span>
+        <!-- Symmetry toggle -->
+        <span class="ctx-item" data-ctx="sym-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;align-items:center;">
+          <button class="ctx-mode-btn active" data-sym="none" data-i18n-title="ctxBar.symmetry.none" title="No symmetry">&#x2205;</button>
+          <button class="ctx-mode-btn" data-sym="h" data-i18n-title="ctxBar.symmetry.horizontal" title="Horizontal symmetry">&#x2194;</button>
+          <button class="ctx-mode-btn" data-sym="v" data-i18n-title="ctxBar.symmetry.vertical" title="Vertical symmetry">&#x2195;</button>
+          <button class="ctx-mode-btn" data-sym="both" data-i18n-title="ctxBar.symmetry.both" title="Both axes">&#x271A;</button>
+          <button class="ctx-mode-btn" data-sym="radial" data-i18n-title="ctxBar.symmetry.radial" title="Radial symmetry">&#x2742;</button>
+          <span class="ctx-scrub" id="symAxesScrub" data-key="symmetryAxes" data-label="Axes" data-min="2" data-max="16" data-step="1" data-suffix="" data-scale="1" style="display:none;margin-left:2px;">Axes: 4</span>
+        </span>
+        <!-- Mask mode toggle (Q) — shown when brush is active -->
+        <!-- BE13. Aliased coverage and Pixel Perfect.
+             Shown for the brush AND the eraser: the eraser has no preset
+             system of its own and borrows the brush's settings, and the
+             acceptance requires it can use the same aliased method.
+             Pixel Perfect reports when it is out of regime rather than
+             silently doing nothing -- see `pixelPerfectActive`. -->
+        <span class="ctx-item" data-ctx="pixel-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn" id="aliasedBtn" data-i18n-title="ctxBar.aliased.tooltip" title="Aliased: hard pixel edges, no antialiasing">Alias</button>
+          <button class="ctx-mode-btn" id="pixelPerfectBtn" data-i18n-title="ctxBar.pixelPerfect.tooltip" title="Pixel Perfect: one-pixel corners (needs Aliased and a 1px brush)">PP</button>
+        </span>
+        <span class="ctx-item" data-ctx="mask-toggle" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn" id="maskModeBtn" data-tool-tip="mask">Mask</button>
+        </span>
+        <!-- Pen pressure toggle + Size/Opacity sub-options -->
+        <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn" id="pressureBtn" data-i18n-title="ctxBar.penPressure.tooltip" title="Pen pressure">Pen</button>
+          <button class="ctx-mode-btn pressure-sub" id="pressureSizeBtn" data-i18n-title="ctxBar.penPressure.size.tooltip" title="Pressure affects size" style="display:none;">S</button>
+          <button class="ctx-mode-btn pressure-sub" id="pressureOpacityBtn" data-i18n-title="ctxBar.penPressure.opacity.tooltip" title="Pressure affects opacity" style="display:none;">O</button>
+        </span>
+        <span class="ctx-scrub ctx-item" data-ctx="strength" data-key="strength" data-min="1" data-max="100" data-step="1" data-suffix="%" data-scale="100">Strength: 50%</span>
+        <!-- Shape sub-options (shown when shape tool active) -->
+        <span class="ctx-item" data-ctx="shape-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-smode="rect" data-i18n-title="shapeTool.rectangle" title="Rectangle">&#x25ad;</button>
+          <button class="ctx-mode-btn" data-smode="ellipse" data-i18n-title="shapeTool.ellipse" title="Ellipse">&#x25cb;</button>
+          <button class="ctx-mode-btn" data-smode="line" data-i18n-title="shapeTool.line" title="Line">&#x2571;</button>
+          <button class="ctx-mode-btn" data-sfill data-i18n-title="shapeTool.fillShape" title="Fill shape">&#x25a0;</button>
+        </span>
+        <!-- Gradient sub-options -->
+        <span class="ctx-item" data-ctx="grad-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-gmode="linear" data-i18n-title="gradientTool.linear" title="Linear">&#x2194;</button>
+          <button class="ctx-mode-btn" data-gmode="radial" data-i18n-title="gradientTool.radial" title="Radial">&#x25ce;</button>
+        </span>
+        <!-- Dodge/Burn mode -->
+        <span class="ctx-item" data-ctx="db-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-dbmode="dodge" data-i18n-title="dodgeTool.dodge" title="Dodge (lighten)">&#x2600;</button>
+          <button class="ctx-mode-btn" data-dbmode="burn" data-i18n-title="dodgeTool.burn" title="Burn (darken)">&#x25cf;</button>
+        </span>
+        <!-- Liquify sub-options -->
+        <span class="ctx-item" data-ctx="liquify-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn active" data-liqmode="move" data-i18n-title="liquifyTool.move" title="Move (push)">&#x2b95;</button>
+          <button class="ctx-mode-btn" data-liqmode="pinch" data-i18n-title="liquifyTool.pinch" title="Pinch (shrink)">&#x29bb;</button>
+          <button class="ctx-mode-btn" data-liqmode="bloat" data-i18n-title="liquifyTool.bloat" title="Bloat (expand)">&#x29be;</button>
+          <button class="ctx-mode-btn" data-liqmode="twirl_cw" data-i18n-title="liquifyTool.twirlCw" title="Twirl clockwise">&#x21bb;</button>
+          <button class="ctx-mode-btn" data-liqmode="twirl_ccw" data-i18n-title="liquifyTool.twirlCcw" title="Twirl counter-clockwise">&#x21ba;</button>
+          <span class="ctx-scrub" data-key="spacing" data-min="5" data-max="100" data-step="5" data-suffix="%" style="margin-left:4px;">Spacing: 20%</span>
+        </span>
+        <!-- Transform sub-options (shown when transform tool active) -->
+        <span class="ctx-item" data-ctx="transform-opts" style="display:flex;gap:4px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <label class="tf-field"><span class="tf-lbl">X</span><input type="number" id="tfX" class="tf-input" step="1"></label>
+          <label class="tf-field"><span class="tf-lbl">Y</span><input type="number" id="tfY" class="tf-input" step="1"></label>
+          <label class="tf-field"><span class="tf-lbl">W</span><input type="number" id="tfW" class="tf-input" step="1" min="4"></label>
+          <label class="tf-field"><span class="tf-lbl">H</span><input type="number" id="tfH" class="tf-input" step="1" min="4"></label>
+          <label class="tf-field"><span class="tf-lbl">R°</span><input type="number" id="tfR" class="tf-input tf-input-r" step="0.5"></label>
+          <span style="border-left:1px solid var(--border);padding-left:4px;margin-left:2px;">
+            <button class="ctx-mode-btn" id="tfSkewBtn" data-i18n-title="transformTool.skew.tooltip" title="Skew mode — edge handles shear (K)">Skew</button>
+            <button class="ctx-mode-btn" id="tfPerspBtn" data-i18n-title="transformTool.persp.tooltip" title="Perspective mode — drag corners freely (P)">Persp</button>
+            <button class="ctx-mode-btn" id="tfWarpBtn" data-i18n-title="transformTool.warp.tooltip" title="Warp mode — MLS deformation (W)">Warp</button>
+          </span>
+          <span style="border-left:1px solid var(--border);padding-left:4px;margin-left:2px;display:inline-flex;gap:2px;align-items:center;">
+            <button class="ctx-mode-btn" id="tfFlipHBtn" data-i18n-title="transformTool.flipH.tooltip" title="Flip layer horizontally (Ctrl+Shift+H)">Flip H</button>
+            <button class="ctx-mode-btn" id="tfFlipVBtn" data-i18n-title="transformTool.flipV.tooltip" title="Flip layer vertically (Ctrl+Shift+V)">Flip V</button>
+            <button class="ctx-mode-btn" id="tfRot90CCWBtn" data-i18n-title="transformTool.rot90Ccw.tooltip" title="Rotate layer 90° counter-clockwise">⟲ 90°</button>
+            <button class="ctx-mode-btn" id="tfRot90CWBtn" data-i18n-title="transformTool.rot90Cw.tooltip" title="Rotate layer 90° clockwise">⟳ 90°</button>
+            <button class="ctx-mode-btn" id="tfRot180Btn" data-i18n-title="transformTool.rot180.tooltip" title="Rotate layer 180°">180°</button>
+            <button class="ctx-mode-btn" id="tfRotArbBtn" data-i18n-title="transformTool.rotArb.tooltip" title="Rotate layer by an arbitrary angle">Rot°…</button>
+          </span>
+          <span id="tfWarpOpts" style="display:none;border-left:1px solid var(--border);padding-left:4px;margin-left:2px;gap:2px;align-items:center;">
+            <button class="ctx-mode-btn active" data-wdensity="3" data-i18n-title="transformTool.warp.density3" title="3×3 grid">3</button>
+            <button class="ctx-mode-btn" data-wdensity="4" data-i18n-title="transformTool.warp.density4" title="4×4 grid">4</button>
+            <button class="ctx-mode-btn" data-wdensity="5" data-i18n-title="transformTool.warp.density5" title="5×5 grid">5</button>
+            <span style="border-left:1px solid var(--border);padding-left:3px;margin-left:2px;">
+              <button class="ctx-mode-btn" data-wmode="affine" data-i18n-title="transformTool.warp.affine" title="Affine — allows shear">Aff</button>
+              <button class="ctx-mode-btn" data-wmode="similitude" data-i18n-title="transformTool.warp.similitude" title="Similitude — preserves angles">Sim</button>
+              <button class="ctx-mode-btn active" data-wmode="rigid" data-i18n-title="transformTool.warp.rigid" title="Rigid — preserves shape">Rig</button>
+            </span>
+          </span>
+        </span>
+        <!-- Eyedropper options -->
+        <span class="ctx-item" data-ctx="eye-opts" style="display:flex;gap:4px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <span class="ctx-scrub" data-key="sampleRadius" data-label="Radius" data-min="1" data-max="11" data-step="2" data-suffix="px" data-scale="1">Radius: 1px</span>
+          <button class="ctx-mode-btn" id="sampleMergedBtn" data-i18n="eyedropperTool.merged" data-i18n-title="eyedropperTool.merged.tooltip" title="Sample from all visible layers">Merged</button>
+        </span>
+        <!-- Crop options -->
+        <span class="ctx-item" data-ctx="crop-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn active" data-cropratio="0" data-i18n="cropTool.free" data-i18n-title="cropTool.free.tooltip" title="Free crop">Free</button>
+          <button class="ctx-mode-btn" data-cropratio="1:1" data-i18n-title="cropTool.square.tooltip" title="Square">1:1</button>
+          <button class="ctx-mode-btn" data-cropratio="5:4" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"5:4"}' title="5:4 — click again to swap">5:4</button>
+          <button class="ctx-mode-btn" data-cropratio="4:3" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"4:3"}' title="4:3 — click again to swap">4:3</button>
+          <button class="ctx-mode-btn" data-cropratio="3:2" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"3:2"}' title="3:2 — click again to swap">3:2</button>
+          <button class="ctx-mode-btn" data-cropratio="16:9" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"16:9"}' title="16:9 — click again to swap">16:9</button>
+          <button class="ctx-mode-btn" data-cropratio="2:1" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"2:1"}' title="2:1 — click again to swap">2:1</button>
+          <button class="ctx-mode-btn" data-cropratio="2.39:1" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"2.39:1"}' title="2.39:1 — click again to swap">2.39:1</button>
+          <span style="font-size:10px;color:var(--text-4);margin-left:4px;" data-i18n="cropTool.shiftLock">Shift=lock</span>
+        </span>
+        <!-- Lasso sub-options (shown when any lasso tool active) -->
+        <span class="ctx-item" data-ctx="lasso-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn active" data-lassotype="lasso" data-i18n="lassoTool.free" data-tool-tip="lassoFree">Free</button>
+          <button class="ctx-mode-btn" data-lassotype="polylasso" data-i18n="lassoTool.poly" data-tool-tip="lassoPoly">Poly</button>
+          <button class="ctx-mode-btn" data-lassotype="maglasso" data-i18n="lassoTool.mag" data-tool-tip="lassoMag">Mag</button>
+        </span>
+      </div>
+
+      <!-- Inpaint settings sub-bar — visible when mask mode (Q) is active -->
+      <div class="context-bar inpaint-bar" id="inpaintBar" style="display:none;">
+        <span class="ctx-inline">
+          <label data-i18n="inpaint.area">Area</label>
+          <select class="ctx-select" id="paramInpaintArea">
+            <option value="1" selected data-i18n="inpaint.area.onlyMasked">Only Masked</option>
+            <option value="0" data-i18n="inpaint.area.wholePicture">Whole Picture</option>
+          </select>
+        </span>
+        <span class="ctx-scrub inpaint-scrub" data-key="blur" data-min="0" data-max="64" data-step="1">Blur: 4</span>
+        <input type="hidden" id="paramMaskBlur" value="4">
+        <input type="hidden" id="paramBrushSize" value="5">
+        <span class="ctx-inline">
+          <label data-i18n="inpaint.fill">Fill</label>
+          <!-- "Latent Noise" (value 2) is deliberately ABSENT: it FAILS.
+               Proven on the GPU with everything else held fixed -- fills 0, 1
+               and 3 complete, fill 2 dies with GENERATION_FAILED / IndexError.
+               It is the only mode that reads the seed list in
+               `StableDiffusionProcessingImg2Img.init`.
+
+               WHY it fails is NOT yet known. An earlier version of this
+               comment blamed Studio for bypassing `process_images` and its
+               seed bookkeeping; that was wrong -- `process_images_inner`
+               populates `all_prompts` / `all_seeds` / `all_subseeds` itself
+               (modules/processing.py:913-925) and passes them into `init`.
+               The story was plausible and unverified, which is the one kind of
+               claim this repository refuses to ship.
+
+               Restore this option in the change that DIAGNOSES the failure.
+               Evidence/source-review/AR4.7-inpaint-controls.md -->
+          <select class="ctx-select" id="paramFill">
+            <option value="1" selected data-i18n="inpaint.fill.original">Original</option>
+            <option value="0" data-i18n="inpaint.fill.fill">Fill</option>
+            <option value="3" data-i18n="inpaint.fill.latentNothing">Latent Nothing</option>
+          </select>
+        </span>
+        <span class="ctx-scrub inpaint-scrub" data-key="padding" data-min="0" data-max="512" data-step="8">Padding: 64</span>
+        <input type="hidden" id="paramPadding" value="64">
+        <span style="flex:1;"></span>
+        <button class="ctx-mode-btn" id="clearMaskBtn" data-i18n-title="inpaint.clearMask.tooltip" title="Clear mask" style="color:var(--red);">&#x1f5d1; <span data-i18n="inpaint.clear">Clear</span></button>
+      </div>
+      </div>
+
+      <div class="brush-presets" id="brushPresets">
+        <!-- CT3. The named presets, which had no consumer at all: eight
+             definitions in `canvas-core.js` that nothing read. The buttons to
+             the right of this are TIP SHAPES, which is a different thing that
+             happens to share the word -- picking a preset sets one of them
+             along with everything else. -->
+        <select class="param-select" id="brushPresetPicker" data-help="help.canvas.brushPreset"
+                style="height:22px;font-size:10px;max-width:130px;margin-right:6px;">
+          <option value="">Preset…</option>
+        </select>
+        <button class="brush-preset-btn active" data-i18n-title="brushPreset.round" title="Round">&#x25cf;</button>
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.flat" title="Flat">&#x25ac;</button>
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.scatter" title="Scatter">&#x2726;</button>
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.marker" title="Marker">&#x25ae;</button>
+        <!-- CT3. DISABLED, on the owner's decision, rather than left clickable.
+             `S.customTip.data` is initialised to null and NOTHING in the
+             frontend ever writes it -- there is no import, no picker, no
+             loader. `stampAlphaMap`'s custom branch is guarded on that data,
+             so pressing this fell through to the standard-shape branch and
+             painted a plain Round brush. §8.3: "Do not silently degrade it to
+             Round." The engine side is written and stays; what is missing is
+             the way to give it a tip. -->
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.custom" disabled
+                title="Custom tip — not available yet: Studio has no way to load a tip image. The brush engine supports one; the importer is not built."
+                style="opacity:0.4;cursor:not-allowed;">&#x2702;</button>
+        <button class="brush-preset-btn" id="dynamicsToggle" data-i18n-title="brushPreset.dynamics" title="Brush Dynamics" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">&#x2699;</button>
+      </div>
+
+      <!-- Brush dynamics flyout -->
+      <div id="dynamicsPanel" style="display:none; position:absolute; bottom:80px; left:50%; transform:translateX(-50%); z-index:10; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; min-width:280px; font-size:10px; color:var(--text-3);">
+        <div style="font-weight:600;color:var(--text-1);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">
+          <span data-i18n="brushDynamics.title">Brush Dynamics</span>
+          <label style="font-weight:400;display:flex;align-items:center;gap:3px;cursor:pointer;">
+            <input type="checkbox" id="dynFollowStroke" checked style="accent-color:var(--accent);"> <span data-i18n="brushDynamics.followStroke">Follow stroke</span>
+          </label>
+        </div>
+        <!-- CT3. Buildup: whether stamps ACCUMULATE inside one stroke. Off, a
+             stamp can only raise a pixel to its own alpha, so scrubbing back
+             over your own wet stroke changes nothing. On, each stamp adds to
+             what is there, so a slow hand darkens -- the airbrush behaviour,
+             which did not exist here in any form. -->
+        <div style="margin-bottom:6px;">
+          <label style="font-weight:400;display:flex;align-items:center;gap:3px;cursor:pointer;" data-help="help.canvas.buildup">
+            <input type="checkbox" id="dynBuildup" style="accent-color:var(--accent);"> <span data-i18n="brushDynamics.buildup">Buildup (stamps accumulate)</span>
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:80px 1fr 32px;gap:3px 8px;align-items:center;">
+          <span data-i18n="brushDynamics.spacing">Spacing</span><input type="range" class="ctx-slider" id="dynSpacing" min="2" max="50" value="8"><span id="dynSpacingVal">0.08</span>
+          <span data-i18n="brushDynamics.sizeJitter">Size Jitter</span><input type="range" class="ctx-slider" id="dynSizeJitter" min="0" max="100" value="0"><span id="dynSizeJitterVal">0%</span>
+          <span data-i18n="brushDynamics.opacityJitter">Opacity Jitter</span><input type="range" class="ctx-slider" id="dynOpacityJitter" min="0" max="100" value="0"><span id="dynOpacityJitterVal">0%</span>
+          <span data-i18n="brushDynamics.scatter">Scatter</span><input type="range" class="ctx-slider" id="dynScatter" min="0" max="100" value="0"><span id="dynScatterVal">0%</span>
+          <span data-i18n="brushDynamics.rotationJitter">Rotation Jitter</span><input type="range" class="ctx-slider" id="dynRotJitter" min="0" max="100" value="0"><span id="dynRotJitterVal">0%</span>
+        </div>
+        <div style="border-top:1px solid var(--border-subtle);margin-top:8px;padding-top:6px;">
+          <div style="font-weight:600;color:var(--text-1);margin-bottom:6px;" data-i18n="brushDynamics.shape.title">Brush Shape</div>
+          <div style="display:grid;grid-template-columns:80px 1fr 32px;gap:3px 8px;align-items:center;">
+            <span data-i18n="brushDynamics.shape.ratio">Ratio</span><input type="range" class="ctx-slider" id="dynRatio" min="10" max="100" step="5" value="100"><span id="dynRatioVal">100%</span>
+            <span data-i18n="brushDynamics.shape.density">Density</span><input type="range" class="ctx-slider" id="dynDensity" min="5" max="100" step="5" value="100"><span id="dynDensityVal">100%</span>
+            <span data-i18n="brushDynamics.shape.spikes">Spikes</span><input type="range" class="ctx-slider" id="dynSpikes" min="2" max="12" step="1" value="2"><span id="dynSpikesVal">2</span>
+            <!-- CT3. Angle offsets the stamp rotation; with Follow stroke off
+                 it IS the angle. It replaces a hardcoded 0.4 radians that
+                 nothing explained. -->
+            <span data-i18n="brushDynamics.shape.angle">Angle</span><input type="range" class="ctx-slider" id="dynAngle" min="0" max="359" step="1" value="0"><span id="dynAngleVal">0&deg;</span>
+            <!-- CT3. IN only, and the label says so: taper out needs the end
+                 of the stroke, which is not known until the owner lets go. -->
+            <span data-i18n="brushDynamics.shape.taperIn">Taper in</span><input type="range" class="ctx-slider" id="dynTaperIn" min="0" max="100" step="5" value="0"><span id="dynTaperInVal">0%</span>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:6px;">
+            <span style="width:80px;" data-i18n="brushDynamics.falloff">Falloff</span>
+            <button class="ctx-mode-btn active" data-falloff="default" data-i18n-title="brushDynamics.falloff.std.tooltip" title="Standard smoothstep">Std</button>
+            <button class="ctx-mode-btn" data-falloff="gaussian" data-i18n-title="brushDynamics.falloff.gauss.tooltip" title="Gaussian bell curve">Gauss</button>
+          </div>
+        </div>
+        <!-- BE10. DOCUMENT PAPER.
+             Three of these four belong to the DOCUMENT, not to the brush, and
+             the heading says so because the panel around them is the brush
+             panel. Paper that followed the brush would be a filter wearing a
+             paper's name: real paper does not change when you pick up a
+             different pencil.
+             Tooth is the fourth and it IS the brush's -- how strongly THIS
+             preset finds the surface the document provides. -->
+        <div style="border-top:1px solid var(--border-subtle);margin-top:8px;padding-top:6px;">
+          <div style="font-weight:600;color:var(--text-1);margin-bottom:2px;" data-i18n="brushPaper.title">Paper</div>
+          <div style="color:var(--text-4);font-size:10px;margin-bottom:6px;" data-i18n="brushPaper.note">Belongs to the document. Every brush paints on the same surface.</div>
+          <div style="display:grid;grid-template-columns:80px 1fr 32px;gap:3px 8px;align-items:center;">
+            <span data-i18n="brushPaper.texture">Surface</span>
+            <select class="ctx-slider" id="paperTexture" style="grid-column:2 / span 2;">
+              <option value="none" data-i18n="brushPaper.none">None (smooth)</option>
+              <option value="fine" data-i18n="brushPaper.fine">Fine Grain</option>
+              <option value="canvas" data-i18n="brushPaper.canvas">Canvas</option>
+              <option value="rough" data-i18n="brushPaper.rough">Rough Tooth</option>
+              <option value="laid" data-i18n="brushPaper.laid">Laid</option>
+            </select>
+            <!-- SIGNED, and the range runs through zero on purpose. Positive
+                 reveals the peaks -- paint catching raised fibres, a pencil on
+                 rough paper. Negative reveals the valleys -- paint settling
+                 into the tooth, a wash. Zero is off, exactly. -->
+            <span data-i18n="brushPaper.depth">Depth</span><input type="range" class="ctx-slider" id="paperDepth" min="-100" max="100" step="5" value="0"><span id="paperDepthVal">0%</span>
+            <span data-i18n="brushPaper.scale">Scale</span><input type="range" class="ctx-slider" id="paperScale" min="25" max="400" step="25" value="100"><span id="paperScaleVal">100%</span>
+            <span data-i18n="brushPaper.tooth">Tooth</span><input type="range" class="ctx-slider" id="paperTooth" min="0" max="100" step="5" value="0"><span id="paperToothVal">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Viewport container -->
+      <div id="studio-viewport" style="position:absolute; inset:0; overflow:hidden; z-index:2;">
+        <!-- Canvas: NO CSS sizing. Both pixel buffer and display size set by _syncCanvasToViewport -->
+        <canvas id="studio-canvas"></canvas>
+      </div>
+      <!-- Live generation preview thumbnail (bottom-right corner of viewport) -->
+      <div id="canvasPreviewWrap" style="display:none; position:absolute; bottom:40px; right:12px; z-index:10; border-radius:6px; overflow:hidden; border:1px solid var(--border); background:var(--bg-surface); box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+        <img id="canvasPreview" style="display:block; min-width:480px; max-width:45vw; max-height:70vh; width:auto; height:auto; object-fit:contain;">
+        <div id="canvasPreviewLabel" style="position:absolute; top:4px; left:6px; font-size:9px; color:var(--text-4); font-family:var(--mono); background:rgba(0,0,0,0.5); padding:1px 5px; border-radius:3px;">Preview</div>
+        <button id="canvasPreviewClose" style="display:none; position:absolute; top:4px; right:6px; background:rgba(0,0,0,0.5); border:none; color:var(--text-3); cursor:pointer; font-size:14px; line-height:1; padding:2px 6px; border-radius:3px;" title="Close preview">✕</button>
+      </div>
+
+      <div class="canvas-status" id="canvasStatus">768 &times; 768 &ensp; 100%</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+
+    <!-- Deck layout only: row beneath the canvas that hosts the prompt /
+         LoRA / negative / generate blocks re-mounted from the params panel.
+         Inert (display:none) under Classic. -->
+    <div class="deck-zone" id="deckZone" data-zone="deck"></div>
+
+    <!-- Deck layout only: vertical session rail between canvas and params
+         panel mirroring the output gallery. Inert (display:none) under Classic. -->
+    <div class="session-strip" id="sessionStrip">
+      <div class="session-strip-head">
+        <span class="session-strip-label" data-i18n="sessionStrip.label">Session</span>
+        <span class="session-strip-count" id="sessionStripCount"></span>
+        <button class="session-strip-clear" id="sessionStripClear" data-i18n-title="sessionStrip.clear.tooltip" title="Clear session — saved files on disk are kept">&#x1f5d1;</button>
+        <button class="session-strip-hide" id="sessionStripHide" data-i18n-title="sessionStrip.hide.tooltip" title="Hide session strip">&#x2715;</button>
+        <button class="session-strip-collapse" id="sessionStripToggle" data-i18n-title="sessionStrip.collapse.tooltip" title="Collapse">&#x2039;</button>
+      </div>
+      <div class="session-strip-scroll" id="sessionStripScroll"></div>
+    </div>
+
+    <!-- Resizable divider for right panel -->
+    <div class="panel-divider" id="panelDivider" title="Drag to resize · Double-click to reset"></div>
+
+    <!-- Panel collapse toggle -->
+    <button class="panel-collapse-btn" id="panelCollapseBtn" title="Toggle side panel (\\)">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline id="collapseChevron" points="3,1 7,5 3,9"/></svg>
+    </button>
+
+    <!-- Right panel -->
+    <div class="panel-right" id="panelRight">
+      <!-- Customize mode: resize hit-strip on the panel's left edge.
+           Inert (display:none) unless customizing. -->
+      <div class="customize-divider" id="customizeDivider"></div>
+      <div class="panel-tabs" id="panelTabs">
+        <button class="panel-tab active" data-panel="generate" data-i18n="panels.generate">Generate</button>
+        <button class="panel-tab" data-panel="extensions" data-i18n="panels.extensions">Extensions</button>
+      </div>
+
+      <div class="panel-content">
+
+        <!-- ===== GENERATE TAB ===== -->
+        <div class="panel-page active" id="page-generate" data-zone="panel">
+
+          <!-- Parameter search — sticky within the panel scroll container -->
+          <div class="param-search-wrap" id="paramSearchWrap">
+            <input class="param-search-input" id="paramSearchInput" type="text" placeholder="Search parameters" data-i18n-placeholder="panel.search.placeholder" spellcheck="false">
+            <span class="param-search-count" id="paramSearchCount"></span>
+            <button class="param-search-clear" id="paramSearchClear" data-i18n-title="panel.search.clear" title="Clear search">&#x2715;</button>
+          </div>
+
+          <!-- Prompt -->
+          <div class="prompt-section">
+            <div class="prompt-box" data-block="prompt">
+              <textarea class="prompt-text" id="paramPrompt" rows="3" placeholder="Describe what to generate..."></textarea>
+              <div class="prompt-token-bar" id="tokenBar">
+                <span class="token-count" id="tokenCount"></span>
+              </div>
+            </div>
+            <div class="prompt-box lora-stack-box" id="loraStackBox" data-block="lora">
+              <div class="lora-stack-header">
+                <span class="lora-stack-label" data-i18n="loraStack.label">LoRAs</span>
+                <div class="lora-stack-actions">
+                  <button type="button" class="lora-stack-btn" id="loraStackImportBtn" data-i18n-title="loraStack.import.tooltip" title="Move &lt;lora:…&gt; tags from positive prompt into this stack">Import</button>
+                  <button type="button" class="lora-stack-btn" id="loraStackPreviewBtn" data-i18n-title="loraStack.preview.tooltip" title="Toggle compiled prompt preview">Preview</button>
+                  <button type="button" class="lora-stack-btn lora-stack-add-btn" id="loraStackAddBtn" data-i18n="loraStack.add" data-i18n-title="loraStack.add.tooltip" title="Browse LoRAs to add to the stack (Ctrl+L)">+ LoRAs</button>
+                </div>
+              </div>
+              <div class="lora-stack-rows" id="loraStackRows"></div>
+              <div class="lora-stack-preview" id="loraStackPreview">
+                <code class="lora-stack-preview-text"></code>
+              </div>
+              <input type="hidden" id="paramLoraStack" value="">
+            </div>
+            <div class="prompt-box" data-block="negative">
+              <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" placeholder="Negative prompt..."></textarea>
+            </div>
+            <div data-block="generate">
+              <div class="gen-row">
+                <button class="gen-btn" id="genBtn"><span class="gen-shine"></span><span data-i18n="actions.generate">Generate</span></button>
+                <button class="live-btn" id="liveToggleBtn" data-i18n="live.toggle.start" data-i18n-title="live.toggle.start.tooltip" title="Start Live Painting">▶ Live</button>
+              </div>
+              <div class="gen-actions">
+                <button id="interruptBtn" data-i18n="actions.interrupt">Interrupt</button>
+                <button id="skipBtn" data-i18n="actions.skip">Skip</button>
+              </div>
+            </div>
+
+            <div class="workflow-row" id="workflowRow"
+                 data-i18n-title="workflows.row.title"
+                 title="Save and re-apply named generation setups. Apply does not load the model immediately — that happens on the next Generate.">
+              <select class="param-select" id="workflowSelect">
+                <option value="" data-i18n="workflows.select.placeholder">Workflow…</option>
+              </select>
+              <div class="workflow-actions">
+                <button class="ar-btn" id="workflowApplyBtn"
+                        data-i18n="workflows.button.apply"
+                        data-i18n-title="workflows.button.applyTitle"
+                        title="Apply selected workflow to this tab">Apply</button>
+                <button class="ar-btn" id="workflowNewTabBtn"
+                        data-i18n="workflows.button.newTab"
+                        data-i18n-title="workflows.button.newTabTitle"
+                        title="Create a new tab with the selected workflow">New Tab</button>
+                <button class="ar-btn" id="workflowSaveBtn"
+                        data-i18n="workflows.button.save"
+                        data-i18n-title="workflows.button.saveTitle"
+                        title="Save current settings as a new workflow">Save</button>
+                <button class="ar-btn ar-clear" id="workflowDeleteBtn"
+                        data-i18n="workflows.button.delete"
+                        data-i18n-title="workflows.button.deleteTitle"
+                        title="Delete selected workflow">Delete</button>
+              </div>
+            </div>
+
+            <div class="ar-row canvas-load-reset-row">
+              <button class="ar-btn" id="loadImageBtn" title="Load image to canvas"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span data-i18n="actions.loadImage">Load Image</span></button>
+              <input type="file" id="loadImageInput" accept="image/*,.psd" style="display:none;">
+              <span style="flex:1;"></span>
+              <button class="ar-btn ar-clear canvas-reset-accent" id="clearCanvas" title="Clear canvas" data-i18n="actions.resetCanvas">Reset Canvas</button>
+            </div>
+
+            <!-- Live Painting Panel — visible when Live is active -->
+            <div class="live-panel" id="livePanel" style="display:none;">
+              <div class="live-panel-row">
+                <label data-i18n="live.strength">Strength</label>
+                <input type="range" id="liveStrength" min="0.05" max="1.0" step="0.05" value="0.3">
+                <span id="liveStrengthVal">0.3</span>
+              </div>
+              <div class="live-panel-row">
+                <label data-i18n="live.seed">Seed</label>
+                <span id="liveSeed" class="live-seed-display">—</span>
+                <button id="liveRerollBtn" data-i18n-title="live.reroll.tooltip" title="Re-roll seed" aria-label="Re-roll seed"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg></button>
+              </div>
+              <button class="live-apply-btn" id="liveApplyBtn" disabled data-i18n="actions.applyToLayer">Apply to Layer</button>
+            </div>
+          </div>
+
+          <!-- Output gallery -->
+          <div class="output-section" id="outputSection" style="display:none;" data-block="output">
+            <div class="output-grid" id="outputGrid"></div>
+            <div class="output-info" id="outputInfo"></div>
+            <div class="output-actions">
+              <button id="outputToCanvas" data-i18n-title="actions.resultToCanvas.tooltip" title="Place this result on the canvas as a new layer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg><span data-i18n="actions.resultToCanvas">Result → Canvas</span></button>
+              <button id="outputSave" data-i18n-title="actions.save.tooltip" title="Save using your default format and folder"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span data-i18n="actions.save">Save</span></button>
+              <button id="outputSaveAs" data-i18n-title="actions.saveAs.tooltip" title="Save As… — download to this computer through your browser (choose name, location, format)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg><span data-i18n="actions.saveAs">Save As…</span></button>
+              <button id="outputSaveMore" class="output-save-more" data-i18n-title="actions.saveMore.tooltip" title="More destinations — Save to Gallery, Export EXR"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+            </div>
+          </div>
+
+          <!-- Regional Prompting (between gallery and params for quick access) -->
+          <div id="regionSection" style="display:none;" data-block="regions">
+            <div class="section-header">
+              <span class="section-label" data-i18n="panels.regions">Regions</span>
+              <div class="section-actions">
+                <button id="regionAdd" data-i18n-title="region.add.tooltip" title="Add region">+</button>
+                <button id="regionClearAll" data-i18n-title="region.removeAll.tooltip" title="Remove all regions" aria-label="Remove all regions"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+              </div>
+            </div>
+            <div id="regionList"></div>
+          </div>
+
+          <!-- Soft Inpainting — visible when mask mode (Q) is active -->
+          <div id="softInpaintSection" style="display:none;">
+            <div class="collapse-section">
+              <div class="collapse-header">
+                <div class="collapse-check" id="checkSoftInpaint"></div>
+                <span class="collapse-title">Soft Inpainting</span>
+                <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+              </div>
+              <div class="collapse-body" id="panelSoftInpaint">
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Schedule Bias</label><input class="param-val" id="paramSoftBias" value="1" step="0.1" min="0" max="8"></div>
+                  <div class="param-cell"><label>Preservation</label><input class="param-val" id="paramSoftPreserve" value="0.5" step="0.05" min="0" max="8"></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:5px;">
+                  <div class="param-cell"><label>Contrast Boost</label><input class="param-val" id="paramSoftContrast" value="4" step="0.5" min="1" max="32"></div>
+                  <div class="param-cell"><label>Mask Influence</label><input class="param-val" id="paramSoftMaskInf" value="0" step="0.05" min="0" max="1"></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:5px;">
+                  <div class="param-cell"><label>Diff Threshold</label><input class="param-val" id="paramSoftDiffThresh" value="0.5" step="0.05" min="0" max="8"></div>
+                  <div class="param-cell"><label>Diff Contrast</label><input class="param-val" id="paramSoftDiffContrast" value="2" step="0.25" min="0" max="16"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Jobs. A native Canvas Strip parameter group, populated by
+               studio-model-controls.js and inert on hosts without a model
+               lifecycle.
+
+               This replaced "Model / Session lifecycle (internal alpha)",
+               which showed BUSY, an Unload button and `1 active - 0 queued`.
+               That panel was not wrong because it exposed a count; it was
+               wrong because it exposed implementation lifecycle concepts
+               instead of the feature they support. Resident model state,
+               leases, cache ownership and the internal BUSY chip are
+               diagnostics and stay on /api/model/state.
+
+               What an owner needs from a slow app is four answers: what is
+               running, what is waiting, what finished, and what can I do
+               about it. Unload survives as an optional VRAM release -- Forge
+               Neo exposes one too -- but it is deliberately NOT presented as
+               part of queue management. -->
+          <div class="param-section" style="padding-bottom:6px;" data-block="session" id="studioSessionBlock">
+            <div class="section-header">
+              <span class="section-label" data-i18n="panels.jobs">Jobs</span>
+              <div class="section-actions">
+                <span class="studio-stage-chip" id="studioStageChip" data-stage="idle">Idle</span>
+              </div>
+            </div>
+            <div class="studio-job-running" id="studioRunningJob" hidden></div>
+            <div class="studio-queue-section" id="studioQueuedSection" hidden>
+              <div class="studio-queue-heading">
+                <span id="studioQueuedHeading">Queued</span>
+                <button class="cn-upload-btn studio-queue-action" type="button" id="studioClearQueueBtn">Clear queued</button>
+              </div>
+              <div class="studio-queue-list" id="studioQueueList"></div>
+            </div>
+            <details class="studio-recent" id="studioRecentDisclosure" hidden>
+              <summary><span id="studioRecentSummary">Recent</span></summary>
+              <div class="studio-recent-list" id="studioRecentList"></div>
+            </details>
+            <div class="studio-session-note" id="studioSessionNote"></div>
+            <div class="studio-session-error" id="studioSessionError"></div>
+            <div class="param-grid cols-1" style="margin-top:6px;">
+              <div class="param-cell"><button class="cn-upload-btn" type="button" id="studioUnloadBtn" disabled>Unload model</button></div>
+            </div>
+          </div>
+
+          <!-- Model & VAE (FR-021: always visible at top) -->
+          <div class="param-section" style="padding-bottom:6px;" data-block="model">
+            <div class="param-grid cols-1">
+              <div class="param-cell">
+                <label>Model</label>
+                <div style="display:flex;gap:4px;">
+                  <select class="param-select" id="paramModel" style="flex:1;">
+                    <option>Loading models...</option>
+                  </select>
+                  <button class="cn-upload-btn" id="browseModelsBtn" data-i18n-title="ckpt.browse.tooltip" title="Browse checkpoints" style="padding:4px 6px;font-size:12px;">&#x25a6;</button>
+                  <button class="cn-upload-btn" id="refreshModelsBtn" title="Refresh model list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                </div>
+              </div>
+            </div>
+            <div class="param-grid cols-1" style="margin-top:4px;">
+              <div class="param-cell">
+                <label>VAE</label>
+                <div style="display:flex;gap:4px;">
+                  <select class="param-select" id="paramVAE" style="flex:1;">
+                    <option value="Automatic">Automatic</option>
+                  </select>
+                  <button class="cn-upload-btn" id="refreshVAEBtn" title="Refresh VAE list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                </div>
+              </div>
+            </div>
+            <div class="param-grid cols-1" id="textEncoderRow" style="margin-top:4px;display:none;">
+              <div class="param-cell">
+                <label>Text Encoder</label>
+                <div style="display:flex;gap:4px;">
+                  <select class="param-select" id="paramTextEncoder" style="flex:1;">
+                    <option value="None">None (bundled)</option>
+                  </select>
+                  <button class="cn-upload-btn" id="refreshTEBtn" title="Refresh text encoder list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sampling (FR-022: collapsible, open by default) -->
+          <div class="collapse-section" data-block="sampling">
+            <div class="collapse-header">
+              <span class="collapse-title">Sampling</span>
+              <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body open" id="panelSampling">
+            <div class="param-grid cols-2">
+              <div class="param-cell" data-help="help.sampling.sampler">
+                <label>Sampler</label>
+                <select class="param-select" id="paramSampler">
+                  <option value="">Loading…</option>
+                </select>
+              </div>
+              <div class="param-cell" data-help="help.sampling.scheduler">
+                <label>Scheduler</label>
+                <select class="param-select" id="paramScheduler">
+                  <option value="">Loading…</option>
+                </select>
+              </div>
+            </div>
+            <div class="param-grid cols-3 field-group">
+              <div class="param-cell" data-help="help.sampling.steps"><label>Steps</label><input class="param-val" id="paramSteps" data-min="1" data-step="1" value="30"></div>
+              <div class="param-cell" data-help="help.sampling.cfg"><label>CFG</label><input class="param-val" id="paramCFG" data-min="1" data-max="30" data-step="0.5" value="5.0"></div>
+              <div class="param-cell" data-help="help.sampling.denoise"><label>Denoise</label><input class="param-val" id="paramDenoise" data-min="0" data-max="1" data-step="0.01" value="0.81"></div>
+            </div>
+            <!-- Clip Skip. Its own row rather than a fourth column, so the
+                 three controls above keep their width and app.css needs no new
+                 grid class. Range and default are the ENGINE'S: Neo declares
+                 CLIP_stop_at_last_layers as a 1..12 slider defaulting to 2,
+                 where 1 disables and 2 skips one layer. Until now this existed
+                 in Studio only as something the Gallery read back out of an
+                 infotext, and the PNG-import path wrote to a #paramClipSkip
+                 that did not exist. -->
+            <div class="param-grid cols-2 field-group">
+              <div class="param-cell" data-help="help.sampling.clipSkip"><label>Clip Skip</label><input class="param-val" id="paramClipSkip" data-min="1" data-max="12" data-step="1" value="2"></div>
+            </div>
+            </div>
+          </div>
+
+          <!-- Canvas (FR-022: collapsible, open by default) -->
+          <div class="collapse-section" data-deck-span="2" data-block="frame">
+            <div class="collapse-header">
+              <span class="collapse-title">Canvas</span>
+              <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body open" id="panelCanvas">
+            <div class="size-row-wrap field-group">
+              <div class="param-grid cols-2" style="flex:1;min-width:0;">
+                <div class="param-cell"><label>Width</label><input class="param-val" id="paramWidth" data-min="8" data-step="64" value="768"></div>
+                <div class="param-cell"><label>Height</label><input class="param-val" id="paramHeight" data-min="8" data-step="64" value="768"></div>
+              </div>
+              <button id="swapWH" class="size-swap-btn" data-i18n-title="actions.swapDimensions.tooltip" title="Swap width and height" aria-label="Swap width and height"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 8 16 13"/><line x1="21" y1="8" x2="4" y2="8"/><polyline points="8 21 3 16 8 11"/><line x1="3" y1="16" x2="20" y2="16"/></svg></button>
+            </div>
+            <div class="ar-row" id="arBaseButtons">
+              <button class="ar-base-btn" data-base="512">512</button>
+              <button class="ar-base-btn" data-base="640">640</button>
+              <button class="ar-base-btn active" data-base="768">768</button>
+              <button class="ar-base-btn" data-base="896">896</button>
+              <button class="ar-base-btn" data-base="1024">1024</button>
+            </div>
+            <div class="ar-row" id="arButtons">
+              <button class="ar-btn active" data-ar="1:1">1:1</button>
+              <button class="ar-btn" data-ar="5:4">5:4</button>
+              <button class="ar-btn" data-ar="4:3">4:3</button>
+              <button class="ar-btn" data-ar="3:2">3:2</button>
+              <button class="ar-btn" data-ar="16:9">16:9</button>
+              <button class="ar-btn" data-ar="2:1">2:1</button>
+              <button class="ar-btn" data-ar="2.39:1">2.39:1</button>
+            </div>
+            <div class="ar-row ar-randomize-row" id="arRandomizeRow">
+              <span class="ar-rand-label">Randomize:</span>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandBase"> Base</label>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandRatio"> Ratio</label>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandOrientation"> Orientation</label>
+            </div>
+            <input type="hidden" id="arBasePoolData" value="[512,640,768,896,1024]">
+            <input type="hidden" id="arRatioPoolData" value='["1:1","5:4","4:3","3:2","16:9","2:1","2.39:1"]'>
+            </div>
+          </div>
+
+          <!-- Seed (FR-022: collapsible, open by default).
+               Batch Count and Batch Size were REMOVED: the job queue does
+               what Batch Count did, with per-job cancel and reorder, and
+               Batch Size needs a multi-result contract Studio does not
+               have -- `FirstImageRequest` is singular by name and by
+               construction. Owner decision, 2026-08-20.
+               Evidence/source-review/AR5.1-batch-removal.md -->
+          <div class="collapse-section" data-block="seedbatch">
+            <div class="collapse-header">
+              <span class="collapse-title">Seed</span>
+              <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body open" id="panelSeedBatch">
+            <div class="seed-row field-group">
+              <div class="param-cell"><label>Seed</label><input class="param-val" id="paramSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
+              <button class="seed-btn" id="seedRandom" title="Random">&#x1f3b2;</button>
+              <button class="seed-btn" id="seedRecycle" title="Recycle last">&#x1f501;</button>
+              <label class="extra-seed-toggle" data-help="help.seed.extra" style="margin:0;">
+                <input type="checkbox" id="checkExtra"> Extra
+              </label>
+            </div>
+            <div id="extraSeedSection" class="extra-seed-section" style="display:none;">
+              <div class="seed-row" style="margin-top:4px;">
+                <div class="param-cell"><label>Variation seed</label><input class="param-val" id="paramVarSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
+                <button class="seed-btn" id="varSeedRandom" title="Random">&#x1f3b2;</button>
+                <button class="seed-btn" id="varSeedRecycle" title="Recycle last">&#x1f501;</button>
+              </div>
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell">
+                  <label>Variation strength</label>
+                  <input type="range" class="param-range" id="paramVarStrength" min="0" max="1" step="0.01" value="0">
+                </div>
+                <div class="param-cell">
+                  <input class="param-val" id="paramVarStrengthVal" data-min="0" data-max="1" data-step="0.01" value="0">
+                </div>
+              </div>
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell"><label>Resize seed from width</label><input class="param-val" id="paramResizeSeedW" data-min="0" data-max="2048" data-step="8" value="0"></div>
+                <div class="param-cell"><label>Resize seed from height</label><input class="param-val" id="paramResizeSeedH" data-min="0" data-max="2048" data-step="8" value="0"></div>
+              </div>
+            </div>
+            <div class="param-grid cols-2 field-group">
+            </div>
+            </div>
+          </div>
+
+          <!-- Hires Fix -->
+          <div class="collapse-section" data-block="hires">
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkHires"></div>
+              <span class="collapse-title">Hires Fix</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelHires">
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell" data-help="help.hires.upscaler"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option value="">Loading…</option></select></div>
+                <div class="param-cell" data-help="help.hires.scale"><label>Scale</label><input class="param-val" id="paramHrScale" data-min="1" data-step="0.05" value="2.0"></div>
+              </div>
+              <div class="param-grid cols-2 field-group">
+                <div class="param-cell" data-help="help.hires.steps"><label>Steps</label><input class="param-val" id="paramHrSteps" data-min="0" data-step="1" value="0"></div>
+                <div class="param-cell" data-help="help.hires.denoise"><label>Denoise</label><input class="param-val" id="paramHrDenoise" data-min="0" data-max="1" data-step="0.01" value="0.30"></div>
+              </div>
+              <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+              <div class="param-grid cols-2 field-group secondary param-advanced">
+                <div class="param-cell" data-help="help.hires.cfg"><label>CFG</label><input class="param-val" id="paramHrCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
+                <!-- Hires checkpoint override. HIDDEN: this select is filled
+                     from the REAL model list, so it looks more functional than
+                     anything else on this panel, and choosing a checkpoint here
+                     changes nothing. `_hiresGroup` in app.js sends six of the
+                     ten fields the server accepts, and this is not among them.
+                     TO RESTORE: Hires needs temporary checkpoint/component
+                     override and restoration -- open P0.7 scope, per the
+                     planner handoff's P0.7 correction. -->
+                <div class="param-cell" data-help="help.hires.checkpoint" hidden><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ADetailer -->
+          <div class="collapse-section" data-block="adetailer">
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkAD"></div>
+              <span class="collapse-title">ADetailer</span>
+              <span class="ad-live-warning" id="adLiveWarning" style="display:none;">Disabled during Live — use Apply → Generate</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelAD">
+              <div style="margin-top:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check ad-slot-check checked" id="checkAD1"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 1 — Face</span>
+                </div>
+                <div class="param-grid cols-2">
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD1Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
+                </div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="1" style="margin-top:4px;">
+                  <div class="param-cell">
+                    <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
+                    <div class="ad-lora-controls"><div class="ad-lora-chips" id="adLoraChips1"></div><button type="button" class="prompt-browser-btn ad-lora-add" id="adLoraAdd1" data-ad-slot="1" data-i18n="adetailer.loras.add">+ LoRAs</button></div>
+                  </div>
+                  <input type="hidden" id="adLoraStack1">
+                </div>
+              </div>
+              <!-- Slot 2 -->
+              <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check ad-slot-check" id="checkAD2"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 2</span>
+                </div>
+                <div class="enable-gated" data-gate="checkAD2" style="display:none;">
+                <div class="param-grid cols-2">
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD2Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
+                </div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="2" style="margin-top:4px;">
+                  <div class="param-cell">
+                    <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
+                    <div class="ad-lora-controls"><div class="ad-lora-chips" id="adLoraChips2"></div><button type="button" class="prompt-browser-btn ad-lora-add" id="adLoraAdd2" data-ad-slot="2" data-i18n="adetailer.loras.add">+ LoRAs</button></div>
+                  </div>
+                  <input type="hidden" id="adLoraStack2">
+                </div>
+                </div>
+              </div>
+              <!-- Slot 3 -->
+              <div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check ad-slot-check" id="checkAD3"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 3</span>
+                </div>
+                <div class="enable-gated" data-gate="checkAD3" style="display:none;">
+                <div class="param-grid cols-2">
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD3Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
+                </div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="3" style="margin-top:4px;">
+                  <div class="param-cell">
+                    <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
+                    <div class="ad-lora-controls"><div class="ad-lora-chips" id="adLoraChips3"></div><button type="button" class="prompt-browser-btn ad-lora-add" id="adLoraAdd3" data-ad-slot="3" data-i18n="adetailer.loras.add">+ LoRAs</button></div>
+                  </div>
+                  <input type="hidden" id="adLoraStack3">
+                </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Upscale (standalone, post-generation) -->
+          <div class="collapse-section" data-block="upscale">
+            <div class="collapse-header" id="upscaleHeader">
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+              <span class="collapse-title">Upscale</span>
+            </div>
+            <div class="collapse-body" id="panelUpscale">
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell" data-help="help.upscale.upscaler"><label>Upscaler</label><select class="param-select" id="paramUpscaleModel"><option value="">Loading…</option></select></div>
+                <div class="param-cell" data-help="help.upscale.scale"><label>Scale</label><input class="param-val" id="paramUpscaleScale" data-min="1" data-max="8" data-step="0.05" value="2.0"></div>
+              </div>
+              <!-- SHOWN since NG-4. These were hidden under D8 -- an absent
+                   service is hidden -- because `/studio/upscale_and_refine`
+                   refuses `run_refine` and `run_ad` BY NAME rather than
+                   accepting and ignoring them, so the controls named a
+                   pipeline nobody had built.
+
+                   The route still refuses both, and still needs no checkpoint
+                   and no sampling, which is what makes the plain upscale
+                   affordable on a 6 GB card. What changed is that the second
+                   half is no longer absent: the upscaled frame goes onto the
+                   Canvas and the CANONICAL generation runs over it, so refine
+                   and Auto Detail arrive with the queue, the public job id,
+                   Cancel, progress, the result save, the Gallery notification
+                   and the metadata already proven on that path.
+
+                   The service is present, so the controls are visible. -->
+              <div style="margin-top:6px;display:flex;align-items:center;gap:6px;" data-help="help.upscale.refine">
+                <div class="collapse-check" id="checkUpscaleRefine"></div>
+                <span style="font-size:10px;color:var(--text-3);">Refine after upscale (img2img pass)</span>
+              </div>
+              <!-- NG-4: Auto Detail is a SIBLING of refine, not a child of it.
+                   It was gated on `checkUpscaleRefine`, so "sharpen the faces
+                   on this upscale, leave the rest alone" -- which is the most
+                   useful of the three combinations on a small card, because it
+                   re-renders crops instead of the whole frame -- could not be
+                   asked for at all. The panel now runs it at denoise 0. -->
+              <div style="margin-top:4px;display:flex;align-items:center;gap:6px;" id="upscaleADRow" data-help="help.upscale.runAD">
+                <div class="collapse-check" id="checkUpscaleAD"></div>
+                <span style="font-size:10px;color:var(--text-3);">Run ADetailer</span>
+              </div>
+              <div class="param-grid cols-2 field-group enable-gated" id="upscaleRefineParams" data-gate="checkUpscaleRefine" style="display:none;">
+                <div class="param-cell" data-help="help.upscale.steps"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" data-min="1" data-max="150" data-step="1" value="20"></div>
+                <div class="param-cell" data-help="help.upscale.denoise"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" data-min="0" data-max="1" data-step="0.01" value="0.3"></div>
+              </div>
+              <button class="gen-btn" id="upscaleBtn" style="margin-top:8px;background:var(--bg-raised);border:1px solid var(--border);color:var(--text-2);font-size:11px;height:30px;" data-i18n="actions.upscaleCanvas">UPSCALE CANVAS</button>
+            </div>
+          </div>
+
+          <!-- ControlNet.
+
+               HIDDEN, not disabled. Nothing here reaches generation: the
+               canonical request has no ControlNet group, `buildCNJson()` in
+               app.js is only reachable after an earlier `return`, and the
+               header badge that reads "1 unit" / "2 units" is computed from
+               local DOM state alone. Sixteen controls that remembered their
+               values and changed nothing.
+
+               This is a static hide rather than a capability probe because
+               there is no service to ask. The absence is a fact about the
+               generation contract, not about a running host.
+
+               TO RESTORE: the canonical request needs a ControlNet group
+               (presentation.py `_GENERATION_FIELDS` and the frozen
+               `FirstImageRequest`), an offline-safe preprocessor catalogue,
+               and owned model/image handles. The slot count -- two here, three
+               in some planning documents -- is an owner decision, not an
+               implementation detail to be settled by whoever unhides this. -->
+          <div class="collapse-section" data-block="controlnet" hidden>
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkCN"></div>
+              <span class="collapse-title">ControlNet</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelCN">
+              <div style="margin-top:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check cn-unit-check" id="checkCN1"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 1</span>
+                </div>
+                <div class="param-grid cols-2">
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN1Module"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN1Model"><option>None</option></select></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
+                    <select class="param-select" id="paramCN1Source">
+                      <option value="Canvas">Canvas</option>
+                      <option value="Active Layer">Active Layer</option>
+                      <option value="Upload">Upload</option>
+                    </select>
+                  </div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN1Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
+                </div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="cn-upload-row param-advanced" id="cnUpload1" style="display:none;margin-top:4px;">
+                  <button class="cn-upload-btn" id="cnUploadBtn1">Choose Image...</button>
+                  <input type="file" id="cnUploadInput1" accept="image/*" style="display:none;">
+                  <img class="cn-upload-thumb" id="cnUploadThumb1" style="display:none;">
+                  <button class="cn-upload-clear" id="cnUploadClear1" style="display:none;" title="Remove">&#x2715;</button>
+                </div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN1Start" data-min="0" data-max="1" data-step="0.05" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN1End" data-min="0" data-max="1" data-step="0.05" value="1.0"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
+                    <select class="param-select" id="paramCN1Mode">
+                      <option>Balanced</option>
+                      <option>My prompt is more important</option>
+                      <option>ControlNet is more important</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <!-- Unit 2 -->
+              <div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check cn-unit-check" id="checkCN2"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 2</span>
+                </div>
+                <div class="enable-gated" data-gate="checkCN2" style="display:none;">
+                <div class="param-grid cols-2">
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN2Module"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN2Model"><option>None</option></select></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
+                    <select class="param-select" id="paramCN2Source">
+                      <option value="Canvas">Canvas</option>
+                      <option value="Active Layer">Active Layer</option>
+                      <option value="Upload">Upload</option>
+                    </select>
+                  </div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN2Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
+                </div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="cn-upload-row param-advanced" id="cnUpload2" style="display:none;margin-top:4px;">
+                  <button class="cn-upload-btn" id="cnUploadBtn2">Choose Image...</button>
+                  <input type="file" id="cnUploadInput2" accept="image/*" style="display:none;">
+                  <img class="cn-upload-thumb" id="cnUploadThumb2" style="display:none;">
+                  <button class="cn-upload-clear" id="cnUploadClear2" style="display:none;" title="Remove">&#x2715;</button>
+                </div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN2Start" data-min="0" data-max="1" data-step="0.05" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN2End" data-min="0" data-max="1" data-step="0.05" value="1.0"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
+                    <select class="param-select" id="paramCN2Mode">
+                      <option>Balanced</option>
+                      <option>My prompt is more important</option>
+                      <option>ControlNet is more important</option>
+                    </select>
+                  </div>
+                </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Layers (wrapper makes the header+body pair one layout block) -->
+          <div data-block="layers">
+          <div class="section-header" data-collapse="layersList">
+            <span class="section-arrow">&#x25BC;</span>
+            <span class="section-label" data-i18n="panels.layers">Layers</span>
+            <div class="section-actions" id="layerActions">
+              <button data-i18n-title="layer.add.tooltip" title="Add layer" id="layerAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+              <button data-i18n-title="layer.addBrightness.tooltip" title="Add Brightness/Contrast" id="layerAddBrightness"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path fill="currentColor" stroke="none" d="M12 3a9 9 0 0 1 0 18z"/></svg></button>
+              <button data-i18n-title="layer.addHue.tooltip" title="Add Hue/Saturation" id="layerAddHue"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5c-3.5 4.5-7 7.5-7 11.5a7 7 0 0 0 14 0c0-4-3.5-7-7-11.5z"/></svg></button>
+              <button data-i18n-title="layer.addLevels.tooltip" title="Add Levels" id="layerAddLevels"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="20" x2="5" y2="14"/><line x1="10" y1="20" x2="10" y2="9"/><line x1="15" y1="20" x2="15" y2="5"/><line x1="20" y1="20" x2="20" y2="11"/></svg></button>
+              <span class="action-sep" aria-hidden="true"></span>
+              <button data-i18n-title="layer.duplicate.tooltip" title="Duplicate" id="layerDupe"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
+              <button data-i18n-title="layer.moveUp.tooltip" title="Move up" id="layerUp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+              <button data-i18n-title="layer.moveDown.tooltip" title="Move down" id="layerDown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg></button>
+              <button data-i18n-title="layer.mergeDown.tooltip" title="Merge down" id="layerMerge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><line x1="4" y1="20" x2="20" y2="20"/></svg></button>
+              <button data-i18n-title="layer.delete.tooltip" title="Delete" id="layerDel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
+              <span class="action-sep" aria-hidden="true"></span>
+              <button data-i18n-title="layer.export.tooltip" title="Save Canvas / PSD" id="layerSave"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
+            </div>
+          </div>
+          <div id="layersList" class="section-body">
+            <div class="layer-item selected">
+              <div class="layer-thumb" style="background:linear-gradient(135deg,#3a4a5a,#5a4a3a);"></div>
+              <div class="layer-info"><div class="layer-name">Layer 1</div><div class="layer-meta">Normal &middot; 100%</div></div>
+              <div class="layer-vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+            <div class="layer-item">
+              <div class="layer-thumb" style="background:#2a2a30;"></div>
+              <div class="layer-info"><div class="layer-name">Background</div><div class="layer-meta">Normal &middot; 100%</div></div>
+              <div class="layer-vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+          </div>
+          </div>
+
+          <!-- Action History (wrapper makes the header+body pair one layout block) -->
+          <div data-block="history">
+          <div class="section-header" data-collapse="historyList">
+            <span class="section-arrow">&#x25BC;</span>
+            <span class="section-label" data-i18n="panels.history">History</span>
+            <div class="section-actions">
+              <button id="historyUndo" data-i18n-title="history.undo.tooltip" title="Undo (Ctrl+Z)" style="font-size:12px;">&#x21b6;</button>
+              <button id="historyRedo" data-i18n-title="history.redo.tooltip" title="Redo (Ctrl+Shift+Z)" style="font-size:12px;">&#x21b7;</button>
+            </div>
+          </div>
+          <div id="historyList" class="section-body"></div>
+          </div>
+
+          <!-- Customize mode: tray of hidden blocks. Inert (display:none)
+               unless customizing or blocks are hidden. -->
+          <div class="hidden-tray" id="hiddenTray">
+            <div class="hidden-tray-label" data-i18n="layout.hiddenTray.label">Hidden blocks — click to restore</div>
+            <div class="hidden-tray-chips" id="hiddenTrayChips"></div>
+          </div>
+
+        </div>
+
+        <!-- ===== SETTINGS TAB ===== -->
+        <!-- ===== EXTENSIONS TAB ===== -->
+        <div class="panel-page" id="page-extensions">
+          <div class="extensions-content" id="extensionsContent">
+            <div class="ext-loading" id="extLoading">Loading extensions...</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== SETTINGS PAGE =================== -->
+  <div class="app-page settings-page" id="app-settings">
+    <div class="settings-page-shell">
+      <header class="settings-page-header">
+        <div class="settings-header-text">
+          <h1 data-i18n="settings.title">Settings</h1>
+          <p data-i18n="settings.description">Configure Forge Studio preferences and application behavior.</p>
+        </div>
+        <div class="settings-search">
+          <svg class="settings-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <input type="search" id="settingsSearchInput" class="settings-search-input" role="searchbox" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.search.placeholder" placeholder="Search settings, shortcuts, extensions…" data-i18n-aria-label="settings.search.ariaLabel" aria-label="Search settings" aria-controls="settingsSearchResults">
+          <button type="button" id="settingsSearchClear" class="settings-search-clear" hidden data-i18n-aria-label="settings.search.clear" aria-label="Clear search">&times;</button>
+        </div>
+      </header>
+
+      <div class="settings-layout">
+        <nav class="settings-sidebar" aria-label="Settings categories" data-i18n-aria-label="settings.nav.ariaLabel">
+          <select class="settings-nav-select" id="settingsNavSelect" aria-label="Settings category" data-i18n-aria-label="settings.nav.selectAria">
+            <option value="general" data-i18n="settings.cat.general.title">General</option>
+            <option value="appearance-layout" data-i18n="settings.cat.appearance.title">Appearance &amp; Layout</option>
+            <option value="canvas-tools" data-i18n="settings.cat.canvas.title">Canvas &amp; Tools</option>
+            <option value="generation-preview" data-i18n="settings.cat.generation.title">Generation &amp; Preview</option>
+            <option value="prompts-metadata" data-i18n="settings.cat.prompts.title">Prompts &amp; Metadata</option>
+            <option value="output-files" data-i18n="settings.cat.output.title">Output &amp; Files</option>
+            <option value="performance-vram" data-i18n="settings.cat.performance.title">Performance &amp; VRAM</option>
+            <option value="keyboard-shortcuts" data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</option>
+            <option value="extensions" data-i18n="settings.cat.extensions.title">Extensions</option>
+            <option value="about" data-i18n="settings.cat.about.title">About</option>
+          </select>
+          <div class="settings-nav-list" role="tablist" aria-orientation="vertical">
+            <button class="settings-nav-button active" type="button" data-settings-nav="general" role="tab" aria-current="page" aria-selected="true">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M8 1.5l5.5 3v4c0 3-2.3 5.3-5.5 6-3.2-.7-5.5-3-5.5-6v-4L8 1.5z"/></svg>
+              <span data-i18n="settings.cat.general.title">General</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="appearance-layout" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 2v12M2 8h12"/></svg>
+              <span data-i18n="settings.cat.appearance.title">Appearance &amp; Layout</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="canvas-tools" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6h12"/></svg>
+              <span data-i18n="settings.cat.canvas.title">Canvas &amp; Tools</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="generation-preview" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M8 1.5l1.6 4.3 4.4.3-3.4 2.9 1.1 4.3L8 11.2 4.3 13.6l1.1-4.3L2 6.4l4.4-.3L8 1.5z"/></svg>
+              <span data-i18n="settings.cat.generation.title">Generation &amp; Preview</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="prompts-metadata" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M3 3.5h10M3 7h10M3 10.5h6"/></svg>
+              <span data-i18n="settings.cat.prompts.title">Prompts &amp; Metadata</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="output-files" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 5.5l1-2h4l1 2h5v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7z"/></svg>
+              <span data-i18n="settings.cat.output.title">Output &amp; Files</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="performance-vram" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 1v2M10 1v2M6 13v2M10 13v2M1 6h2M1 10h2M13 6h2M13 10h2"/></svg>
+              <span data-i18n="settings.cat.performance.title">Performance &amp; VRAM</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="keyboard-shortcuts" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M4.5 9.5h7"/></svg>
+              <span data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="extensions" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M6 2.5h4v2.5h2.5v3H10v3.5H6V8H3.5V5H6V2.5z"/></svg>
+              <span data-i18n="settings.cat.extensions.title">Extensions</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="about" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.5v3.5M8 5h.01"/></svg>
+              <span data-i18n="settings.cat.about.title">About</span>
+            </button>
+          </div>
+        </nav>
+
+        <div class="settings-main settings-content">
+          <p class="settings-search-status" id="settingsSearchStatus" aria-live="polite" role="status"></p>
+          <div class="settings-search-empty" id="settingsSearchEmpty" hidden>
+            <p data-i18n="settings.search.noResults">No settings match your search.</p>
+          </div>
+          <div id="settingsSearchResults" hidden></div>
+
+          <!-- ══════════ GENERAL ══════════ -->
+          <section class="settings-category" data-settings-category="general" aria-labelledby="settings-cat-general-title" tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-general-title" data-i18n="settings.cat.general.title">General</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.general.sub">App-wide preferences, session persistence, defaults, and language.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <!-- Model folders. First card in General because it is the first
+                   thing an owner has to configure: without it the Canvas Strip
+                   model, text encoder and VAE selectors have nothing to show.
+                   The three fields are one transaction - see #modelFoldersSave. -->
+              <section class="settings-card" data-settings-section="model-folders">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.card.modelFolders.title">Model folders</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.modelFolders.summary">Tell Studio where your checkpoints, text encoders and VAEs live.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <p class="settings-item-description" data-i18n="settings.modelFolders.intro">These folders are read on the machine running Studio. Studio only lists model files directly inside each folder — it does not search subfolders, and it skips shortcuts, symlinks and cloud-placeholder files, so a folder of links will look empty.</p>
+
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootCheckpoint" data-setting-search="model folder checkpoint models directory path safetensors ckpt gguf">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.checkpoint">Checkpoint folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusCheckpoint" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootCheckpoint" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListCheckpoint"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddCheckpoint" data-role="Checkpoint" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseCheckpoint" data-role="checkpoint" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
+
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootTextEncoder" data-setting-search="model folder text encoder clip t5 directory path">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.textEncoder">Text encoder folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusTextEncoder" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootTextEncoder" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListTextEncoder"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddTextEncoder" data-role="TextEncoder" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseTextEncoder" data-role="text_encoder" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
+
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootVae" data-setting-search="model folder vae autoencoder directory path">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.vae">VAE folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusVae" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootVae" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListVae"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddVae" data-role="Vae" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseVae" data-role="vae" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
+
+                  <!-- Auto Detail detectors. A fourth ROOT, not a fourth part
+                       of the model: a detector is loaded per Auto Detail slot
+                       and released, so it never joins the resident session.
+                       That distinction is why `MODEL_ROLES` gained `adetailer`
+                       and `RESIDENT_MODEL_ROLES` did not. -->
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootAdetailer" data-setting-search="model folder adetailer auto detail detector yolo directory path">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.adetailer">Auto Detail detector folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusAdetailer" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootAdetailer" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListAdetailer"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddAdetailer" data-role="Adetailer" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseAdetailer" data-role="adetailer" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
+
+                  <!-- LoRAs. A FIFTH root, and like the detector folder it is
+                       not part of the resident model: a LoRA is named in the
+                       prompt as <lora:name:weight> and applied per generation,
+                       so it joins `MODEL_ROLES` and not
+                       `RESIDENT_MODEL_ROLES`.
+                       Studio projects this into the engine's own scan, so the
+                       names offered are names the engine will resolve. -->
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootLora" data-setting-search="model folder lora loras network directory path">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.lora">LoRA folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusLora" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootLora" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListLora"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddLora" data-role="Lora" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseLora" data-role="lora" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
+                  <div class="settings-item-description" id="modelRootDetectorSummary"></div>
+
+                  <div class="settings-action-row" data-setting-key="modelFoldersSave" data-setting-search="save model folders apply directories">
+                    <div class="settings-item-copy">
+                      <strong data-i18n="settings.modelFolders.saveTitle">Save model folders</strong>
+                      <p id="modelFoldersMessage" data-i18n="settings.modelFolders.saveDesc">Every folder is saved together. If one cannot be used, nothing changes and your current folders keep working.</p>
+                    </div>
+                    <button class="defaults-btn" id="modelFoldersSave" data-i18n="settings.modelFolders.save">Save folders</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="session">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.card.session.title">Session</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.session.summary">Choose what Studio restores between visits.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleRememberSession" data-setting-search="remember last session restore reopen persist previous">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.generation.rememberSession">Remember last session</span>
+                      <p class="settings-item-description" data-i18n="settings.card.session.rememberDesc">Reopen Studio with your previous prompts and settings restored.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
+                  </div>
+
+                  <!-- Session categories: shown only when Remember last session is on (app.js drives #sessionCategories visibility). Kept intact with its own accordion. -->
+                  <div id="sessionCategories" style="display:none;">
+                    <div class="session-accordion" id="sessionAccordionHeader">
+                      <span class="session-accordion-label">
+                        <svg class="session-accordion-arrow" id="sessionAccordionArrow" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+                        <span data-i18n="settings.card.session.categories">Session categories</span>
+                      </span>
+                    </div>
+                    <div id="sessionAccordionBody" style="display:none;" class="session-accordion-body">
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="prompts" checked> Prompts</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="gen" checked> Generation params &amp; AR pools</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="hires" checked> Hires Fix</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="ad" checked> ADetailer</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="upscale" checked> Upscale</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="canvas" checked> Canvas settings</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="brush" checked> Brush settings</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="format" checked> Output format</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="inpaint" checked> Inpaint settings</label>
+                    </div>
+                  </div>
+
+                  <div class="settings-item" data-setting-key="settingSessionLimit" data-setting-search="session history size limit count entries scratch previews">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.generation.sessionLimit">Session history size</span>
+                      <p class="settings-item-description" data-i18n-title="settings.generation.sessionLimit.tooltip" data-i18n="settings.card.session.limitDesc">How many recent results the session keeps (8–200). Saved files on disk are never touched.</p>
+                    </div>
+                    <div class="settings-item-control"><input type="number" class="param-val settings-num" id="settingSessionLimit" min="8" max="200" step="1" value="50"></div>
+                  </div>
+
+                  <div class="settings-action-row" data-setting-key="clearSessionBtn" data-setting-search="clear session history delete scratch previews reset">
+                    <div class="settings-item-copy">
+                      <strong data-i18n="settings.card.session.clearTitle">Clear session history</strong>
+                      <p data-i18n="settings.card.session.clearDesc">Empties the session history and its temporary scratch previews. Saved output files are never deleted.</p>
+                    </div>
+                    <button class="defaults-btn defaults-btn-danger" id="clearSessionBtn" data-i18n-title="settings.generation.clearSession.tooltip" title="Empty the session history and delete its temporary scratch previews. Saved output files are never deleted." data-i18n="settings.generation.clearSession">Clear session</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="defaults">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.defaults.title">Defaults</span>
+                    <span class="settings-card-summary" data-i18n="settings.defaults.description">Save current workflow settings as defaults for future sessions.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-buttons" data-setting-key="saveDefaults" data-setting-search="save current defaults workflow reset defaults future sessions">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.card.defaults.title">Workflow defaults</span>
+                      <p class="settings-item-description" data-i18n="settings.defaults.description">Save current workflow settings as defaults for future sessions.</p>
+                    </div>
+                    <div class="settings-item-control settings-btn-group">
+                      <button class="defaults-btn" id="saveDefaults" data-i18n="settings.defaults.saveButton">Save Current as Defaults</button>
+                      <button class="defaults-btn defaults-btn-reset" id="resetDefaults" data-i18n="settings.defaults.resetButton">Reset</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="language">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.language.title">Language</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingLocale" data-setting-search="language locale interface translation english deutsch francais espanol">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.language.label">Interface language</span>
+                      <p class="settings-item-description" data-i18n="settings.language.note">AI generation parameters (Steps, Sampler, CFG Scale, etc.) stay in English to match the terminology in tutorials and guides.</p>
+                    </div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingLocale">
+                        <option value="en">English</option>
+                        <option value="de">Deutsch</option>
+                        <option value="fr">Français</option>
+                        <option value="es">Español</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+            </div>
+          </section>
+
+          <!-- ══════════ APPEARANCE & LAYOUT ══════════ -->
+          <section class="settings-category" data-settings-category="appearance-layout" aria-labelledby="settings-cat-appearance-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-appearance-title" data-i18n="settings.cat.appearance.title">Appearance &amp; Layout</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.appearance.sub">Theme, workspace layout, density, saved layouts, and accessibility.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="theme">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.theme.title">Theme</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-stacked" data-setting-key="themeSelector" data-setting-search="theme color scheme dark studio liam oliver toxichost neutral neon appearance">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.theme.label">Color theme</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <div class="theme-selector" id="themeSelector">
+                        <button class="theme-btn active" data-theme="">Studio</button>
+                        <button class="theme-btn" data-theme="liam">Liam</button>
+                        <button class="theme-btn" data-theme="oliver">Oliver</button>
+                        <button class="theme-btn" data-theme="toxic">ToxicHost</button>
+                        <button class="theme-btn" data-theme="neutral">Neutral</button>
+                        <button class="theme-btn" data-theme="neon">Neon</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="layout">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.layout.title">Layout</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.layout.summary">Workspace preset, density, and customization.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-stacked" data-setting-key="layoutSelector" data-setting-search="layout preset workspace classic deck arrangement">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.layout.preset">Workspace preset</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <div class="theme-selector" id="layoutSelector">
+                        <button class="layout-btn active" data-layout-preset="classic" data-i18n="settings.layout.classic">Classic</button>
+                        <button class="layout-btn" data-layout-preset="deck" data-i18n="settings.layout.deck">Deck</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="densitySelector" data-setting-search="density comfortable compact spacing size">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.density.title">Density</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <div class="theme-selector" id="densitySelector">
+                        <button class="layout-btn active" data-density="comfortable" data-i18n="settings.density.comfortable">Comfortable</button>
+                        <button class="layout-btn" data-density="compact" data-i18n="settings.density.compact">Compact</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleCustomize" data-setting-search="customize layout edit panels drag rearrange">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.layout.customize">Customize layout</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleCustomize"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleClassicStrip" data-setting-search="session strip classic history filmstrip" data-i18n-title="settings.layout.classicStrip.tooltip" title="Show the session history strip next to the canvas in the Classic layout too.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.layout.classicStrip">Session strip in Classic</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleClassicStrip"><div class="toggle-knob"></div></div></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="saved-layouts" data-collapsible="true">
+                <button class="settings-card-head" type="button" aria-expanded="false" aria-controls="settingsCardBody-saved-layouts">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.card.savedLayouts.title">Saved Layouts</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.savedLayouts.summary">Load, save, and manage custom layouts.</span>
+                  </span>
+                  <svg class="settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </button>
+                <div class="settings-card-body" id="settingsCardBody-saved-layouts" hidden>
+                  <div class="settings-item" data-setting-key="layoutCurrentName" data-setting-search="current layout name active">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.layout.current">Current layout</span></div>
+                    <div class="settings-item-control"><span id="layoutCurrentName" class="settings-mono-value">&mdash;</span></div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="layoutLoadSelect" data-setting-search="load saved layout select import">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.savedLayouts.load">Load layout</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <select class="param-select settings-select-wide" id="layoutLoadSelect">
+                        <option value="" data-i18n="layout.load.placeholder">Load layout…</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="layoutSaveBtn" data-setting-search="save layout save as delete reset new">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.savedLayouts.manage">Manage layouts</span></div>
+                    <div class="settings-item-control settings-item-control-wide settings-btn-group">
+                      <button class="defaults-btn defaults-btn-reset" id="layoutResetBtn" data-i18n-title="layout.reset.tooltip" title="Back to the default layout for the current preset (saved layout files are kept)" data-i18n="layout.reset">Reset</button>
+                      <button class="defaults-btn" id="layoutSaveBtn" data-i18n="layout.save">Save</button>
+                      <button class="defaults-btn" id="layoutSaveAsBtn" data-i18n="layout.saveAs">Save as…</button>
+                      <button class="defaults-btn" id="layoutDeleteBtn" data-i18n="layout.delete">Delete</button>
+                    </div>
+                  </div>
+                  <p class="settings-card-note" data-i18n="settings.layout.shareHint">Layouts are JSON files in the extension's studio_layouts/ folder — copy a file there to import a shared layout.</p>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="accessibility">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.accessibility.title">Accessibility</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingColorblind" data-setting-search="colorblind color blind deuteranopia protanopia tritanopia accessibility vision">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.accessibility.colorblind">Colorblind mode</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingColorblind">
+                        <option value="" data-i18n="common.none">None</option>
+                        <option value="deutan">Deuteranopia (red-green)</option>
+                        <option value="protan">Protanopia (red-green)</option>
+                        <option value="tritan">Tritanopia (blue-yellow)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="settingMotion" data-setting-search="reduced motion animation accessibility prefers">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.accessibility.reducedMotion">Reduced motion</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingMotion">
+                        <option value="" data-i18n="settings.accessibility.systemDefault">System default</option>
+                        <option value="reduced" data-i18n="settings.accessibility.reduced">Reduced</option>
+                        <option value="full" data-i18n="settings.accessibility.full">Full</option>
+                      </select>
+                    </div>
+                  </div>
+                  <!-- education.js injects its card immediately before this anchor -->
+                  <div data-settings-inject-point="education"></div>
+                </div>
+              </section>
+
+            </div>
+          </section>
+
+          <!-- ══════════ CANVAS & TOOLS ══════════ -->
+          <section class="settings-category" data-settings-category="canvas-tools" aria-labelledby="settings-cat-canvas-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-canvas-title" data-i18n="settings.cat.canvas.title">Canvas &amp; Tools</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.canvas.sub">Canvas display and editing behavior.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="canvas">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.canvas.title">Canvas</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleGrid" data-setting-search="grid canvas overlay guides show">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.canvas.showGrid">Show grid</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleCanvasColorPreview" data-setting-search="gpu canvas preview webgl color managed display backend" data-i18n-title="settings.canvas.gpuPreview.tooltip" title="Uses the GPU/WebGL display backend for sharper color-managed canvas preview. Falls back to standard Canvas 2D if unavailable. Does not change exported pixels.">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.canvas.gpuPreview">GPU canvas preview</span>
+                      <p class="settings-item-description" data-i18n="settings.canvas.gpuPreview.desc">Sharper color-managed preview via WebGL. Falls back to Canvas 2D when unavailable; exported pixels are unchanged.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <!-- ══════════ GENERATION & PREVIEW ══════════ -->
+          <section class="settings-category" data-settings-category="generation-preview" aria-labelledby="settings-cat-generation-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-generation-title" data-i18n="settings.cat.generation.title">Generation &amp; Preview</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.generation.sub">Generation behavior, precision, and live progress previews.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="generation">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.card.generation.title">Generation</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleSaveOutputs" data-setting-search="save outputs generated images automatic disk">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.generation.saveOutputs">Save outputs</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleArchShowAll" data-setting-search="always show all parameters architecture model" data-i18n-title="settings.archShowAll.tooltip" title="Show parameters even when the loaded model's architecture doesn't use them.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.archShowAll">Always show all parameters</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleArchShowAll"><div class="toggle-knob"></div></div></div>
+                  </div>
+                </div>
+              </section>
+              <section class="settings-card" data-settings-section="live-preview">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.card.livePreview.title">Live Preview</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleLivePreview" data-setting-search="live preview progress intermediate sampling">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.generation.livePreview">Live preview</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="settingLivePreviewQuality" data-setting-search="live preview quality taesd fast legacy auto decode" data-setting-depends="toggleLivePreview" data-i18n-title="settings.generation.livePreviewQuality.tooltip" title="Auto (recommended): full-resolution decode, resized for display — always compatible. Fast: experimental reduced-latent decode; faster on some setups but can look garbled on certain models (auto-falls back). Legacy: exact old decode, for comparison; slower.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.generation.livePreviewQuality">Live preview quality</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingLivePreviewQuality">
+                        <option value="auto" data-i18n="settings.generation.livePreviewQuality.auto">Auto (recommended)</option>
+                        <option value="fast" data-i18n="settings.generation.livePreviewQuality.fast">Fast (experimental)</option>
+                        <option value="legacy" data-i18n="settings.generation.livePreviewQuality.legacy">Legacy</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <!-- ══════════ PROMPTS & METADATA ══════════ -->
+          <section class="settings-category" data-settings-category="prompts-metadata" aria-labelledby="settings-cat-prompts-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-prompts-title" data-i18n="settings.cat.prompts.title">Prompts &amp; Metadata</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.prompts.sub">Dynamic prompts, autocomplete, cleanup, and external metadata.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="prompt-autocomplete">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.tagAutocomplete.title">Prompt Autocomplete</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleTagAutocomplete" data-setting-search="tag suggestions autocomplete danbooru e621 completion">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.tagAutocomplete.enabled">Tag suggestions</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleTagAutocomplete"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="togglePromptCleanup" data-setting-search="tidy prompt cleanup commas spaces attention groups generate">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.prompt.cleanup">Tidy prompt on generate</span>
+                      <p class="settings-item-description" data-i18n="settings.prompt.cleanupHint">Collapses duplicate commas, extra spaces, and empty attention groups in the copy sent to generation. Your text is never rewritten; wildcards pass through untouched.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="togglePromptCleanup"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="settingTagSource" data-setting-search="tag source danbooru e621 derpibooru merged autocomplete" data-setting-depends="toggleTagAutocomplete">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.tagAutocomplete.source">Tag source</span>
+                      <p class="settings-item-description" data-i18n="settings.tagAutocomplete.note">LoRA, embedding, and wildcard suggestions remain available regardless of this setting.</p>
+                    </div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingTagSource">
+                        <option value="danbooru">Danbooru</option>
+                        <option value="e621">e621</option>
+                        <option value="danbooru_e621_merged" data-i18n="settings.tagAutocomplete.sourceMerged">Danbooru + e621</option>
+                        <option value="derpibooru">Derpibooru</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="dynamic-prompts" id="dynamicPromptsSettings">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.card.dynamicPrompts.title">Dynamic Prompts</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.dynamicPrompts.summary">Expand wildcards and variant syntax inside Studio.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleStudioDynPrompts" data-setting-search="studio dynamic prompts wildcards variants expand __wildcard__" title="Expand __wildcard__ and {a|b|c} prompts inside Studio without relying on Dynamic Prompts.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.dynamicPrompts.enabled">Studio dynamic prompts</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleStudioDynPrompts"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" id="dynPromptsFolderRow" data-setting-key="dynPromptsFolderRow" data-setting-search="wildcard folder txt files location" data-setting-depends="toggleStudioDynPrompts" title="Choose the folder Studio uses for wildcard .txt files.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.dynamicPrompts.folder">Wildcard folder</span></div>
+                    <div class="settings-item-control"><span class="dyn-prompts-folder-display settings-mono-value" id="dynPromptsFolderDisplay">Default folders</span></div>
+                  </div>
+                  <div class="settings-item settings-item-actions" id="dynPromptsFolderControls" data-setting-depends="toggleStudioDynPrompts">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="dynPromptsFolderBrowse">Browse...</button>
+                      <button class="defaults-btn" id="dynPromptsFolderReset">Reset</button>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-actions" id="dynPromptsFolderManualRow" style="display:none;">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <input type="text" id="dynPromptsFolderInput" class="settings-text-input" placeholder="Custom wildcards folder path">
+                      <button class="defaults-btn" id="dynPromptsFolderSet">Set</button>
+                    </div>
+                  </div>
+                  <p class="dyn-prompts-dp-note settings-card-note" id="dynPromptsDpNote" style="display:none;">Dynamic Prompts detected. Studio suppresses it during Studio-native expansion to avoid double processing.</p>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="civitai" data-collapsible="true" data-summary-source="toggleCivitaiLookup">
+                <button class="settings-card-head" type="button" aria-expanded="false" aria-controls="settingsCardBody-civitai">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.civitai.title">Civitai metadata</span>
+                    <span class="settings-card-summary" data-card-summary data-i18n="common.off">Off</span>
+                  </span>
+                  <svg class="settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </button>
+                <div class="settings-card-body" id="settingsCardBody-civitai" hidden>
+                  <div class="settings-item" data-setting-key="toggleCivitaiLookup" data-setting-search="civitai metadata lookup lora hash trigger words preview model" data-i18n-title="settings.civitai.tooltip" title="Looks up LoRA preview images, trigger words, and model info by file hash. Off by default. Per-file privacy is available from the LoRA browser context menu.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.civitai.enable">Enable Civitai lookup</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleCivitaiLookup"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <p class="settings-card-note" data-i18n="settings.civitai.note">Uses model hashes to look up metadata on civitai.com (with civitai.red as a fallback for adult content that has moved there). No prompts or images are sent. Filenames are not transmitted. Lookups happen only when you ask.</p>
+                </div>
+              </section>
+
+            </div>
+          </section>
+
+          <!-- ══════════ OUTPUT & FILES ══════════ -->
+          <section class="settings-category" data-settings-category="output-files" aria-labelledby="settings-cat-output-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-output-title" data-i18n="settings.cat.output.title">Output &amp; Files</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.output.sub">File format, destinations, Gallery storage, and watermarking.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="output-format">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.outputFormat.title">Output Format</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingSaveFormat" data-setting-search="output format png jpeg jpg webp file type">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.format">Format</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingSaveFormat">
+                        <option value="png" selected>PNG</option>
+                        <option value="jpeg">JPEG</option>
+                        <option value="webp">WebP</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleMetadata" data-setting-search="embed metadata png parameters generation info">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.embedMetadata">Embed metadata</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleMetadata"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div id="fmtJpegOpts" style="display:none;">
+                    <div class="settings-item" data-setting-key="settingJpegQuality" data-setting-search="jpeg quality compression chroma">
+                      <div class="settings-item-copy">
+                        <span class="settings-item-title" data-i18n="settings.outputFormat.quality">Quality</span>
+                        <p class="settings-item-description" data-i18n="settings.outputFormat.jpegChromaHint">Saves at full color detail (4:4:4 chroma) — no color smearing on fine edges or text.</p>
+                      </div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingJpegQuality" min="1" max="100" value="80">
+                        <span id="settingJpegQualityVal" class="settings-range-val">80%</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="fmtWebpOpts" style="display:none;">
+                    <div class="settings-item" data-setting-key="toggleWebpLossless" data-setting-search="webp lossless compression">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.lossless">Lossless</span></div>
+                      <div class="settings-item-control"><div class="toggle-track" id="toggleWebpLossless"><div class="toggle-knob"></div></div></div>
+                    </div>
+                    <div class="settings-item" id="webpQualityRow" data-setting-key="settingWebpQuality" data-setting-search="webp quality compression">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.quality">Quality</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWebpQuality" min="1" max="100" value="75">
+                        <span id="settingWebpQualityVal" class="settings-range-val">75%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="save-to-gallery">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.gallery.title">Save to Gallery</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-stacked" data-setting-key="settingGalleryFolder" data-setting-search="gallery folder save destination path directory">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.gallery.folder">Gallery folder</span>
+                      <p class="settings-item-description" data-i18n="settings.gallery.hint">Where “Save to Gallery” writes. This folder lives on the machine running Forge/Studio — the Browse dialog opens there, not on your browser. Leave blank to use the default output folder.</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="settingGalleryFolder" data-i18n-placeholder="settings.gallery.placeholder" placeholder="Leave blank for the default output folder">
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="galleryFolderTrust" data-i18n="settings.gallery.trust">Trust folder</button>
+                      <button class="defaults-btn" id="galleryFolderBrowse" data-i18n="settings.gallery.browse">Browse…</button>
+                      <button class="defaults-btn" id="galleryFolderOpen" data-i18n="settings.gallery.open">Open folder</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="save-folder">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.saveDir.title">Save folder</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingSaveTree" data-setting-search="save tree studio neo output folders structure">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.saveDir.tree">Save tree</span>
+                      <p class="settings-item-description" data-i18n="settings.saveDir.treeHint">With Neo output folders, new images save into Neo’s own txt2img / img2img folders (using Studio’s filenames and metadata); existing images stay where they are and remain visible in Gallery.</p>
+                    </div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select-wide" id="settingSaveTree">
+                        <option value="studio" data-i18n="settings.saveDir.treeStudio">Studio folders</option>
+                        <option value="neo" data-i18n="settings.saveDir.treeNeo">Neo output folders</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="settingSaveDir" data-setting-search="auto save folder directory path output destination">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.saveDir.folder">Auto-save folder</span>
+                      <p class="settings-item-description" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder is on the machine running Forge Studio. If you’re using Studio remotely, type a path visible to the server/VM, then click <b>Trust folder</b>. Leave blank for Forge’s default output folder.</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for the default Forge output folder">
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="saveDirTrust" data-i18n="settings.saveDir.trust">Trust folder</button>
+                      <button class="defaults-btn" id="saveDirBrowse" data-i18n="settings.saveDir.browse">Browse…</button>
+                      <button class="defaults-btn" id="saveDirOpen" data-i18n="settings.saveDir.open">Open folder</button>
+                    </div>
+                  </div>
+                  <div id="trustedRootsList" class="settings-trusted-roots"></div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="watermark" data-collapsible="true" data-summary-source="toggleWatermark" data-auto-expand-on="toggleWatermark">
+                <button class="settings-card-head" type="button" aria-expanded="false" aria-controls="settingsCardBody-watermark">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.watermark.title">Watermark</span>
+                    <span class="settings-card-summary" data-card-summary data-i18n="common.off">Off</span>
+                  </span>
+                  <svg class="settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </button>
+                <div class="settings-card-body" id="settingsCardBody-watermark" hidden>
+                  <div class="settings-item" data-setting-key="toggleWatermark" data-setting-search="auto watermark stamp logo overlay export" title="Composite a watermark image onto every generated image as the final step. Drop PNG/WebP files (transparency recommended) into the watermarks folder.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.enable">Auto watermark</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleWatermark"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div id="watermarkOpts" style="display:none;">
+                    <div class="settings-item" data-setting-key="settingWatermarkMode" data-setting-search="watermark apply mode export generation">
+                      <div class="settings-item-copy">
+                        <span class="settings-item-title" data-i18n="settings.watermark.mode">Apply</span>
+                        <p class="settings-item-description" data-i18n="settings.watermark.modeHint">On export: generated files stay clean; the mark is applied when you Save/Export the canvas, with a per-export opt-out. On generation: every generated file is stamped as before (skipped for inpaint).</p>
+                      </div>
+                      <div class="settings-item-control">
+                        <select class="param-select settings-select-wide" id="settingWatermarkMode">
+                          <option value="export" selected data-i18n="settings.watermark.modeExport">On export (recommended)</option>
+                          <option value="generation" data-i18n="settings.watermark.modeGeneration">On generation (legacy)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermark" data-setting-search="watermark image file select">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.image">Image</span></div>
+                      <div class="settings-item-control">
+                        <select class="param-select settings-select" id="settingWatermark"><option value="">— None —</option></select>
+                      </div>
+                    </div>
+                    <div class="settings-item settings-item-actions">
+                      <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                        <button class="defaults-btn" id="watermarkRefresh" data-i18n="common.refresh">Refresh</button>
+                        <button class="defaults-btn" id="watermarkOpenFolder" data-i18n="settings.watermark.openFolder">Open folder</button>
+                      </div>
+                    </div>
+                    <p id="watermarkFolderHint" class="settings-card-note settings-break-all" style="display:none;"></p>
+                    <div class="settings-item" data-setting-key="settingWatermarkPosition" data-setting-search="watermark position corner placement">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.position">Position</span></div>
+                      <div class="settings-item-control">
+                        <select class="param-select settings-select" id="settingWatermarkPosition">
+                          <option value="top-left">Top left</option>
+                          <option value="top-center">Top center</option>
+                          <option value="top-right">Top right</option>
+                          <option value="center-left">Center left</option>
+                          <option value="center">Center</option>
+                          <option value="center-right">Center right</option>
+                          <option value="bottom-left">Bottom left</option>
+                          <option value="bottom-center">Bottom center</option>
+                          <option value="bottom-right" selected>Bottom right</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkOpacity" data-setting-search="watermark opacity transparency">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.opacity">Opacity</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkOpacity" min="0" max="100" value="100">
+                        <span id="settingWatermarkOpacityVal" class="settings-range-val">100%</span>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkScale" data-setting-search="watermark size scale" title="Size as a percent of the image's shorter edge — keeps the watermark optically consistent across aspect ratios.">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.size">Size</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkScale" min="1" max="50" value="15">
+                        <span id="settingWatermarkScaleVal" class="settings-range-val">15%</span>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkMargin" data-setting-search="watermark margin padding edge inset">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.margin">Margin</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkMargin" min="0" max="200" value="16">
+                        <span id="settingWatermarkMarginVal" class="settings-range-val">16px</span>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkRotation" data-setting-search="watermark rotation angle tilt">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.rotation">Rotation</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkRotation" min="-180" max="180" value="0">
+                        <span id="settingWatermarkRotationVal" class="settings-range-val">0°</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+            </div>
+          </section>
+
+          <!-- ══════════ PERFORMANCE & VRAM ══════════ -->
+          <section class="settings-category" data-settings-category="performance-vram" aria-labelledby="settings-cat-performance-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-performance-title" data-i18n="settings.cat.performance.title">Performance &amp; VRAM</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.performance.sub">GPU memory allocation, model residency, and idle cleanup.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="vram">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.vram.title">VRAM</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-actions" data-setting-key="unloadModelBtn" data-setting-search="unload model vram free memory gpu">
+                    <div class="settings-item-control settings-item-control-wide">
+                      <button class="defaults-btn settings-btn-block" id="unloadModelBtn" data-i18n="settings.vram.unloadModel">Unload Model from VRAM</button>
+                    </div>
+                  </div>
+                  <!-- GPU Weights. HIDDEN: /studio/vram_reserve has no service,
+                       so no value here ever reached an allocator.
+
+                       Hiding rather than fixing the caller is deliberate. The
+                       non-zero branch was already honest -- it checks r.ok and
+                       toasts a failure. The ZERO / "Auto" branch was not: it
+                       awaited `_vramSendWeights(0)` and then unconditionally
+                       toasted "GPU weights reset to Forge default". And
+                       `_vramSendWeights` is `fetch(...).then(res => res.json())`
+                       with NO status check, so making the route a 404 would NOT
+                       have fixed it -- the promise resolves either way. The
+                       slider's 0-8 GB range was never initialised from a real
+                       device either, so the numbers were decorative.
+
+                       TO RESTORE: a real VRAM-reservation service, and a
+                       caller that inspects its response. Note the reserve
+                       itself is entangled with the fenced idle-unload policy. -->
+                  <div class="settings-item" data-setting-key="vramReserveSlider" data-setting-search="gpu weights vram memory model residency offload ram performance budget" hidden>
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.vram.gpuWeights">GPU Weights</span>
+                      <p class="settings-item-description" data-i18n="settings.vram.gpuWeights.description">How much VRAM to use for model weights. 0 = Forge default. Higher values keep more of the model in VRAM for faster generation; lower values offload weights to RAM to free VRAM for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.</p>
+                    </div>
+                    <div class="settings-item-control settings-range">
+                      <input type="range" id="vramReserveSlider" min="0" max="8.0" step="0.25" value="0">
+                      <span id="vramReserveVal" class="settings-range-val settings-mono-value">Auto</span>
+                    </div>
+                  </div>
+                  <!-- Auto-unload when idle. HIDDEN: /studio/auto_unload has no
+                       service. The call site is
+                       `API.autoUnload({...}).catch(() => {})`, and because the
+                       refusal arrives at HTTP 200 the promise RESOLVES -- so the
+                       catch never ran, nothing was shown, and the toggle then
+                       wrote its own state into Prefs. It latched ON and the
+                       fiction survived restarts.
+
+                       The idle-unload POLICY -- timeout, exclusions, behaviour
+                       during an active job, owner override -- is an owner
+                       decision and is not being made here. Hiding a control
+                       that lies is not the same as choosing the policy, and
+                       does not preempt it.
+
+                       The minutes row below is revealed by this toggle, so it
+                       goes with it. -->
+                  <div class="settings-item" data-setting-key="toggleAutoUnload" data-setting-search="auto unload idle vram free timeout" hidden>
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.vram.autoUnload">Auto-unload when idle</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleAutoUnload"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" id="autoUnloadMinutesRow" data-setting-key="autoUnloadMinutes" data-setting-search="idle timeout minutes auto unload" style="display:none;">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.vram.idleTimeout">Idle timeout</span></div>
+                    <div class="settings-item-control settings-range">
+                      <input type="range" id="autoUnloadMinutes" min="5" max="30" step="5" value="10">
+                      <span id="autoUnloadMinutesVal" class="settings-range-val">10 min</span>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleGpuTileComposite" data-setting-search="gpu tile compositing upscale composite vram memory faster">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.vram.gpuTileComposite">Use GPU tile compositing</span>
+                      <p class="settings-item-description" data-i18n="settings.vram.gpuTileComposite.description">Uses GPU memory to composite tiled upscales faster. Studio automatically falls back to CPU compositing when there is not enough safe GPU memory. Turn this off to always use CPU compositing.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleGpuTileComposite"><div class="toggle-knob"></div></div></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <!-- ══════════ KEYBOARD SHORTCUTS ══════════ -->
+          <section class="settings-category" data-settings-category="keyboard-shortcuts" aria-labelledby="settings-cat-shortcuts-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-shortcuts-title" data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.shortcuts.sub">Customize application, prompt, canvas, and navigation controls.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="keyboard-shortcuts" id="keyboardShortcutsSettings">
+                <div class="settings-card-head settings-card-head-static settings-card-head-toolbar">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.shortcuts.title">Keyboard Shortcuts</span>
+                    <span class="settings-card-summary" id="shortcutSummary" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want.</span>
+                  </span>
+                  <div class="settings-inline-search">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+                    <input type="search" id="shortcutSearchInput" class="settings-inline-search-input" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.shortcuts.searchPlaceholder" placeholder="Search shortcuts…" data-i18n-aria-label="settings.shortcuts.searchAria" aria-label="Search shortcuts">
+                  </div>
+                </div>
+                <div class="settings-card-body">
+                  <p class="shortcut-settings-note settings-card-note" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.</p>
+                  <div id="shortcutSettingsRows"></div>
+                  <button class="defaults-btn defaults-btn-reset" id="shortcutResetAll" data-i18n="settings.shortcuts.resetAll">Reset all to defaults</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <!-- ══════════ EXTENSIONS ══════════ -->
+          <section class="settings-category" data-settings-category="extensions" aria-labelledby="settings-cat-extensions-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-extensions-title" data-i18n="settings.cat.extensions.title">Extensions</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.extensions.sub">Choose which integrated extensions appear in the application.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="extensions">
+                <div class="settings-card-head settings-card-head-static settings-card-head-toolbar">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.extensions.title">Extensions</span>
+                    <span class="settings-card-summary" id="extEnabledSummary" data-i18n="settings.extensions.description">Toggle which extensions appear in the Extensions tab.</span>
+                  </span>
+                  <div class="settings-inline-search">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+                    <input type="search" id="extSearchInput" class="settings-inline-search-input" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.extensions.searchPlaceholder" placeholder="Search extensions…" data-i18n-aria-label="settings.extensions.searchAria" aria-label="Search extensions">
+                  </div>
+                </div>
+                <div class="settings-card-body">
+                  <p class="settings-card-note" data-i18n="settings.extensions.trust">Only enable extensions you trust. Disabling an extension hides its tab and controls but does not uninstall it.</p>
+                  <div id="extToggles"></div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <!-- ══════════ ABOUT ══════════ -->
+          <section class="settings-category" data-settings-category="about" aria-labelledby="settings-cat-about-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-about-title" data-i18n="settings.cat.about.title">About</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.about.sub">Version, updates, and credits.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="version">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.about.version.title">Version</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="aboutVersion" data-setting-search="version build about forge studio">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.about.appVersion">Forge Studio</span></div>
+                    <div class="settings-item-control"><span id="aboutStudioVersion" class="settings-mono-value">—</span></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="updates">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.updates.title">Updates</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-action-row" data-setting-key="checkUpdateBtn" data-setting-search="check updates version new release upgrade">
+                    <div class="settings-item-copy">
+                      <strong data-i18n="settings.updates.title">Updates</strong>
+                      <p data-i18n="settings.updates.desc">Check whether a newer version of Forge Studio is available.</p>
+                    </div>
+                    <div class="settings-updates-control">
+                      <button class="defaults-btn" id="checkUpdateBtn" data-i18n="settings.updates.checkButton">Check for Updates</button>
+                      <span id="updateCheckStatus" class="settings-update-status"></span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="credits" data-collapsible="bespoke">
+                <div class="settings-card-head settings-card-head-bespoke" id="creditsToggle" role="button" tabindex="0" aria-expanded="false" aria-controls="creditsBody">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.credits.title">Credits</span></span>
+                  <svg class="collapse-arrow settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </div>
+                <div id="creditsBody" class="settings-card-body" style="display:none;">
+                  <p class="settings-credits-by">by <strong>ToxicHost</strong> &amp; <strong>Moritz</strong></p>
+                  <div id="creditsList" class="settings-credits-list"></div>
+                </div>
+              </section>
+
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════
+     STATUS BAR
+     ═══════════════════════════════════════════ -->
+
+<div class="statusbar">
+  <span id="statusUpdate" class="update-indicator" style="display:none;" title="Update available" onclick="UpdateBanner._showDetails()">&#x2B06; Update</span>
+  <span id="statusDims">768 &times; 768</span>
+  <span class="spacer"></span>
+  <span id="statusVRAM" class="vram-readout" data-help="help.status.vram"></span>
+  <span id="statusModel" data-i18n="status.loading">Loading...</span>
+  <span><span class="status-dot status-ready" id="statusDot"></span><span id="statusText" data-i18n="status.ready">Ready</span></span>
+</div>
+
+<script>
+// Auto cache-bust: load scripts in order with timestamp
+(async () => {
+  const scripts = [
+    "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js", "shortcuts.js",
+    "searchable-select.js", "canvas-core.js",
+    // canvas-input.js BEFORE canvas-ui.js: `bindCanvas` reads
+    // `window.StudioInput` on the very first pointer event, and a seam loaded
+    // afterwards would silently leave every stroke on the degraded fallback.
+    "canvas-input.js",
+    "canvas-ui.js", "workflow-state.js",
+    // canvas-recovery.js BEFORE app.js AND studio-docs.js. app.js resolves
+    // recovery inside its awaited boot chain and StudioDocs waits on
+    // `whenResolved()`, and app.js runs `init()` the moment it loads when the
+    // DOM is already parsed -- so a module loaded after it is simply absent,
+    // the boot chain skips the resolution, and StudioDocs waits forever.
+    // Measured in a real browser: `resolved:false, docCount:0`, a page with
+    // no document system at all.
+    "canvas-recovery.js",
+    "app.js", "workflows.js",
+    "module-system.js", "settings-page.js", "studio-tour.js",
+    "studio-docs.js",
+    "prompt-targets.js", "wildcard-preview.js", "tag-complete.js",
+    "lora-browser.js", "checkpoint-browser.js", "lora-stack.js", "ad-lora-stack.js", "wildcard-browser.js"
+  ];
+  // Optional modules — loaded if available, silently skipped if not.
+  // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
+  // U3 appends the V2 kernel and its Canvas adapter. They are INERT
+  // until the internal adapter flag is set -- it is false at load and
+  // nothing reads these modules until it is true, so the shipping
+  // default stays Legacy. Kept on ONE line: other suites parse this
+  // array with a non-DOTALL regex and a wrapped array is invisible to
+  // them.
+  const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js", "studio-model-controls.js", "studio-dir-picker.js", "v2/brush-contracts.js", "v2/input.js", "v2/sampler.js", "v2/filters.js", "v2/dynamics.js", "v2/coverage.js", "v2/canvas-adapter.js"];
+  const v = "4.17.0";
+  window.__STUDIO_V = v;
+  for (const s of scripts) {
+    await new Promise((resolve, reject) => {
+      const el = document.createElement("script");
+      el.src = `/studio/static/${s}?v=${v}`;
+      el.onload = resolve;
+      el.onerror = () => { console.error(`Failed to load ${s}`); resolve(); };
+      document.body.appendChild(el);
+    });
+  }
+  // Optional modules — load silently, no error on 404
+  for (const s of optionalScripts) {
+    await new Promise((resolve) => {
+      const el = document.createElement("script");
+      el.src = `/studio/static/${s}?v=${v}`;
+      el.onload = resolve;
+      el.onerror = resolve; // silent skip
+      document.body.appendChild(el);
+    });
+  }
+})();
+</script>
+</body>
+</html>

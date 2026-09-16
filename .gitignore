@@ -4,6 +4,7 @@ __pycache__
 *.ckpt
 *.gguf
 *.onnx
+*.pt
 *.pth
 *.safetensors
 *.sft
@@ -19,6 +20,7 @@ __pycache__
 /output
 /outputs
 /params.txt
+/private-local/
 /repositories
 /styles.csv
 /styles.csv.bak
@@ -30,3 +32,6 @@ __pycache__
 /webui-user.bat
 /webui-user.sh
 notification.mp3
+
+# Generated portable packages are release assets, not Git source.
+/dist/

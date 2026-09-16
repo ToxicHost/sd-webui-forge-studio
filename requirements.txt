@@ -1,5 +1,6 @@
 GitPython==3.1.52
 Pillow==12.3.0
+Send2Trash==2.1.0
 accelerate==1.14.0
 audioop-lts==0.2.2;python_version>="3.13"
 av==17.1.0
@@ -25,6 +26,7 @@ protobuf==4.25.9
 psutil==6.1.1
 pydantic-core==2.27.2
 pydantic==2.10.6
+pytz==2026.2
 pyyaml==6.0.3
 rich==14.3.4
 safetensors==0.8.0
@@ -34,5 +36,12 @@ spandrel-extra-arches==0.2.0
 spandrel==0.4.2
 torchsde==0.2.6
 tqdm==4.67.3
+ultralytics==8.3.119
 transformers==4.57.6
-torch
+# torch is NOT listed here, deliberately. A bare `torch` resolves against
+# PyPI and installs the CPU build -- successfully, after which Studio
+# cannot generate and nothing says why. The right build carries a CUDA
+# index URL, which a requirements file cannot express per-platform, so
+# `scripts/bootstrap_environment.py` installs it first using the vendored
+# `modules.platform_selection.select_torch_command`. Run that rather than
+# pip-installing this file by hand.

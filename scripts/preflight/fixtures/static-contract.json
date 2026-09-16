@@ -1,0 +1,28 @@
+{
+  "schema_version": "forge-preflight-contract/v2",
+  "workspace_root": "<WORKSPACE>",
+  "venv_python": "app/venv/Scripts/python.exe",
+  "command_processor": {
+    "identity": "human-supplied sanitized identity; runtime verification deferred",
+    "discovery_permitted": false,
+    "verification_status": "OWNER_APPROVAL_REQUIRED"
+  },
+  "network": {
+    "authorized": false
+  },
+  "private_local": {
+    "authorized": false
+  },
+  "filesystem_policy": {
+    "filesystem_policy_version": "forge-filesystem-policy/v1",
+    "normalized_permitted_roots": [
+      "app/",
+      "Evidence/",
+      "Reference/"
+    ],
+    "private_local_status": "PROHIBITED",
+    "policy_source": "app/AGENTS.md",
+    "policy_source_sha256": "sha256:287dd7bb6dbbcc6b36be15eefceb8ce18e3efcf17dee2e4343600e72e8e7591c",
+    "outside_access_allowed": false
+  }
+}

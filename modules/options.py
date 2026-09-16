@@ -2,12 +2,23 @@ import json
 import sys
 from dataclasses import dataclass
 
-import gradio as gr
-
 from modules import errors
 from modules.paths_internal import script_path
 from modules.shared_cmd_options import cmd_opts
-from modules.ui_components import FormRow
+
+
+def _gradio_html(**kwargs):
+    # Deferred so that importing the options mechanism does not import Gradio.
+    # Only the settings UI ever calls these component factories.
+    import gradio as gr
+
+    return gr.HTML(**kwargs)
+
+
+def _form_row(**kwargs):
+    from modules.ui_components import FormRow
+
+    return FormRow(**kwargs)
 
 
 class OptionInfo:
@@ -60,21 +71,21 @@ class OptionInfo:
 
 class OptionHTML(OptionInfo):
     def __init__(self, text):
-        super().__init__(str(text).strip(), label='', component=lambda **kwargs: gr.HTML(elem_classes="settings-info", **kwargs))
+        super().__init__(str(text).strip(), label='', component=lambda **kwargs: _gradio_html(elem_classes="settings-info", **kwargs))
 
         self.do_not_save = True
 
 
 class OptionDiv(OptionInfo):
     def __init__(self):
-        super().__init__("", label="", component=lambda **kwargs: gr.HTML(elem_classes="settings-div", **kwargs))
+        super().__init__("", label="", component=lambda **kwargs: _gradio_html(elem_classes="settings-div", **kwargs))
 
         self.do_not_save = True
 
 
 class OptionRow(OptionInfo):
     def __init__(self):
-        super().__init__("", label="", component=FormRow)
+        super().__init__("", label="", component=_form_row)
 
         self.do_not_save = True
 

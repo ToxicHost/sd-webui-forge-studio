@@ -1,0 +1,79 @@
+# Forge Studio Standalone — the reference container run.
+#
+# An EXAMPLE, and tracked as one. Copy it beside your data directories and edit
+# the three mount sources; compose resolves relative paths against the file's
+# own location, and the data a real deployment mounts does not live in the
+# repository.
+#
+# Run:  docker compose -f docker-compose.yml up        (your copy)
+#
+# The publish is the security decision in this file:
+#
+#     "127.0.0.1:7865:7865"
+#
+# not "7865:7865". The short form binds every host interface, which would put
+# a filesystem browser and a model loader on the LAN. Native Studio is
+# loopback-only by default and the container is no different -- an operator
+# who genuinely wants it reachable changes this line deliberately, in front of
+# the comment that says what it means.
+#
+# GPU is opt-in and commented out, because a compose file that assumes NVIDIA
+# fails to start on every machine without it -- including the macOS and plain
+# Linux hosts this product supports.
+
+services:
+  studio:
+    build:
+      # The REPOSITORY root, which is where the Dockerfile and .dockerignore
+      # live. The image needs nothing from outside it.
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        # Swap for a CUDA index and a CUDA base image to build a GPU variant.
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    image: forge-studio:latest
+    # Loopback only. See the note above before changing it.
+    ports:
+      - "127.0.0.1:7865:7865"
+    volumes:
+      # PLACEHOLDERS. Point the left-hand side at your own directories.
+      #
+      # These were real paths into one developer's machine when this file was
+      # untracked -- including a private model library. Tracking it published
+      # that layout as the product default, so the example carries neutral
+      # names and the deployment carries the real ones.
+      #
+      # Persisted so a restart keeps the configuration and the remembered
+      # dropdown selection.
+      - ./studio-config:/studio/config
+      - ./studio-results:/studio/results
+      # READ-ONLY. Studio never writes to a model directory, and the mount is
+      # where that is enforced rather than merely intended.
+      - ./studio-models:/studio/models:ro
+    environment:
+      STUDIO_BACKEND: headless
+      STUDIO_PORT: "7865"
+    # The image already declares a HEALTHCHECK; restated here so `compose ps`
+    # reports health for a service started without the image default.
+    healthcheck:
+      test: ["CMD", "python", "/studio/deploy/entrypoint.py", "--health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    # Studio traps SIGTERM and shuts the warm session down; give it room to
+    # release VRAM rather than being killed with a model resident.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+    # GPU, opt-in. Uncomment on a host with the NVIDIA container toolkit AND
+    # build with a CUDA torch index above -- one without the other gives a
+    # container that starts and then cannot see a device.
+    #
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]

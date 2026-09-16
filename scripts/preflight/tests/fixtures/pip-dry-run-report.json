@@ -1,0 +1,37 @@
+{
+  "version": "1",
+  "pip_version": "future-owner-approved-run",
+  "install": [
+    {
+      "requested": true,
+      "download_info": {
+        "url": "https://packages.example.invalid/files/example-interface.whl",
+        "archive_info": {
+          "hashes": {
+            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          }
+        }
+      },
+      "metadata": {
+        "name": "example-interface",
+        "version": "1.0.0",
+        "requires_dist": [
+          "Pillow>=12"
+        ]
+      }
+    }
+  ],
+  "environment": {
+    "implementation_name": "cpython",
+    "implementation_version": "3.13.5",
+    "os_name": "nt",
+    "platform_machine": "AMD64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "",
+    "platform_system": "Windows",
+    "platform_version": "",
+    "python_version": "3.13",
+    "python_full_version": "3.13.5",
+    "sys_platform": "win32"
+  }
+}

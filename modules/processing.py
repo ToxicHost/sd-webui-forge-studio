@@ -27,13 +27,24 @@ from backend import args, memory_management
 from backend.logging import setup_logger
 from backend.modules.k_prediction import rescale_zero_terminal_snr_sigmas
 from backend.utils import hash_tensor
-from modules import devices, errors, extra_networks, images, infotext_utils, masking, profiling, prompt_parser, rng, scripts, sd_samplers, sd_samplers_common, sd_unet, sd_vae_approx
+from modules import devices, errors, extra_networks, images, infotext_core, masking, profiling, prompt_parser, rng, scripts, sd_samplers, sd_samplers_common, sd_unet, sd_vae_approx
+from modules.resolution import sRound
 from modules.sd_models import apply_token_merging, forge_model_reload
 from modules.sd_samplers_common import approximation_indexes, decode_first_stage, images_tensor_to_samples
 from modules.shared import cmd_opts, opts, state
 from modules.sysinfo import set_config
-from modules.ui import sRound
-from modules_forge import main_entry
+
+# `modules_forge.main_entry` is imported inside `sample()` rather than here.
+# It is a UI module (`main_entry.py:4` is `import gradio as gr`), and this
+# module-scope import is the second of two edges that put Gradio on the
+# generation path -- the first was `sd_samplers_common` (see SBC-001). Studio's
+# runtime must import no real Gradio.
+#
+# Every use of `main_entry` in this module is a Hires checkpoint-override call
+# inside that one function, guarded by `hr_checkpoint_name` / a non-default
+# `hr_additional_modules`. Studio sets neither, so the branch does not run here
+# and the import is unreachable; a host that overrides the Hires checkpoint
+# imports it on first use instead of at module load.
 from modules_forge.utils import apply_circular_forge
 
 logger = logging.getLogger("processing")
@@ -769,7 +780,7 @@ def create_infotext(p: "StableDiffusionProcessing", all_prompts, all_seeds, all_
             errors.report(f'Error creating infotext for key "{key}"', exc_info=True)
             generation_params[key] = None
 
-    generation_params_text = ", ".join([k if k == v else f"{k}: {infotext_utils.quote(v)}" for k, v in generation_params.items() if v is not None])
+    generation_params_text = ", ".join([k if k == v else f"{k}: {infotext_core.quote(v)}" for k, v in generation_params.items() if v is not None])
 
     negative_prompt_text = f"\nNegative prompt: {negative_prompt}" if negative_prompt else ""
 
@@ -1403,16 +1414,33 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
 
         reload = False
         if hasattr(self, "hr_additional_modules") and "Use same choices" not in self.hr_additional_modules:
+            # Deferred here, and again in the two blocks below, rather than once
+            # at the top of this function: `sample()` runs on EVERY generation,
+            # so a single import at its head would load Gradio every time and
+            # defeat the point. Each block imports only when its own override
+            # is actually in play. Repeating the statement is free -- the module
+            # is cached after the first -- and keeps each block independently
+            # correct rather than relying on an earlier branch having run.
+            from modules_forge import main_entry
+
             modules_changed = main_entry.modules_change(self.hr_additional_modules, preset=None, save=False, refresh=False)
             if modules_changed:
                 reload = True
 
         if self.hr_checkpoint_name and self.hr_checkpoint_name != "Use same checkpoint":
+            from modules_forge import main_entry
+
             checkpoint_changed = main_entry.checkpoint_change(self.hr_checkpoint_name, preset=None, save=False, refresh=False)
             if checkpoint_changed:
                 reload = True
 
         if reload:
+            # `reload` is only True if one of the two blocks above ran, so
+            # `main_entry` would already be bound -- imported again anyway so
+            # this block does not depend on that reasoning holding after a
+            # future edit.
+            from modules_forge import main_entry
+
             try:
                 main_entry.refresh_model_loading_parameters()
                 sd_models.forge_model_reload()

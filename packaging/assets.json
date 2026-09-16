@@ -1,0 +1,34 @@
+{
+  "assets": [
+    {
+      "path": "models/adetailer/face_yolov8n.pt",
+      "bytes": 6230011,
+      "sha256": "70b640f8f60b1cf0dcc72f30caf3da9495eb2fb6509da48c53374ad6806e6a9c"
+    },
+    {
+      "path": "models/adetailer/face_yolov8s.pt",
+      "bytes": 22507707,
+      "sha256": "c7237eff25787377de196961140ceaed324d859ee8de5a775d93d33a0e3fab78"
+    },
+    {
+      "path": "models/adetailer/hand_yolov8n.pt",
+      "bytes": 6237883,
+      "sha256": "3991202eb69e9ddcb3b9ba80cdeb41e734ffaf844403d6c9f47d515cd88c6f29"
+    },
+    {
+      "path": "models/adetailer/person_yolov8n-seg.pt",
+      "bytes": 6777003,
+      "sha256": "38fc8aaae97cb6e70be4ec44770005b26ed473471362afcda62a0037d7ccf432"
+    },
+    {
+      "path": "models/adetailer/person_yolov8s-seg.pt",
+      "bytes": 23850731,
+      "sha256": "53c54aec2239355faffc6c5b70d0f3d05042f386f956cbec39cec46ad456f050"
+    },
+    {
+      "path": "models/ESRGAN/remacri_original.pt",
+      "bytes": 67025055,
+      "sha256": "e1a73bd89c2da1ae494774746398689048b5a892bd9653e146713f9df8bca86a"
+    }
+  ]
+}

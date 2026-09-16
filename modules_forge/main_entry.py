@@ -12,7 +12,6 @@ from backend.logging import setup_logger
 from modules import (
     infotext_utils,
     paths,
-    processing,
     sd_models,
     shared,
     shared_items,
@@ -143,6 +142,12 @@ def refresh_model_loading_parameters(*, refresh: bool = True):
     logger.info(f"Patch LoRAs on-the-fly: {lora_fp16}")
     if not ckpt.endswith(("gguf", "GGUF")) and lora_fp16:
         logger.warning("on-the-fly WILL be slower ; enable only if you know what you are doing")
+
+    # Local import breaks the modules.sd_models <-> modules.processing cycle:
+    # this module is reached during sd_models initialization via
+    # sd_samplers_common, so a module-scope import here makes the load order
+    # matter. Legacy compatibility flag; a later RuntimeContext should own it.
+    from modules import processing
 
     processing.need_global_unload = True
 

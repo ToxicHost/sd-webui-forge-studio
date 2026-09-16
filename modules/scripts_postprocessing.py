@@ -1,6 +1,11 @@
 import dataclasses
 import os
-import gradio as gr
+
+# Gradio is imported inside `setup_ui()` and `create_args_for_run()`, the only
+# two functions here that build components. This module is reached from the
+# generation path -- `modules.processing` -> `modules.scripts` -> here -- and it
+# was the LAST module-scope Gradio import on that path. Studio's runtime must
+# import none.
 
 from modules import errors, shared
 
@@ -158,6 +163,8 @@ class ScriptPostprocessingRunner:
         return sorted(filtered_scripts, key=lambda x: script_scores[x.name])
 
     def setup_ui(self):
+        import gradio as gr
+
         inputs = []
 
         for script in self.scripts_in_preferred_order():
@@ -208,6 +215,8 @@ class ScriptPostprocessingRunner:
         pp.extra_images = all_images[1:]
 
     def create_args_for_run(self, scripts_args):
+        import gradio as gr
+
         if not self.ui_created:
             with gr.Blocks(analytics_enabled=False):
                 self.setup_ui()

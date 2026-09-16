@@ -3,12 +3,18 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import os
-from typing import Optional, Any
+from typing import TYPE_CHECKING, Optional, Any
 
 from fastapi import FastAPI
-from gradio import Blocks
 
 from modules import errors, timer, extensions, shared, util
+
+if TYPE_CHECKING:
+    # `Blocks` appears only in the `app_started_callback` annotation, and this
+    # module already has `from __future__ import annotations`, so the name is
+    # never evaluated at runtime. Importing Gradio for it put the whole UI stack
+    # on the inference import path via `modules.sd_models`.
+    from gradio import Blocks
 
 
 def report_exception(c, job):
