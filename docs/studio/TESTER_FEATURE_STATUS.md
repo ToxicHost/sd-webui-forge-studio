@@ -60,8 +60,7 @@ generation-model paths were accessed.
 - Fixture-based feature set: 464 tests passed across generation, Inpaint,
   Hires, Auto Detail, jobs, recovery, Gallery, Wildcards, preferences,
   lifecycle and capability gating.
-- Detailed review records are in the separate source archive at
-  app/docs/studio/RELEASE_PREPARATION_REVIEW.md.
+- The [historical preparation review](https://github.com/ToxicHost/sd-webui-forge-studio/blob/7543faf5cf11cabbb8648afecdbe2c1bf76cb4b4/docs/studio/RELEASE_PREPARATION_REVIEW.md) records the earlier fixture/archive checks.
 
 No fresh real-GPU image was generated in this preparation. Historical release
 notes are not evidence that this exact candidate passed those live scenarios.

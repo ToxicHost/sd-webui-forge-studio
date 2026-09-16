@@ -1,40 +1,28 @@
-# Studio Standalone — tester preparation, 2026-09-13
+# Studio Standalone — Git tester candidate
 
-Distribution identifier: 0.0.0-internal-alpha. See the package manifest for the
-exact source commit. This is a private tester candidate, not a certified release.
+Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
+exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
-The repository now records the current Standalone Canvas changes separately
-from installation/packaging cleanup. This cleanup does not modify generation,
-sampling or painting behavior.
+## Git delivery cleanup — 2026-09-15
 
-Changes for a new installation:
+The tester branch now contains runtime source, installation helpers, user guides
+and licenses. Project plans, agent instructions, Docker/deployment files, tests,
+legacy WebUI entry points and release-build tools are removed from this branch.
+The retained engine, Studio frontend, launchers, installers and requirements are
+unchanged. Existing installations can receive this cleanup with `git pull --ff-only`.
 
-- Windows release launchers are tracked in Git and included at the ZIP root.
-- First run creates the current model-roots configuration and lets users choose
-  directories in Settings, without probing the owner's private model folders.
-- Existing configuration is preserved; partial dependency setup is checked again.
-- Auto Detail's ultralytics dependency is explicitly pinned to 8.3.119.
-- The six documented detector/upscaler assets are included only after size/hash
-  verification. Other local weights and personal state are excluded.
-- The manifest records every packaged file and its hash.
+Start-Studio.bat creates or repairs the local Python environment, verifies the
+six auxiliary models, and opens Studio. Python 3.11–3.13 is accepted; use 3.13 for
+this candidate. Existing settings are preserved. The launcher creates empty
+models/Stable-diffusion, models/VAE and models/text_encoder folders; users supply
+their own generation models and choose model directories in Settings.
 
-Read [the tester guide](FRIENDS_ALPHA_TESTER_GUIDE.md) and
-[feature status](TESTER_FEATURE_STATUS.md). ControlNet, Live generation, Workshop,
-regional inference and automatic updates are not supported in this candidate.
-GPU generation and cross-platform certification remain unverified in this pass.
+The five Auto Detail detectors and Remacri are downloaded from studio-assets-v1
+only when missing, with pinned size/hash verification. This cleanup does not
+change that release or any generation, sampling or painting behavior.
 
-The tester ZIP now omits project plans, agent instructions, tests, Docker files,
-legacy WebUI launchers and release tooling. These remain in Git and in a separate
-source ZIP. Engine/Studio source, setup/diagnostics, user documentation and
-notices remain. The diagnostics privacy checker is a shared utility, so support
-reports do not require the test suite. Generation and painting code is unchanged.
-
-The tester ZIP supplies empty Stable-diffusion, VAE and text_encoder folders
-under app/models. They are explicit directory entries, with no placeholder files.
-Select these folders in Settings if you use them for your own generation models.
-
-First-run setup now uses the Windows Python launcher to locate an installed
-3.13/3.12/3.11 when the default interpreter is unsupported. Explicit PYTHON
-overrides and existing Studio environments are respected. Dependency versions
-are unchanged; NumPy 2.3.5 requires Python >=3.11. A machine with only 3.10 still
-needs a supported Python installed.
+See [installation](GIT_INSTALL.md), [tester notes](FRIENDS_ALPHA_TESTER_GUIDE.md)
+and [feature status](TESTER_FEATURE_STATUS.md). ControlNet, Live generation,
+Workshop and regional inference are unavailable in this Standalone candidate.
+Updates are manual. Real generation, interactive browser/tablet acceptance and
+cross-platform certification remain separate from these installation checks.

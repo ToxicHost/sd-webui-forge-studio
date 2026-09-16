@@ -84,24 +84,12 @@ copies. After dependencies and assets are present, normal launch is offline-capa
 Run Start-Studio.bat --check to perform setup/config validation without opening the
 browser or starting a server.
 
-## Release preparation
+## Features and review limits
 
-Publish the six files listed in packaging/assets.json as individual assets on the
-repository's studio-assets-v1 release, along with their manifest and provenance.
-Their names and bytes are immutable for that asset version. The source branch and
-asset release must both be available before sending the clone instructions to testers.
-Do not commit weights, environments, configuration or outputs to Git. Any changed
-asset set needs a new asset version and reviewed hashes, rather than replacing an
-existing download silently. The portable ZIP remains an optional separate profile.
-
-The public tester branch is prepared as a current-source snapshot on the existing
-public Neo base. Older local development history contained machine paths that
-were removed before release; retain that history locally. Future public updates
-must preserve the public branch's ancestry through reviewed commits or snapshots.
-Do not merge the private development history into the public branch.
-
-This is still an internal-alpha candidate. Feature limitations are in
-[TESTER_FEATURE_STATUS.md](TESTER_FEATURE_STATUS.md), and the existing advisory and
-asset-license findings remain documented in [PORTABLE_RUNTIME.md](PORTABLE_RUNTIME.md)
-and [BUNDLED_MODEL_ASSETS.md](BUNDLED_MODEL_ASSETS.md). Git installation changes the
-delivery method; it does not certify missing features or real-model generation.
+This is still an internal-alpha candidate. See
+[TESTER_FEATURE_STATUS.md](TESTER_FEATURE_STATUS.md),
+[DEPENDENCY_NOTES.md](DEPENDENCY_NOTES.md) and
+[BUNDLED_MODEL_ASSETS.md](BUNDLED_MODEL_ASSETS.md).
+Real model generation and clean-Windows acceptance were not certified by the
+installation checks. The public branch contains the application source and
+user documentation needed for this Git installation.
