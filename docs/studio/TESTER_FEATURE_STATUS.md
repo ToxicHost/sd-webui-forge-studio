@@ -42,6 +42,7 @@ generation-model paths were accessed.
 | Batch Count / Batch Size | Not provided as true batched generation. Submit separate jobs to use the queue. |
 | Automatic updates | Unavailable. Git installations support manual `git pull --ff-only`; see [GIT_INSTALL.md](GIT_INSTALL.md). ZIP updates use a separate candidate folder and backups. |
 | Multi-user / public network service | Outside the Windows local-use candidate. |
+| Linux/NVIDIA Docker tester | Experimental [setup supplied](../../packaging/docker/README.md); config and native adapter checks only. Image build, GPU passthrough and container generation await the Linux tester. |
 | macOS, Linux, Docker, AMD/Intel GPU certification | Not established by this review. Some platform/source support exists, but is not a tested release promise. |
 
 ## Verification scope

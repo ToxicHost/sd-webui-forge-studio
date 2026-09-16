@@ -1,0 +1,46 @@
+services:
+  studio:
+    image: studio-standalone:docker-tester
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: packaging/docker/Dockerfile
+      args:
+        STUDIO_UID: ${STUDIO_UID:?Set STUDIO_UID to your Linux user ID}
+        STUDIO_GID: ${STUDIO_GID:?Set STUDIO_GID to your Linux group ID}
+        STUDIO_REVISION: ${STUDIO_REVISION:-unknown}
+    user: "${STUDIO_UID}:${STUDIO_GID}"
+    init: true
+    # Linux host networking preserves Studio's 127.0.0.1 Host/Origin contract.
+    network_mode: host
+    shm_size: 1gb
+    stop_grace_period: 60s
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      STUDIO_PORT: ${STUDIO_PORT:-7865}
+    volumes:
+      - type: bind
+        source: ${STUDIO_DATA_DIR:?Set STUDIO_DATA_DIR to an existing absolute data directory}
+        target: /studio/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STUDIO_MODELS_DIR:?Set STUDIO_MODELS_DIR to an existing absolute model directory}
+        target: /studio/models
+        read_only: true
+        bind:
+          create_host_path: false
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: [CMD, python, packaging/docker/entrypoint.py, --healthcheck]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3

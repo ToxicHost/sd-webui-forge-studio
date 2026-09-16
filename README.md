@@ -1,7 +1,8 @@
 # Studio Standalone
 
 A local image-generation application built on Forge Neo, with Studio's Canvas,
-model selection, queue and Gallery. This is a Windows/NVIDIA tester candidate.
+model selection, queue and Gallery. This is a Windows/NVIDIA tester candidate,
+with an experimental Docker setup for Linux/NVIDIA testers.
 
 Install Git for Windows and 64-bit Python 3.13, then run:
 
@@ -18,6 +19,7 @@ their folders in Settings. Later launches reuse the installed environment/models
 To update, close Studio and run `git pull --ff-only` inside the checkout.
 
 - [Installation, updates and file locations](docs/studio/GIT_INSTALL.md)
+- [Experimental Docker setup (Linux/NVIDIA)](packaging/docker/README.md)
 - [What is usable and what is not](docs/studio/TESTER_FEATURE_STATUS.md)
 - [Testing, backups and problem reports](docs/studio/FRIENDS_ALPHA_TESTER_GUIDE.md)
 - [Release notes](docs/studio/FRIENDS_ALPHA_RELEASE_NOTES.md)
