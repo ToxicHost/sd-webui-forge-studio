@@ -787,6 +787,8 @@
   "settings.archShowAll.tooltip": "Show parameters even when the loaded model's architecture doesn't use them.",
   "settings.canvas.gpuPreview": "GPU canvas preview",
   "settings.canvas.gpuPreview.desc": "Sharper color-managed preview via WebGL. Falls back to Canvas 2D when unavailable; exported pixels are unchanged.",
+  "settings.canvas.mousePress": "Mouse strokes press at medium strength",
+  "settings.canvas.mousePress.desc": "Brushes with paper grain or material (Pencil, Charcoal, Pastel, Bristle Rake) respond to a mouse as to a medium pen press, so the grain shows. Off: a mouse is a full press.",
   "settings.canvas.showGrid": "Show grid",
   "settings.canvas.title": "Canvas",
   "settings.card.defaults.title": "Workflow defaults",

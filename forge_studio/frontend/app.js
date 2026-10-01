@@ -3211,7 +3211,7 @@ async function doGenerate(overrides = {}) {
     canvas_b64: canvasB64,
     mask_b64: maskB64,
     fg_b64: "null",
-    mode: (window.StudioCore?.state?.editingMask || window.StudioCore?.state?._userMaskMode || maskB64) ? "Edit" : "Create",
+    mode: (window.StudioCore?.state?._userMaskMode || maskB64) ? "Edit" : "Create",
     inpaint_mode: "Inpaint",
 
     prompt:        _preparedPrompt(),
@@ -5078,16 +5078,7 @@ function bindUI() {
     document.addEventListener("i18n:change", _applyToolTipAriaLabels);
   }
 
-  // UX-012: Clear mask button
-  document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
-    if (!window.StudioCore) return;
-    const S = window.StudioCore.state;
-    if (S.mask?.ctx) {
-      S.mask.ctx.clearRect(0, 0, S.W, S.H);
-      window.StudioCore.composite();
-      showToast(I18N.t("toast.maskCleared", "Mask cleared"), "info");
-    }
-  });
+  // Clear generation mask is owned by Canvas UI and its undo transaction.
 
   // Generate
   document.getElementById("genBtn")?.addEventListener("click", doGenerate);
@@ -6395,13 +6386,23 @@ function bindUI() {
     }
   });
 
+  // SR1-5. Mouse strokes press at medium strength (owner, V2 sign-off round
+  // 1: "Can we not make it a setting users can change?"). On: the approved
+  // study's p = 0.5; off: a full press. Registered after the generic toggle,
+  // so it reads the post-flip state.
+  const _syncMousePress = () => {
+    const on = document.getElementById("toggleMousePress")?.classList.contains("on") ?? true;
+    if (window.StudioCore) window.StudioCore.state.mousePress = on ? 0.5 : 1;
+  };
+  document.getElementById("toggleMousePress")?.addEventListener("click", _syncMousePress);
+
   // Pen pressure — context bar button with Size/Opacity sub-toggles
   const _pressureBtn = document.getElementById("pressureBtn");
   const _pressureSizeBtn = document.getElementById("pressureSizeBtn");
   const _pressureOpacityBtn = document.getElementById("pressureOpacityBtn");
 
   function _syncPressureState() {
-    const on = _pressureBtn?.classList.contains("active") ?? false;
+    const on = window.StudioCore?.state.tool !== "mask" && (_pressureBtn?.classList.contains("active") ?? false);
     const sizeOn = _pressureSizeBtn?.classList.contains("active") ?? false;
     const opacityOn = _pressureOpacityBtn?.classList.contains("active") ?? false;
     if (window.StudioCore) {
@@ -7344,6 +7345,7 @@ function bindUI() {
     ],
     canvas: [
       ["toggleGrid", "on"],
+      ["toggleMousePress", "on"],
       ["pressureBtn", "active"], ["pressureSizeBtn", "active"], ["pressureOpacityBtn", "active"],
       ["toggleSaveOutputs", "on"], ["toggleLivePreview", "on"],
       ["toggleMetadata", "on"],
@@ -7559,6 +7561,8 @@ function bindUI() {
     // Sync toggle side-effects to restored state
     const gridOn = document.getElementById("toggleGrid")?.classList.contains("on") ?? true;
     if (window.StudioCore) window.StudioCore.state.showGrid = gridOn;
+    const mouseMedium = document.getElementById("toggleMousePress")?.classList.contains("on") ?? true;
+    if (window.StudioCore) window.StudioCore.state.mousePress = mouseMedium ? 0.5 : 1;
     _syncPressureState();
     // Restored .checked classes drive the enable-gated panel regions
     // (AD slots 2/3, CN unit 2, upscale refine controls), and restored

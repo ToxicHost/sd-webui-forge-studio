@@ -3,6 +3,36 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Canvas painting update — 2026-09-30
+
+Update with `git pull --ff-only`, then restart Studio. Only the Studio interface
+and its local page server change; the generation engine, launcher, installer,
+requirements and models are unchanged.
+
+- A new painting engine (Brush V2) is now the default for the brush and eraser.
+  Presets have their own materials: Pencil, Charcoal and Pastel lay strands that
+  follow the paper's grain, Bristle Rake lays separate bristles, Scatter Dust
+  scatters particles, and Airbrush builds while held still and shows the build
+  as it happens. Flat tips turn cleanly through corners.
+- Hard Ink, Fine Liner and Sketch Light were removed from the preset list:
+  Basic Round covers the first two, and Pencil at a lower Density the third.
+- The Flow control is gone: Opacity is the only strength setting, and saved
+  tool settings are converted.
+- Density is on the brush's context bar. Pencil starts at 70%; use 100% for a
+  plain line.
+- Settings > Canvas > Mouse press: a mouse paints at medium pressure by default,
+  so paper grain shows. Switch it off for full pressure.
+- Symmetry, Taper In and each preset's pressure, speed and tilt response work in
+  the new engine. A mirrored calligraphy or chisel stroke is a true mirror image.
+- Aliased brushes and Pixel Perfect, touch input, and Inpaint Mask or region
+  painting still use the previous engine.
+- Inpaint has a dedicated Mask tool with its own settings and history. Undo or
+  redo pressed mid-stroke cancels only that stroke, and crash recovery waits
+  until a held stroke ends.
+
+The presets were reviewed with a mouse. Pen pressure and tilt have automated
+checks only; there is no tablet certification yet. Keep backups of artwork.
+
 ## Git delivery cleanup — 2026-09-15
 
 The tester branch now contains runtime source, installation helpers, user guides

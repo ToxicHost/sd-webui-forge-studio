@@ -65,6 +65,7 @@ function _loadGenPanel(gen) {
 
 function _saveDoc(idx) {
   var S = window.StudioCore.state;
+  if (S.drawing) window.StudioCore.abortStroke();
   // BE12. Snapshotting a document is the last moment before it can be
   // swapped out. A deposition timer that survived would write into the
   // layer canvases of a document the owner has left.
@@ -125,6 +126,8 @@ function _saveDoc(idx) {
 
   // Canvas state
   doc.editingMask = S.editingMask;
+  doc.canvasTool = S.tool;
+  doc.maskReturnTool = S._maskReturnTool;
   doc._userMaskMode = S._userMaskMode;
   doc._canvasDirty = S._canvasDirty;
 
@@ -153,6 +156,7 @@ function _saveDoc(idx) {
 
 function _loadDoc(idx) {
   var S = window.StudioCore.state;
+  if (S.drawing) window.StudioCore.abortStroke();
   var C = window.StudioCore;
   var doc = _docs[idx];
   if (!doc) return;
@@ -245,7 +249,12 @@ function _loadDoc(idx) {
   S.paper = Object.assign({ texture: "none", scale: 1, depth: 0 }, doc.paper || {});
 
   // Canvas state
-  S.editingMask = doc.editingMask || false;
+  const tools = ["brush","eraser","mask","smudge","blur","dodge","clone","liquify","pixelate","shape","fill","gradient","eyedropper","select","ellipse","lasso","polylasso","maglasso","wand","transform","crop","text"];
+  const tool = tools.includes(doc.canvasTool) ? doc.canvasTool
+      : ((doc.editingMask || doc._userMaskMode) && !doc.regionMode ? "mask" : "brush");
+  if (window.StudioUI) window.StudioUI.setTool(tool);
+  S._maskReturnTool = tools.includes(doc.maskReturnTool) && doc.maskReturnTool !== "mask" ? doc.maskReturnTool : "brush";
+  S.editingMask = tool === "mask";
   S._userMaskMode = doc._userMaskMode || false;
   S._canvasDirty = doc._canvasDirty || false;
 
@@ -356,6 +365,7 @@ function _createBlankDoc(name) {
       : { texture: "none", scale: 1, depth: 0 },
     maskData: null, maskVisible: true, maskOpacity: 0.5,
     regions: [], activeRegionId: null, regionMode: false, _nextRegionId: 1,
+    canvasTool: "brush", maskReturnTool: "brush",
     editingMask: false, _userMaskMode: false, _canvasDirty: false,
     zoom: { scale: 1, ox: 0, oy: 0 },
     undoStack: [], redoStack: [],

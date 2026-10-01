@@ -132,7 +132,8 @@ function applyDisplayTransform(ctx) {
  * compares two runs of a stochastic preset has to hold the stream still.
  *
  * A preset that declares no Tooth is untouched at ANY depth: `paperReveal`
- * multiplies by `S.brushGrain`, and Hard Ink and Pixel Perfect declare 0.0.
+ * multiplies by `S.brushGrain`, and Pixel Perfect declares 0.0 (Hard Ink did
+ * too, until the owner cut it at the first V2 sign-off).
  * Sketch Light shows no visible grain until about 0.45 for an honest reason --
  * its stroke sits near alpha 25, so a 20% modulation is under the visibility
  * floor. That is recorded rather than chased.
@@ -170,10 +171,11 @@ const S = {
     // document-pixel diameter. See `brushPx()`.
     brushSizeMode: "relative",
     brushOpacity: 1,
-    // CT3. Flow was a field with NO WRITER anywhere in the frontend and no
-    // control in the UI -- a permanent constant that `pOp()` read and passed
-    // to every stamp. It is a real control now, and it means what it means
-    // everywhere else: how much ONE STAMP contributes.
+    // CT3 made Flow a control; the owner SCRAPPED it at the first V2 sign-off
+    // (2026-09-29): "Opacity is the only strength setting." It is back to
+    // what the Extension always had -- 1, with no control -- and survives only
+    // as the internal per-dab channel that pressure, speed and opacity jitter
+    // move (`pOp()`, V2's flow buckets).
     brushFlow: 1,
     // CT3. Whether stamps ACCUMULATE within a single stroke.
     //
@@ -220,6 +222,20 @@ const S = {
     // preset, because "Pencil and Pastel share the same paper and reveal it
     // differently" is the whole acceptance criterion.
     brushGrain: 0,
+    // P. Which material family THIS brush is, or null: "pencil", "charcoal"
+    // or "pastel" for the dry media, whose paper RESPONSE and strands (M1a)
+    // the approved study gives (DEC-BRUSH) -- light pressure catches only the
+    // grain's high points, heavier pressure fills it, Pastel never fully --
+    // and "bristle" for Bristle Rake's lanes (M1b). Brush V2 reads it; Legacy
+    // ignores it and paints exactly as before.
+    brushMaterial: null,
+    // SR1-5. How hard a MOUSE stroke presses, for the responses a pen's
+    // pressure would drive in Brush V2: the paper's grain threshold, dry-media
+    // dust and crumbs, bristle lanes. The approved material study read a mouse
+    // as p = 0.5; V2 read it as a full press, so the grain filled in and Pencil
+    // "looked nothing like the tests". The owner asked for it to be a setting
+    // (Settings > Canvas). 0.5 is the study's medium press; 1 is a full press.
+    mousePress: 0.5,
     // BE10. The DOCUMENT's paper. Travels with the document through recovery,
     // not with the brush and not with the session.
     //
@@ -331,6 +347,8 @@ const S = {
     // and reusing a number would let two different states share an identity.
     canvasRevision: 0,
     editingMask: false,
+    maskOperation: "add",
+    _maskReturnTool: "brush",
     generating: false,
     _canvasDirty: false, // Set true on any user edit — tracks whether canvas has been touched
 
@@ -648,7 +666,7 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Basic Round",
         desc: "An everyday round brush. Soft edge, full strength.",
-        preset: "round", size: 12, hardness: 85, opacity: 100, flow: 100,
+        preset: "round", size: 12, hardness: 85, opacity: 100,
         smoothing: 3, grain: 0.15, buildup: false,
         airbrush: false, aliased: false, pixelPerfect: false,
         ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
@@ -662,8 +680,8 @@ const DEFAULT_BRUSH_PRESETS = [
     },
     {
         name: "Soft Round",
-        desc: "A wide feathered tip that builds up gradually.",
-        preset: "round", size: 24, hardness: 0, opacity: 100, flow: 40,
+        desc: "A wide feathered tip for soft, light shading.",
+        preset: "round", size: 24, hardness: 0, opacity: 40,
         smoothing: 4, grain: 0.1, buildup: false,
         airbrush: false, aliased: false, pixelPerfect: false,
         ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
@@ -674,39 +692,21 @@ const DEFAULT_BRUSH_PRESETS = [
             { input: "pressure", target: "flow", curve: "easeIn", min: 0.15, max: 1, fallback: 1 },
         ],
     },
-    {
-        name: "Hard Ink",
-        desc: "Hard-edged ink. Floods the paper's tooth completely.",
-        preset: "round", size: 8, hardness: 100, opacity: 100, flow: 100,
-        smoothing: 1, grain: 0.0, buildup: false,
-        airbrush: false, aliased: false, pixelPerfect: false,
-        ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
-        falloff: "default",
-        dynamics: { sizeJitter: 0, opacityJitter: 0, scatter: 0,
-                    rotationJitter: 0, followStroke: true, spacing: 0.04 },
-        curves: [
-            { input: "pressure", target: "size", curve: "sShape", min: 0.6, max: 1, fallback: 1 },
-        ],
-    },
-    {
-        name: "Fine Liner",
-        desc: "A technical liner, heavily stabilised for clean curves.",
-        preset: "round", size: 5, hardness: 100, opacity: 100, flow: 100,
-        smoothing: 8, grain: 0.05, buildup: false,
-        airbrush: false, aliased: false, pixelPerfect: false,
-        ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
-        falloff: "default",
-        dynamics: { sizeJitter: 0, opacityJitter: 0, scatter: 0,
-                    rotationJitter: 0, followStroke: true, spacing: 0.03 },
-        curves: [],
-    },
+    //: HARD INK AND FINE LINER WERE CUT by the owner at the first Brush V2
+    //: sign-off (2026-09-29): "Reads like Basic Round but hard. Cut." and
+    //: "Reads like basic round but smaller. Cut." Their names resolve to Basic
+    //: Round below; engine harnesses that measured a hard round tip through
+    //: them use `tests/studio_alpha/removed_presets_fixture.js`.
     {
         name: "Pencil",
         desc: "Graphite. Catches the paper's ridges and skips the pits.",
-        preset: "round", size: 3, hardness: 90, opacity: 80, flow: 60,
-        smoothing: 2, grain: 0.85, buildup: false,
+        preset: "round", size: 3, hardness: 90, opacity: 48,
+        smoothing: 2, grain: 0.85, buildup: false, material: "pencil",
         airbrush: false, aliased: false, pixelPerfect: false,
-        ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
+        // SR3-4. 0.70, the approved study's Pencil, is what the round-2 panel
+        // showed and the owner approved; it ships with V2 as the default.
+        // Density 1 is the plain round, and the bar's Density scrub gets it.
+        ratio: 1.0, spikes: 2, density: 0.7, angle: 0, taperIn: 0,
         falloff: "default",
         dynamics: { sizeJitter: 0.05, opacityJitter: 0.1, scatter: 0,
                     rotationJitter: 0, followStroke: true, spacing: 0.08 },
@@ -716,25 +716,14 @@ const DEFAULT_BRUSH_PRESETS = [
             { input: "speed", target: "flow", curve: "linear", min: 1, max: 0.6, fallback: 0 },
         ],
     },
-    {
-        name: "Sketch Light",
-        desc: "The lightest pass in the set, for laying in shapes.",
-        preset: "round", size: 5, hardness: 70, opacity: 40, flow: 25,
-        smoothing: 3, grain: 0.9, buildup: false,
-        airbrush: false, aliased: false, pixelPerfect: false,
-        ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
-        falloff: "default",
-        dynamics: { sizeJitter: 0.08, opacityJitter: 0.15, scatter: 0,
-                    rotationJitter: 0, followStroke: true, spacing: 0.08 },
-        curves: [
-            { input: "pressure", target: "size", curve: "linear", min: 0.4, max: 1, fallback: 1 },
-            { input: "pressure", target: "flow", curve: "sharp", min: 0.15, max: 1, fallback: 1 },
-        ],
-    },
+    //: SKETCH LIGHT WAS CUT at the owner's second V2 sign-off (2026-09-29):
+    //: "Too transparent ... make density a visible setting and cut this cuz
+    //: Pencil can do it." Density is on the brush's context bar now; the name
+    //: resolves to Pencil below.
     {
         name: "Airbrush",
         desc: "Deposits while held still. Hold in place to build up.",
-        preset: "round", size: 30, hardness: 0, opacity: 50, flow: 15,
+        preset: "round", size: 30, hardness: 0, opacity: 7.5,
         smoothing: 6, grain: 0.05, buildup: true,
         airbrush: true, aliased: false, pixelPerfect: false,
         ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
@@ -749,7 +738,7 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Ink Wash",
         desc: "A broad dilute wash. Settles slowly and pools where you linger.",
-        preset: "round", size: 48, hardness: 0, opacity: 35, flow: 13,
+        preset: "round", size: 48, hardness: 0, opacity: 4.55,
         smoothing: 5, grain: 0.35, buildup: true,
         airbrush: false, aliased: false, pixelPerfect: false,
         ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0.35,
@@ -764,10 +753,16 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Flat Chisel",
         desc: "A chisel nib. Wide across its travel, thin along it.",
-        preset: "flat", size: 22, hardness: 92, opacity: 70, flow: 85,
+        preset: "flat", size: 22, hardness: 92, opacity: 59.5,
         smoothing: 3, grain: 0.5, buildup: false,
         airbrush: false, aliased: false, pixelPerfect: false,
-        ratio: 1.0, spikes: 2, density: 1.0, angle: 0, taperIn: 0,
+        // G1 (owner decision 2026-09-28, option B). A following tip's Angle is
+        // an OFFSET from the heading, and a flat tip's long axis is its local
+        // x -- so at 0 this chisel was dragged lengthwise, drawing a line 0.3x
+        // its size, contrary to the description above, and sweeping its full
+        // length round every sharp corner. 90 presents the broad face across
+        // the travel, which is what the description has always said.
+        ratio: 1.0, spikes: 2, density: 1.0, angle: 90, taperIn: 0,
         falloff: "default",
         dynamics: { sizeJitter: 0, opacityJitter: 0, scatter: 0,
                     rotationJitter: 0, followStroke: true, spacing: 0.08 },
@@ -779,10 +774,14 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Marker",
         desc: "Solvent ink from a squared nib. Skips when hurried.",
-        preset: "marker", size: 30, hardness: 100, opacity: 90, flow: 100,
+        preset: "marker", size: 30, hardness: 100, opacity: 90,
         smoothing: 2, grain: 0.15, buildup: false,
         airbrush: false, aliased: false, pixelPerfect: false,
-        ratio: 1.0, spikes: 2, density: 1.0, angle: 20, taperIn: 0,
+        // G1. Same reason as Flat Chisel: at 20 the squared nib was dragged
+        // nearly lengthwise, a 30 px marker drawing a 10 px line whose stamp
+        // ends showed down its length. 110 keeps the declared 20-degree slant
+        // but presents the broad face across the travel.
+        ratio: 1.0, spikes: 2, density: 1.0, angle: 110, taperIn: 0,
         falloff: "default",
         dynamics: { sizeJitter: 0, opacityJitter: 0, scatter: 0,
                     rotationJitter: 0, followStroke: true, spacing: 0.06 },
@@ -793,7 +792,7 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Calligraphy",
         desc: "A held nib. Angle is fixed, so width follows direction.",
-        preset: "flat", size: 22, hardness: 100, opacity: 100, flow: 100,
+        preset: "flat", size: 22, hardness: 100, opacity: 100,
         smoothing: 3, grain: 0.2, buildup: false,
         airbrush: false, aliased: false, pixelPerfect: false,
         ratio: 0.6, spikes: 2, density: 1.0, angle: 45, taperIn: 0,
@@ -807,8 +806,8 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Charcoal",
         desc: "Broad and broken. Finds every ridge in the paper.",
-        preset: "round", size: 22, hardness: 35, opacity: 90, flow: 70,
-        smoothing: 2, grain: 1.0, buildup: false,
+        preset: "round", size: 22, hardness: 35, opacity: 63,
+        smoothing: 2, grain: 1.0, buildup: false, material: "charcoal",
         airbrush: false, aliased: false, pixelPerfect: false,
         ratio: 1.0, spikes: 2, density: 0.55, angle: 0, taperIn: 0,
         falloff: "gaussian",
@@ -823,8 +822,8 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Pastel",
         desc: "Soft chalk. Lays colour into the tooth and builds.",
-        preset: "round", size: 30, hardness: 15, opacity: 85, flow: 45,
-        smoothing: 3, grain: 0.95, buildup: true,
+        preset: "round", size: 30, hardness: 15, opacity: 38.25,
+        smoothing: 3, grain: 0.95, buildup: true, material: "pastel",
         airbrush: false, aliased: false, pixelPerfect: false,
         ratio: 1.0, spikes: 2, density: 0.8, angle: 0, taperIn: 0,
         falloff: "default",
@@ -837,7 +836,7 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Scatter Dust",
         desc: "Flung particles. Density and spacing decide what lands.",
-        preset: "scatter", size: 25, hardness: 50, opacity: 60, flow: 80,
+        preset: "scatter", size: 25, hardness: 50, opacity: 48,
         smoothing: 1, grain: 0.6, buildup: false,
         airbrush: false, aliased: false, pixelPerfect: false,
         ratio: 1.0, spikes: 2, density: 0.5, angle: 0, taperIn: 0,
@@ -852,10 +851,13 @@ const DEFAULT_BRUSH_PRESETS = [
     {
         name: "Bristle Rake",
         desc: "A splayed tip that leaves separated strokes.",
-        preset: "flat", size: 26, hardness: 80, opacity: 80, flow: 90,
-        smoothing: 2, grain: 0.55, buildup: false,
+        preset: "flat", size: 26, hardness: 80, opacity: 72,
+        smoothing: 2, grain: 0.55, buildup: false, material: "bristle",
         airbrush: false, aliased: false, pixelPerfect: false,
-        ratio: 0.55, spikes: 6, density: 0.85, angle: 0, taperIn: 0,
+        // G1. "Separated strokes" need the bristles side by side ACROSS the
+        // travel, which is also how the approved material direction draws its
+        // lanes (DEC-BRUSH). At 0 the splay was dragged lengthwise.
+        ratio: 0.55, spikes: 6, density: 0.85, angle: 90, taperIn: 0,
         falloff: "default",
         dynamics: { sizeJitter: 0, opacityJitter: 0.05, scatter: 0,
                     rotationJitter: 0, followStroke: true, spacing: 0.04 },
@@ -865,8 +867,10 @@ const DEFAULT_BRUSH_PRESETS = [
     },
     {
         name: "Pixel Perfect",
-        desc: "One document pixel, hard edges, no doubled corners.",
-        preset: "round", size: 1, hardness: 100, opacity: 100, flow: 100,
+        //: Sign-off round 1: "Unsure what this actually does." Kept by the
+        //: owner; the description now says what it is FOR.
+        desc: "For pixel art. Exactly one document pixel, no soft edge, no doubled corners.",
+        preset: "round", size: 1, hardness: 100, opacity: 100,
         smoothing: 0, grain: 0.0, buildup: false,
         airbrush: false, aliased: true, pixelPerfect: true,
         sizeMode: "document_pixels",
@@ -888,6 +892,12 @@ const BRUSH_PRESET_ALIASES = {
     "Flat Shader": "Flat Chisel",
     "Bold Marker": "Marker",
     "Pixel": "Pixel Perfect",
+    //: Cut, not renamed (sign-off round 1): the nearest shipped brush, so a
+    //: saved choice still resolves instead of silently changing nothing.
+    "Hard Ink": "Basic Round",
+    "Fine Liner": "Basic Round",
+    //: Cut at sign-off round 2: the same medium, and Density is now on the bar.
+    "Sketch Light": "Pencil",
 };
 
 //: BE10. `grain` is how strongly this preset finds the document's paper,
@@ -953,13 +963,22 @@ function applyBrushPreset(name) {
     S.brushSize = p.size;
     S.brushHardness = p.hardness / 100;
     S.brushOpacity = p.opacity / 100;
-    S.brushFlow = Math.max(0.01, p.flow / 100);
+    // FLOW WAS SCRAPPED at the owner's first V2 sign-off (2026-09-29):
+    // "Opacity is the only strength setting." Each preset's flow was folded
+    // into its opacity, which keeps a single pass exactly and keeps the
+    // build-up presets' per-pass target (`flow * opacity`) exactly. Flow stays
+    // only as the INTERNAL per-dab channel that pressure, speed and opacity
+    // jitter move, so every preset starts it at 1.
+    S.brushFlow = 1;
     S.brushBuildup = !!p.buildup;
     // BE10. Written unconditionally, like `brushSizeMode` above and for the
     // same reason: a preset that left this alone would inherit the last one's
     // tooth, and "Hard Ink is grainy if you picked Pencil first" is the exact
     // state-leak defect BE1 exists to catch.
     S.brushGrain = p.grain != null ? p.grain : 0;
+    // P. Unconditional for the same reason: Hard Ink must not answer the paper
+    // like charcoal because the owner picked Charcoal first.
+    S.brushMaterial = p.material || null;
     // BE11. Written for EVERY preset and DEEP COPIED, and both halves matter.
     //
     // Unconditional, for the third time in this programme: BE2 added
@@ -1495,6 +1514,13 @@ function _segmentSpeed(dist) {
 //: BE11's DYN_SPEED_REF.
 const AIR_MAX_RATE = 60;
 const AIR_MIN_RATE = 4;
+//: FLOW WAS SCRAPPED (owner, V2 sign-off round 1), so the owner-facing
+//: control this rate was scaled by is gone and every preset starts Flow at 1.
+//: Left at 60/s, the Airbrush would puff 6.7x faster than it did. The base is
+//: therefore the Airbrush preset's own rate while Flow existed -- 60/s times
+//: its Flow of 0.15 -- so it builds exactly as it did; Opacity is now how much
+//: each puff lays, and pressure (the internal flow channel) still slows it.
+const AIR_BASE_RATE = AIR_MAX_RATE * 0.15;
 
 //: How far the pointer may drift and still count as held still, in DOCUMENT
 //: pixels. A hand resting on a tablet is never perfectly still.
@@ -1521,7 +1547,7 @@ function setAirbrushClock(fn) { _airClock = fn || _airClock; }
 /** Dab interval in milliseconds for the current Flow. */
 function airbrushInterval() {
     const flow = Math.max(0.01, Math.min(1, S.brushFlow || 1));
-    const rate = Math.max(AIR_MIN_RATE, AIR_MAX_RATE * flow);
+    const rate = Math.max(AIR_MIN_RATE, AIR_BASE_RATE * flow);
     return 1000 / rate;
 }
 
@@ -1588,10 +1614,16 @@ function airbrushTick(token) {
     _airLast = now;
     if (!(elapsed > 0)) return 0;
 
+    // SR1-4. UNDER BRUSH V2 THE CLOCK IS THE SAME AND THE HAND IS V2'S. The
+    // pointer's moves go to V2, not `plotTo`, so `S.stroke.lx/ly` stay at the
+    // contact point; and a Legacy dab here would land in the buffer V2
+    // overwrites. So V2 says where the pointer is and lays each owed puff.
+    const v2 = (typeof window !== "undefined") ? window.StudioBrushV2Adapter : null;
+    const v2At = (v2 && v2.isActive && v2.isActive() && v2.pointerAt) ? v2.pointerAt() : null;
     // MOVED means the pointer is depositing through `plotTo` already, so the
     // time debt is discarded rather than banked -- banking it would pay out a
     // burst the moment the hand stopped.
-    const x = S.stroke.lx, y = S.stroke.ly;
+    const x = v2At ? v2At.x : S.stroke.lx, y = v2At ? v2At.y : S.stroke.ly;
     const px = S.stroke._airX, py = S.stroke._airY;
     S.stroke._airX = x; S.stroke._airY = y;
     if (px !== undefined && Math.hypot(x - px, y - py) > AIR_STILL_PX) {
@@ -1627,10 +1659,13 @@ function airbrushTick(token) {
         // pixel, so the normalisation collapses to identity and a tick
         // deposits Flow. Written as a step rather than as a flag because the
         // units then say what it means.
-        stampWet(x, y, S.stroke.lp, dabRotation(),
+        if (v2At) v2.airbrushPuff(S);
+        else stampWet(x, y, S.stroke.lp, dabRotation(),
             applyDynamics(_airDynCtx(S.stroke.lp)), timeDepositStep());
         laid++;
     }
+    // SR2-1. Show it now: a held pointer sends no events to redraw on.
+    if (laid && _onAirbrushDeposit) _onAirbrushDeposit();
     return laid;
 }
 
@@ -1907,9 +1942,14 @@ function activeLayer() {
 function findLayerIdx(id) { return S.layers.findIndex(l => l.id === id); }
 
 function drawTarget() {
+    if (_strokeTransaction && S.drawing) return _strokeTransaction.target;
     if (S.editingMask) return { canvas: S.mask.canvas, ctx: S.mask.ctx };
     const L = activeLayer();
     return { canvas: L.canvas, ctx: L.ctx };
+}
+
+function strokeTool() {
+    return S.tool === "mask" ? (S.maskOperation === "subtract" ? "eraser" : "brush") : S.tool;
 }
 
 function drawColor() { return S.editingMask ? S.maskColor : S.color; }
@@ -2330,7 +2370,7 @@ const TIP_CAPABILITIES = {
 // Hard brushes: per-pixel max (no accumulation within stroke)
 // Coverage write: source-over accumulation when Buildup is on, max-blend when
 // it is off. No ceiling -- see the BE5 note inside stampAlphaMap.
-function stampAlphaMap(cx, cy, sz, opacity, stampAngle, dabStep) {
+function stampAlphaMap(cx, cy, sz, opacity, stampAngle, dabStep, pivot) {
     const map = S.stroke.alphaMap;
     if (!map) return;
     // BE13. CELL-CENTRE PLACEMENT, and BE2 left an expectedFailure with
@@ -2561,8 +2601,13 @@ function stampAlphaMap(cx, cy, sz, opacity, stampAngle, dabStep) {
     //
     // Checking the map's IDENTITY makes the stale case unreachable rather than
     // merely discouraged, which is the difference between a rule and a habit.
+    // G1. A PIVOT STAMP DEPOSITS ONCE. It fills the fan a following tip sweeps
+    // through a sharp turn (`_pivotFill`), and that fan is a rotational SWEEP:
+    // accumulating it like a train of dabs would darken every corner. With no
+    // accumulator `_depositAt` returns the MAX floor `cov * target`, which is
+    // exactly the level one pass reaches on the spine.
     let acc = null;
-    if (accumulating) {
+    if (accumulating && !pivot) {
         if (S.stroke._accumFor !== map || !S.stroke.accum
             || S.stroke.accum.length !== w * h) {
             S.stroke.accum = new Uint16Array(w * h);
@@ -2732,6 +2777,12 @@ function alphaMapToImageData(color, rect) {
     const grain = S.editingMask ? null : paperReveal();
     const gTile = grain ? grain.tile : null;
     const gLut = grain ? grain.lut : null;
+    // P. A Brush V2 dry-media stroke answers the paper through its own table,
+    // indexed by (coverage, height), because the approved response depends on
+    // how much paint is there: light coverage catches only the peaks, heavy
+    // coverage fills the grain. Only where paper is on at all -- the gates
+    // above still decide that -- and only for the stroke that built it.
+    const gTbl = gTile && S.stroke.paperTable ? S.stroke.paperTable : null;
     const dx0 = Math.max(0, d.x0), dy0 = Math.max(0, d.y0);
     const dx1 = Math.min(w - 1, d.x1), dy1 = Math.min(h - 1, d.y1);
     for (let py = dy0; py <= dy1; py++) {
@@ -2745,7 +2796,8 @@ function alphaMapToImageData(color, rect) {
             // neither pan nor zoom moves them. `& 511` because the tile is a
             // power of two -- one AND, one lookup, no division.
             if (gTile) {
-                a = (a * gLut[gTile[((py & 511) << 9) | (px & 511)]] + 0.5) | 0;
+                const gh = gTile[((py & 511) << 9) | (px & 511)];
+                a = gTbl ? gTbl[(a << 8) | gh] : (a * gLut[gh] + 0.5) | 0;
                 if (a === 0) { data[j + 3] = 0; continue; }
             }
             data[j]     = rgb.r;
@@ -2880,7 +2932,7 @@ function _arcCentroid(pts, windowDoc, key, fallback) {
 // STROKE ENGINE
 // ========================================================================
 
-function stampWet(x, y, p, stampRot, mods, dabStep) {
+function stampWet(x, y, p, stampRot, mods, dabStep, pivot) {
     const dyn = S.brushDynamics;
     const M = mods || DYN_NEUTRAL;
     // Floor of ONE, not two.
@@ -2938,10 +2990,10 @@ function stampWet(x, y, p, stampRot, mods, dabStep) {
     const savedPreset = S.brushPreset, savedHard = S.brushHardness;
     if (S.editingMask) { S.brushPreset = "round"; S.brushHardness = 1.0; }
     const finalOp = S.editingMask ? 1 : op;
-    stampAlphaMap(x, y, sz, finalOp, ang, dabStep);
-    if (S.symmetry === "h" || S.symmetry === "both") stampAlphaMap(S.W - x, y, sz, finalOp, ang, dabStep);
-    if (S.symmetry === "v" || S.symmetry === "both") stampAlphaMap(x, S.H - y, sz, finalOp, ang, dabStep);
-    if (S.symmetry === "both") stampAlphaMap(S.W - x, S.H - y, sz, finalOp, ang, dabStep);
+    stampAlphaMap(x, y, sz, finalOp, ang, dabStep, pivot);
+    if (S.symmetry === "h" || S.symmetry === "both") stampAlphaMap(S.W - x, y, sz, finalOp, ang, dabStep, pivot);
+    if (S.symmetry === "v" || S.symmetry === "both") stampAlphaMap(x, S.H - y, sz, finalOp, ang, dabStep, pivot);
+    if (S.symmetry === "both") stampAlphaMap(S.W - x, S.H - y, sz, finalOp, ang, dabStep, pivot);
     if (S.symmetry === "radial") {
         const n = S.symmetryAxes || 4;
         const ccx = S.W / 2, ccy = S.H / 2;
@@ -2950,7 +3002,7 @@ function stampWet(x, y, p, stampRot, mods, dabStep) {
             const cos = Math.cos(a), sin = Math.sin(a);
             const rx = ccx + (x - ccx) * cos - (y - ccy) * sin;
             const ry = ccy + (x - ccx) * sin + (y - ccy) * cos;
-            stampAlphaMap(rx, ry, sz, finalOp, ang + a, dabStep);
+            stampAlphaMap(rx, ry, sz, finalOp, ang + a, dabStep, pivot);
         }
     }
     if (S.editingMask) { S.brushPreset = savedPreset; S.brushHardness = savedHard; }
@@ -3176,7 +3228,10 @@ function plotTo(x, y, p) {
         const dabPx = S.pressureSensitivity ? Math.max(1, pSz(stampP)) : bpx;
         const alongRadius = Math.max(
             0.5, dabPx * 0.5 * alongExtentFor(strokeAngle, stampRot));
-        fn(sx, sy, stampP, stampRot, applyDynamics(_dynCtx), debt / alongRadius);
+        const mods = applyDynamics(_dynCtx);
+        _pivotFill(sx, sy, stampP, stampRot, dabPx, mods, debt / alongRadius);
+        fn(sx, sy, stampP, stampRot, mods, debt / alongRadius);
+        _notePivot(sx, sy, stampP, stampRot);
         // The NEXT gap is measured at THIS dab's pressure AND at the tip's
         // extent along the direction of travel, so a chisel spaces itself by
         // the width it is actually presenting rather than by one scalar.
@@ -3442,6 +3497,64 @@ function dabRotation() {
 }
 
 /**
+ * G1. A SHARP TURN IS FILLED BY PIVOTING THE TIP, NOT BY LAGGING THE HEADING.
+ *
+ * BE7 made the heading the path's tangent, which removed the Extension's
+ * event-rate filter and its lag -- and with it the only thing that had been
+ * hiding corners. At a zig-zag vertex the tangent snaps 50-80 degrees between
+ * two dabs 3.5 px apart, so a 22 px chisel's far end jumps 20-30 px and every
+ * vertex left a bow-tie of separate stamps: the owner's "rotates the tip at
+ * direction changes, giving strange stamping".
+ *
+ * Spacing is measured at the tip's CENTRE; a turning tip also moves its ENDS.
+ * So when the far end would travel further than the gap, pivot stamps are laid
+ * between the two dabs, interpolating position and angle, until neither end
+ * advances more than one gap per stamp. A straight line or a gentle curve turns
+ * too little to need any and is byte-identical. Pivot stamps deposit ONCE (see
+ * `stampAlphaMap`), so a corner reaches the one-pass level and no darker.
+ *
+ * Only where rotation can change what is painted, and only for a tip that
+ * follows the stroke: a held nib (Calligraphy) does not turn, a round tip has
+ * no ends, and rotation jitter is deliberate randomness rather than a turn.
+ */
+const PIVOT_MAX = 64;
+
+// A test seam, like `setAirbrushClock`: lets a measurement compare the same
+// stroke with and without the fill, so "a pivot adds no darkness" can be
+// asserted directly rather than inferred from a peak that self-overlap also
+// moves. Never switched off by product code.
+let _pivotFillOn = true;
+function setPivotFill(on) { _pivotFillOn = !!on; }
+
+function _pivotFill(x, y, p, rot, dabPx, mods, dabStep) {
+    const from = S.stroke && S.stroke._pivot;
+    if (!_pivotFillOn || !from || !from.set) return 0;
+    const dyn = S.brushDynamics;
+    if (!dyn.followStroke || dyn.rotationJitter > 0 || dabIgnoresRotation()) return 0;
+    const turn = Math.atan2(Math.sin(rot - from.rot), Math.cos(rot - from.rot));
+    const kind = S.brushPreset;
+    const reach = dabPx * 0.5 * Math.max(TIP_EXTENT[kind] || 1.0,
+        (TIP_ASPECT[kind] ?? 1.0) * (S.brushRatio || 1.0));
+    const gap = Math.max(1, Math.hypot(x - from.x, y - from.y));
+    const n = Math.min(PIVOT_MAX, Math.ceil(reach * Math.abs(turn) / gap) - 1);
+    for (let k = 1; k <= n; k++) {
+        const t = k / (n + 1);
+        stampWet(from.x + (x - from.x) * t, from.y + (y - from.y) * t,
+                 from.p + (p - from.p) * t, from.rot + turn * t, mods, dabStep, true);
+    }
+    if (n > 0) S.stroke._pivots = (S.stroke._pivots || 0) + n;
+    return n > 0 ? n : 0;
+}
+
+/** Remember the dab just laid, without allocating one object per dab (BE8). */
+function _notePivot(x, y, p, rot) {
+    const st = S.stroke;
+    if (!st) return;
+    const v = st._pivot || (st._pivot = { x: 0, y: 0, p: 0, rot: 0, set: false });
+    v.x = x; v.y = y; v.p = p; v.rot = rot; v.set = true;
+}
+
+/**
  * Lay the opening dab that `beginStroke` held back, now that a heading exists.
  *
  * DEFERRED, NOT GUESSED, AND NOT REPAINTED. A stroke has no direction until the
@@ -3500,6 +3613,7 @@ function flushOpeningDab(heading) {
         st._taperK = savedTaper;
         S.editingMask = savedMask;
     }
+    _notePivot(o.x, o.y, o.p, rot);
     return true;
 }
 
@@ -3546,6 +3660,10 @@ function beginStroke(x, y, p) {
     // 6000x4000 document for nothing.
     S.stroke.accum = null;
     S.stroke._accumFor = null;
+    // P. Brush V2's paper response for THIS stroke, set by its adapter after
+    // this function returns. Cleared here so a Legacy stroke can never merge
+    // through the table a V2 stroke left behind.
+    S.stroke.paperTable = null;
     S.stroke.dirty = { x0: S.W, y0: S.H, x1: 0, y1: 0 };
     // BE8. What changed since the last COMPOSITE, as opposed to since the start
     // of the stroke. `dirty` accumulates because commit needs the total; using
@@ -3566,6 +3684,10 @@ function beginStroke(x, y, p) {
     S.stroke.points = [{ x, y, p }];
     S.stroke.lx = x; S.stroke.ly = y; S.stroke.lp = p;
     S.stroke._travelled = 0;
+    // G1. A new stroke pivots from nothing: its first dab must not fill a turn
+    // from wherever the previous stroke ended.
+    if (S.stroke._pivot) S.stroke._pivot.set = false;
+    S.stroke._pivots = 0;
     S.stroke._taperK = _taperFactor(0, brushPx());
     // BE11. Cleared, not left. A mouse stroke following a pen stroke would
     // otherwise inherit the pen's availability flags and act on a pressure
@@ -3694,9 +3816,6 @@ function commitStroke() {
     // read outside this file -- and the FLAG is what says whether it means
     // anything. Cleared here, so between strokes there is honestly no heading.
     S.stroke._headingKnown = false;
-    // The transaction closes here: a committed stroke must never be abortable
-    // by a `pointercancel` that arrives afterwards.
-    clearStrokeUndo();
     // Use draw target locked at beginStroke time to prevent layer wipe
     // if editingMask changed mid-stroke.
     const T = S.stroke._commitTarget || drawTarget();
@@ -3739,7 +3858,7 @@ function commitStroke() {
         T.ctx.globalAlpha = wasMask ? 1 : (S.brushBuildup ? 1 : S.brushOpacity);
         // THE ONE DIFFERENCE between painting and erasing.
         T.ctx.globalCompositeOperation =
-            S.tool === "eraser" ? "destination-out" : "source-over";
+            strokeTool() === "eraser" ? "destination-out" : "source-over";
         // U2. BOUNDED TO THE STROKE. Outside its dirty rectangle the stroke
         // canvas is fully transparent, and neither `source-over` nor
         // `destination-out` changes a destination pixel under a zero-alpha
@@ -3774,10 +3893,12 @@ function commitStroke() {
     S.stroke._commitMask = null;
     S.stroke.ctx.clearRect(0, 0, S.W, S.H);
     S.drawing = false;
+    const registeredStroke = !!_strokeTransaction;
+    clearStrokeUndo();
     // The stroke is now ON the layer and the document is coherent. Last line
     // deliberately: a listener that reads the canvas must see the finished
     // stroke, not the buffer mid-merge.
-    _notifyActionComplete("stroke");
+    if (!registeredStroke) _notifyActionComplete("stroke");
 }
 
 // ========================================================================
@@ -4377,6 +4498,7 @@ function _undoResolve(id) {
 
 function _inferActionLabel() {
     const labels = {
+        mask: S.maskOperation === "subtract" ? "Subtract generation mask" : "Add generation mask",
         brush: "Brush stroke", eraser: "Erase", smudge: "Smudge", blur: "Blur",
         fill: "Fill", gradient: "Gradient", shape: "Shape", text: "Text",
         clone: "Clone stamp", dodge: "Dodge/Burn", liquify: "Liquify",
@@ -4441,12 +4563,18 @@ function _bumpRevision() {
     if (!S.drawing) _notifyActionComplete("action");
 }
 
-function saveUndo(label) {
+// The snapshot must be of the canvas the caller is about to change. Region
+// painting names its region and a layer command names its layer; otherwise it
+// is what `drawTarget()` would write to. Guessing a region from `regionMode`
+// made undo after Fill, Gradient, Shape or Delete in Regional mode restore the
+// region and leave the edited layer as it was.
+function saveUndo(label, target) {
+    if (_strokeTransaction) abortStroke();
     S._canvasDirty = true;
     _bumpRevision();
     markCompositeDirty();
-    if (S.regionMode && activeRegion()) {
-        const r = activeRegion();
+    if (target && target.region) {
+        const r = target.region;
         S.undoStack.push({
             type: "region", regionId: r.id,
             data: r.ctx.getImageData(0, 0, S.W, S.H),
@@ -4456,9 +4584,10 @@ function saveUndo(label) {
         S.redoStack = [];
         return;
     }
-    const t = _undoTarget();
+    const t = target && target.layer ? { ctx: target.layer.ctx, id: target.layer.id } : _undoTarget();
     S.undoStack.push({
         type: "pixel", layerId: t.id,
+        userMaskMode: t.id === "mask" ? !!S._userMaskMode : undefined,
         data: t.ctx.getImageData(0, 0, S.W, S.H),
         label: label || _inferActionLabel()
     });
@@ -4467,6 +4596,7 @@ function saveUndo(label) {
 }
 
 function saveStructuralUndo(label) {
+    if (_strokeTransaction) abortStroke();
     S._canvasDirty = true;
     _bumpRevision();
     markCompositeDirty();
@@ -4490,7 +4620,7 @@ function saveStructuralUndo(label) {
                 data: L.ctx.getImageData(0, 0, S.W, S.H)
             };
         }),
-        activeIdx: S.activeLayerIdx, editingMask: S.editingMask,
+        activeIdx: S.activeLayerIdx, editingMask: S.editingMask, userMaskMode: !!S._userMaskMode,
         maskData: S.mask.ctx.getImageData(0, 0, S.W, S.H),
         canvasW: S.W, canvasH: S.H
     };
@@ -4502,6 +4632,11 @@ function saveStructuralUndo(label) {
 // onUndoRedo: callback for UI layer to re-render panels
 // Set by canvas-ui.js via StudioCore.onUndoRedo = fn
 let _onUndoRedo = null;
+//: SR2-1. Called after an airbrush tick lays paint. A held pointer sends no
+//: events, so nothing else asks the canvas to redraw: the owner's second V2
+//: sign-off saw the build "only after releasing the click". The UI wires its
+//: redraw here, the same way it wires `onUndoRedo`.
+let _onAirbrushDeposit = null;
 
 function _restoreStructural(entry) {
     if (entry.canvasW && entry.canvasH && (entry.canvasW !== S.W || entry.canvasH !== S.H)) {
@@ -4530,7 +4665,9 @@ function _restoreStructural(entry) {
     }
     S.nextLayerId = Math.max(...S.layers.map(l => l.id)) + 1;
     S.activeLayerIdx = entry.activeIdx;
-    S.editingMask = entry.editingMask;
+    // History restores content; the selected tool remains the visible target.
+    S.editingMask = S.tool === "mask";
+    if (entry.userMaskMode !== undefined) S._userMaskMode = entry.userMaskMode;
 }
 
 function _captureStructural() {
@@ -4553,7 +4690,7 @@ function _captureStructural() {
                 data: L.ctx.getImageData(0, 0, S.W, S.H)
             };
         }),
-        activeIdx: S.activeLayerIdx, editingMask: S.editingMask,
+        activeIdx: S.activeLayerIdx, editingMask: S.editingMask, userMaskMode: !!S._userMaskMode,
         maskData: S.mask.ctx.getImageData(0, 0, S.W, S.H),
         canvasW: S.W, canvasH: S.H
     };
@@ -4563,88 +4700,136 @@ function _captureStructural() {
 // STROKE TRANSACTION (CT2)
 // ========================================================================
 //
-// "One pointer-down through pointer-up/cancel is one semantic stroke
-// transaction. A cancelled stroke must not leave half-committed history or
-// leaked pointer state."
-//
-// It did leave both. `pointercancel` set `S.drawing = false` and nothing else:
-// it released no pointer capture, and it left the `saveUndo()` snapshot that
-// `pointerdown` had already pushed. For the brush that meant an undo entry
-// standing for no change; for smudge, blur, pixelate, dodge, liquify and clone
-// -- which paint STRAIGHT to the layer rather than into a stroke buffer -- it
-// meant real pixels with no commit behind them.
-//
-// The window is opened at pointer-down and closed at pointer-up. `abortStroke`
-// only acts inside it, and only when the stack is exactly the depth it was
-// left at, so a stray cancel can never roll back somebody else's work.
-let _strokeUndoDepth = -1;
+// CT2-R1. Preserve complete pre-gesture history, including an evicted oldest
+// entry and redo. Revision numbers are invalidation tokens and never rewind:
+// opening reserves a revision; cancellation invalidates that provisional state.
+let _strokeTransaction = null;
 
-/** Open the window. Call immediately after the stroke's own `saveUndo()`. */
-function noteStrokeUndo() {
-    _strokeUndoDepth = S.undoStack.length;
+// Region painting is Brush/Eraser with a region selected -- canvas-ui's region
+// branch, as in the Extension. Every other tool edits the image in Regional
+// mode too; routing them to the region made Smudge/Clone/Liquify paint the
+// prompt map instead of the picture.
+function _regionPaintTarget() {
+    return S.regionMode && (S.tool === "brush" || S.tool === "eraser") ? activeRegion() : null;
 }
 
-/** Close it. A committed stroke is not abortable. */
-function clearStrokeUndo() {
-    _strokeUndoDepth = -1;
+/** Open BEFORE the first write. Owns saveUndo so callers cannot lose redo first. */
+function noteStrokeUndo(label) {
+    if (_strokeTransaction) abortStroke();
+    const region = _regionPaintTarget();
+    const target = region || drawTarget();
+    if (!target || !target.ctx) return false;
+    const transaction = {
+        documentId: S.documentId, width: S.W, height: S.H,
+        tool: S.tool, editingMask: S.editingMask, regionMode: S.regionMode,
+        region: !!region, regionId: S.activeRegionId, layer: activeLayer(), target,
+        undo: S.undoStack.slice(), redo: S.redoStack.slice(), dirty: S._canvasDirty,
+        cloneOffset: S._cloneOffset ? {...S._cloneOffset} : null
+    };
+    S.drawing = true;
+    saveUndo(label, region ? { region } : undefined);
+    transaction.documentId = S.documentId;
+    transaction.entry = S.undoStack[S.undoStack.length - 1];
+    _strokeTransaction = transaction;
+    S.stroke._pen = null; S.stroke._lastTime = null;
+    S.stroke.points = [];
+    return true;
 }
 
-/**
- * Undo the stroke in progress and forget it.
- *
- * Deliberately NOT `undo()`: that pushes onto the redo stack, and a stroke the
- * owner never finished is not a stroke they can ask for back. Structural
- * entries are put back untouched -- a stroke does not push one, so finding one
- * here means something else did and this is not its business.
- */
-function abortStroke() {
-    // BE12. This one line covers TWO of the five exits the brief names:
-    // CT2 already routes both `pointercancel` and window `blur` here, so
-    // stopping the timer at this funnel cannot drift from either of them
-    // later.
+function strokeTargetIsCurrent() {
+    const t = _strokeTransaction;
+    return !t || (t.documentId === S.documentId && t.width === S.W && t.height === S.H
+        && t.tool === S.tool && t.editingMask === S.editingMask && t.regionMode === S.regionMode
+        && (t.region ? t.regionId === S.activeRegionId
+            && S.regions.some(r => r === t.target)
+            : t.editingMask ? t.target.ctx === S.mask.ctx : t.layer === activeLayer()));
+}
+
+function _strokePixelsChanged(t) {
+    const before = t.entry.data.data;
+    const after = t.target.ctx.getImageData(0, 0, t.width, t.height).data;
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) return true;
+    return false;
+}
+
+function _restoreStrokeHistory(t) {
+    S.undoStack = t.undo;
+    S.redoStack = t.redo;
+    S._canvasDirty = t.dirty;
+}
+
+function _clearStrokeBuffers() {
     stopAirbrush();
-    let rolledBack = false;
-    if (_strokeUndoDepth >= 0 && S.undoStack.length === _strokeUndoDepth
-        && S.undoStack.length > 0) {
-        const entry = S.undoStack.pop();
-        if (entry.type === "region") {
-            const r = S.regions.find(rr => rr.id === entry.regionId);
-            if (r) { r.ctx.putImageData(entry.data, 0, 0); rolledBack = true; }
-        } else if (entry.type === "pixel") {
-            const ctx = _undoResolve(entry.layerId);
-            if (ctx) { ctx.putImageData(entry.data, 0, 0); rolledBack = true; }
-        } else {
-            S.undoStack.push(entry);
-        }
-    }
-    _strokeUndoDepth = -1;
-
-    // The buffers, whether or not there was anything to roll back: a live
-    // alphaMap left behind would be composited into the NEXT stroke.
     S.drawing = false;
-    // BE16. A held opening dab must not survive into the next stroke. It is
-    // dropped rather than flushed: an aborted stroke leaves nothing, and that
-    // is CT2's rule, not this package's to bend.
     S.stroke._openingDab = null;
     S.stroke._headingKnown = false;
     S.stroke.alphaMap = null;
     S.stroke.accum = null;
     S.stroke._accumFor = null;
     S.stroke.points = [];
+    S.stroke.stampPoints = [];
     S.stroke._cachedImg = null;
+    S.stroke._commitTarget = null;
+    S.stroke._commitMask = null;
+    S.stroke._pen = null; S.stroke._lastTime = null;
+    S.stroke._ppPrev = null; S.stroke._ppPrev2 = null;
     S.stroke.dirty = { x0: S.W, y0: S.H, x1: 0, y1: 0 };
+    S.stroke.frameDirty = {...S.stroke.dirty};
     if (S.stroke.ctx) S.stroke.ctx.clearRect(0, 0, S.W, S.H);
     S.smudgeBuffer = null;
+    S._smudgeSymBuffers = null;
     S._liquifySnapshot = null;
     S.stroke._liquifyDist = 0;
-
-    if (rolledBack) _bumpRevision();
-    markCompositeDirty();
-    composite();
-    return rolledBack;
+    if (S.stroke.pointerId != null && S.canvas) {
+        try { S.canvas.releasePointerCapture(S.stroke.pointerId); } catch (_) {}
+    }
+    S.stroke.pointerId = null;
+    const preview = window.StudioCanvasWebGLPreview;
+    if (preview && preview.endLiveCanvasFallback) {
+        try { preview.endLiveCanvasFallback(S.tool); } catch (_) {}
+    }
 }
 
+/** Close after pixels are merged; unchanged gestures preserve history/dirty. */
+function clearStrokeUndo() {
+    const t = _strokeTransaction;
+    if (!t) return false;
+    const changed = _strokePixelsChanged(t);
+    _strokeTransaction = null;
+    if (!changed) _restoreStrokeHistory(t);
+    if (changed && t.tool === "mask") S._userMaskMode = true;
+    _clearStrokeBuffers();
+    if (changed) _notifyActionComplete("stroke");
+    return changed;
+}
+
+/** Restore the captured target, never resolve a different layer/document. */
+function abortStroke() {
+    stopAirbrush();
+    const t = _strokeTransaction;
+    _strokeTransaction = null;
+    if (window.StudioBrushV2Adapter) window.StudioBrushV2Adapter.cancel();
+    if (t) {
+        t.target.ctx.putImageData(t.entry.data, 0, 0);
+        // Transitions resolve before swapping documents. A foreign caller
+        // that already replaced the document must not receive old history.
+        if (t.documentId === S.documentId) {
+            _restoreStrokeHistory(t);
+            S._cloneOffset = t.cloneOffset;
+        }
+    }
+    _clearStrokeBuffers();
+    if (t && t.documentId === S.documentId) _bumpRevision();
+    markCompositeDirty();
+    composite();
+    return !!t;
+}
+
+// A history key while a stroke is held cancels that stroke and nothing more.
+// Carrying on after the abort also undid the stroke before it -- one Ctrl+Z,
+// two strokes gone. The Extension never touched the earlier stroke either.
 function undo() {
+    if (_strokeTransaction) { abortStroke(); if (_onUndoRedo) _onUndoRedo(); return; }
     // A NEW revision, never an old one reused.
     _bumpRevision();
     if (!S.undoStack.length) return;
@@ -4663,13 +4848,15 @@ function undo() {
     } else {
         const ctx = _undoResolve(e.layerId);
         if (!ctx) return;
-        S.redoStack.push({ type: "pixel", layerId: e.layerId, data: ctx.getImageData(0, 0, S.W, S.H), label: e.label });
+        S.redoStack.push({ type: "pixel", layerId: e.layerId, data: ctx.getImageData(0, 0, S.W, S.H), label: e.label, userMaskMode: e.layerId === "mask" ? !!S._userMaskMode : undefined });
         ctx.putImageData(e.data, 0, 0);
+        if (e.layerId === "mask" && e.userMaskMode !== undefined) S._userMaskMode = e.userMaskMode;
     }
     if (_onUndoRedo) _onUndoRedo();
 }
 
 function redo() {
+    if (_strokeTransaction) { abortStroke(); if (_onUndoRedo) _onUndoRedo(); return; }
     // A NEW revision, never an old one reused.
     _bumpRevision();
     if (!S.redoStack.length) return;
@@ -4687,8 +4874,9 @@ function redo() {
     } else {
         const ctx = _undoResolve(e.layerId);
         if (!ctx) return;
-        S.undoStack.push({ type: "pixel", layerId: e.layerId, data: ctx.getImageData(0, 0, S.W, S.H), label: e.label });
+        S.undoStack.push({ type: "pixel", layerId: e.layerId, data: ctx.getImageData(0, 0, S.W, S.H), label: e.label, userMaskMode: e.layerId === "mask" ? !!S._userMaskMode : undefined });
         ctx.putImageData(e.data, 0, 0);
+        if (e.layerId === "mask" && e.userMaskMode !== undefined) S._userMaskMode = e.userMaskMode;
     }
     if (_onUndoRedo) _onUndoRedo();
 }
@@ -4932,7 +5120,8 @@ function selectionPaste() {
     newL.ctx.putImageData(S.clipboard.data, 0, 0);
     S.layers.splice(S.activeLayerIdx + 1, 0, newL);
     S.activeLayerIdx = S.activeLayerIdx + 1;
-    S.editingMask = false;
+    if (S.tool === "mask" && window.StudioUI) window.StudioUI.setTool(S._maskReturnTool || "brush");
+    S.editingMask = S.tool === "mask";
     selectionClear();
 }
 
@@ -5466,6 +5655,7 @@ function mlsEvalGrid(origCtrl, curCtrl, srcRect, evalSize, mode) {
 // REGIONS
 // ========================================================================
 function addRegion(name) {
+    if (_strokeTransaction) abortStroke();
     const id = S._nextRegionId++;
     const colorIdx = (id - 1) % REGION_COLORS.length;
     const c = _createCanvas(S.W, S.H);
@@ -5482,6 +5672,7 @@ function addRegion(name) {
 }
 
 function deleteRegion(id) {
+    if (_strokeTransaction) abortStroke();
     S.regions = S.regions.filter(r => r.id !== id);
     if (S.activeRegionId === id) S.activeRegionId = S.regions.length ? S.regions[S.regions.length - 1].id : null;
     if (!S.regions.length) S.regionMode = false;
@@ -5911,6 +6102,7 @@ function _drawErasedActiveLayer(x, L, w, h) {
     x.drawImage(_eraseScratch, 0, 0, dw, dh, dx, dy, dw, dh);
 }
 
+let _maskPreview = null;
 function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) {
     if (!_compBuffer || _compBuffer.width !== w || _compBuffer.height !== h) {
         _compBuffer = _createCanvas(w, h);
@@ -6020,15 +6212,24 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
     }
 
     if (showMask) {
+        let overlay = S.mask.canvas;
+        if (S.drawing && S.editingMask && S.stroke.alphaMap) {
+            // Preview the same single merge as commit. Coverage is not the
+            // remaining mask, and two tinted overlays would double its alpha.
+            if (!_maskPreview) _maskPreview = _createCanvas(S.W, S.H);
+            if (_maskPreview.width !== S.W) _maskPreview.width = S.W;
+            if (_maskPreview.height !== S.H) _maskPreview.height = S.H;
+            const mx = _maskPreview.getContext("2d");
+            mx.clearRect(0, 0, S.W, S.H);
+            mx.drawImage(S.mask.canvas, 0, 0);
+            mx.globalCompositeOperation = strokeTool() === "eraser" ? "destination-out" : "source-over";
+            mx.drawImage(S.stroke.canvas, 0, 0);
+            mx.globalCompositeOperation = "source-over";
+            overlay = _maskPreview;
+        }
         c.globalCompositeOperation = "source-over";
         c.globalAlpha = S.mask.opacity;
-        if (eraserActive && S.editingMask) c.drawImage(S.stroke.canvas, 0, 0);
-        else c.drawImage(S.mask.canvas, 0, 0);
-    }
-    if (strokeDrawCanvas && S.tool === "brush" && S.editingMask) {
-        c.globalAlpha = S.mask.opacity;
-        c.globalCompositeOperation = "source-over";
-        c.drawImage(strokeDrawCanvas, 0, 0);
+        c.drawImage(overlay, 0, 0);
     }
     c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
 }
@@ -6060,7 +6261,7 @@ function composite(dirtyOnly) {
     // Dirty-rect fast path during brush strokes
     const _canUseDirtyFastPath = (function () {
         if (!dirtyOnly || !S.drawing || S.tool !== "brush" || !S.stroke.alphaMap || !_compositeCache) return false;
-        if (S.editingMask) return true;
+        if (S.editingMask) return false;
         for (let i = S.activeLayerIdx + 1; i < S.layers.length; i++) {
             if (S.layers[i].visible) return false;
         }
@@ -6137,9 +6338,9 @@ function composite(dirtyOnly) {
         }
     }
 
-    const eraserActive = S.drawing && S.stroke.canvas && S.tool === "eraser";
+    const eraserActive = S.drawing && S.stroke.canvas && strokeTool() === "eraser";
     const AL = activeLayer();
-    const showMask = S.mask.visible && S.mask.canvas && (S.studioMode === "Edit" || S._userMaskMode);
+    const showMask = S.mask.visible && S.mask.canvas;
 
     // Prepare wet stroke canvas for brush
     //
@@ -6166,7 +6367,7 @@ function composite(dirtyOnly) {
     // means "there is a wet BRUSH stroke to bake into the stack".
     let strokeDrawCanvas = null;
     const wetTool = (S.drawing && S.stroke.canvas && S.stroke.alphaMap
-        && (S.tool === "brush" || S.tool === "eraser")) ? S.tool : null;
+        && (strokeTool() === "brush" || strokeTool() === "eraser")) ? strokeTool() : null;
     if (wetTool) {
         const onMask = S.editingMask;
         const col = onMask ? S.maskColor : S.color;
@@ -6250,16 +6451,6 @@ function composite(dirtyOnly) {
         c.globalCompositeOperation = "source-over";
         c.drawImage(strokeDrawCanvas, 0, 0);
         c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
-    } else if (S.drawing && S.tool === "brush" && strokeDrawCanvas && S.editingMask && !S.imagePreviewActive) {
-        _composite2D(c, w, h, z, eraserActive, AL, null, showMask);
-        _drawGrid(c, w, h, z);
-        c.setTransform(1, 0, 0, 1, 0, 0);
-        try { _compositeCache = c.getImageData(0, 0, S.canvas.width, S.canvas.height); } catch (e) { _compositeCache = null; }
-        applyDisplayTransform(c);
-        c.globalAlpha = S.mask.opacity;
-        c.globalCompositeOperation = "source-over";
-        c.drawImage(strokeDrawCanvas, 0, 0);
-        c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
     } else {
         // Default brush path. In normal mode the wet stroke gets baked
         // into _compBuffer inside _composite2D and reaches S.ctx via the
@@ -6301,7 +6492,7 @@ function composite(dirtyOnly) {
         }
         _drawGrid(c, w, h, z);
         _compositeCache = null;
-        if (S.imagePreviewActive && strokeDrawCanvas) {
+        if (S.imagePreviewActive && strokeDrawCanvas && !S.editingMask) {
             // R1-A. See `_composite2D`. THIS IS THE SHIPPING DEFAULT -- the
             // WebGL preview owns the display, so this is the site the owner
             // actually meets. Repairing only this one would leave the Canvas2D
@@ -6386,6 +6577,26 @@ function isCanvasBlank() {
     for (let i = 0; i < d.length; i += 4) {
         if (d[i] < 249 || d[i + 1] < 249 || d[i + 2] < 249) return false;
     }
+    return true;
+}
+
+// Coverage belongs to the document, independently of overlay and tool choice.
+function hasGenerationMask() {
+    if (!S.mask.ctx) return false;
+    const d = S.mask.ctx.getImageData(0, 0, S.W, S.H).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i]) return true;
+    return false;
+}
+function clearGenerationMask() {
+    if (_strokeTransaction) abortStroke();
+    if (!hasGenerationMask()) return false;
+    const mask = S.editingMask, region = S.regionMode;
+    S.editingMask = true; S.regionMode = false;
+    noteStrokeUndo("Clear generation mask");
+    S.mask.ctx.clearRect(0, 0, S.W, S.H);
+    S.editingMask = mask; S.regionMode = region;
+    clearStrokeUndo();
+    markCompositeDirty(); composite();
     return true;
 }
 
@@ -6567,7 +6778,7 @@ function getFlattenedImageData(options) {
 function _flipLayerHorizontal() {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
-    saveUndo("Flip Horizontal");
+    saveUndo("Flip Horizontal", { layer: L });
     const w = S.W, h = S.H;
     const src = L.ctx.getImageData(0, 0, w, h);
     const sd = src.data;
@@ -6588,7 +6799,7 @@ function _flipLayerHorizontal() {
 function _flipLayerVertical() {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
-    saveUndo("Flip Vertical");
+    saveUndo("Flip Vertical", { layer: L });
     const w = S.W, h = S.H;
     const src = L.ctx.getImageData(0, 0, w, h);
     const sd = src.data;
@@ -6606,7 +6817,7 @@ function _flipLayerVertical() {
 function _rotateLayer180() {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
-    saveUndo("Rotate 180°");
+    saveUndo("Rotate 180°", { layer: L });
     const w = S.W, h = S.H;
     const src = L.ctx.getImageData(0, 0, w, h);
     const sd = src.data;
@@ -6632,7 +6843,7 @@ function _rotateLayer180() {
 function _rotateLayer90Common(direction) {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
-    saveUndo(direction > 0 ? "Rotate 90° CW" : "Rotate 90° CCW");
+    saveUndo(direction > 0 ? "Rotate 90° CW" : "Rotate 90° CCW", { layer: L });
     const w = S.W, h = S.H;
     const bounds = getLayerContentBounds(L);
     if (!bounds) return;
@@ -6691,7 +6902,7 @@ function _rotateLayerArbitrary(degrees) {
     if (!L || L.type === "adjustment") return;
     const deg = Number(degrees);
     if (!Number.isFinite(deg) || deg === 0) return;
-    saveUndo(`Rotate ${deg}°`);
+    saveUndo(`Rotate ${deg}°`, { layer: L });
     const w = S.W, h = S.H;
     const bounds = getLayerContentBounds(L);
     if (!bounds) return;
@@ -6806,6 +7017,7 @@ function applyLivePreview() {
 // RESIZE
 // ========================================================================
 function resizeCanvas(nw, nh) {
+    if (_strokeTransaction) abortStroke();
     if (nw === S.W && nh === S.H) return;
     selectionClear();
     markCompositeDirty();
@@ -6880,6 +7092,7 @@ function resizeCanvas(nw, nh) {
 // document, the engine resizes first via the existing resizeCanvas
 // path so the rebuilt layers come up at the correct dimensions.
 function resetCanvasState(opts) {
+    if (_strokeTransaction) abortStroke();
     // A reset is a NEW document: new identity, revision back to zero. Restoring
     // the same document must go through the session-restore path instead, which
     // carries its identity with it.
@@ -6946,7 +7159,8 @@ function resetCanvasState(opts) {
 
     // Mask.
     if (S.mask && S.mask.ctx) S.mask.ctx.clearRect(0, 0, S.W, S.H);
-    S.editingMask = false;
+    S.editingMask = S.tool === "mask";
+    S._userMaskMode = false;
 
     // Stroke buffers.
     if (S.stroke && S.stroke.ctx) S.stroke.ctx.clearRect(0, 0, S.W, S.H);
@@ -7033,29 +7247,19 @@ function boot(canvasElement) {
 // APPLY MODE
 // ========================================================================
 function applyMode(mode) {
+    if (_strokeTransaction) abortStroke();
     S.studioMode = mode;
     if (!S.inpaintMode) S.inpaintMode = "Inpaint";
     const isSketch = mode === "Create", isInpaint = mode === "Edit";
     const ipModeVal = S.inpaintMode || "Inpaint";
     const isIPRegional = isInpaint && ipModeVal === "Regional";
 
-    if (isSketch) {
-        // In Create mode, editingMask is controlled by user's mask toggle (Q key)
-        // Don't override if user has mask mode active
-        if (!S._userMaskMode) S.editingMask = false;
-        if (!S.regions.length) S.regionMode = false;
-    } else if (isInpaint) {
-        if (isIPRegional) {
-            S.editingMask = false; S._userMaskMode = false; S.regionMode = true;
-            if (!S.regions.length) addRegion("Region " + S._nextRegionId);
-        } else {
-            // Was a disjunction with a superseded-mode flag that could only
-            // ever be false, so the whole expression was always true. Same
-            // behaviour, dead half removed.
-            S.editingMask = true; S.regionMode = false;
-        }
-    } else {
-        if (!S._userMaskMode) S.editingMask = false;
+    S.editingMask = S.tool === "mask";
+    if (isIPRegional) {
+        if (S.tool === "mask" && window.StudioUI) window.StudioUI.setTool(S._maskReturnTool || "brush");
+        S.editingMask = false; S.regionMode = true;
+        if (!S.regions.length) addRegion("Region " + S._nextRegionId);
+    } else if (isInpaint || !isSketch || !S.regions.length) {
         S.regionMode = false;
     }
 }
@@ -7257,8 +7461,9 @@ window.StudioCore = {
     startAirbrush, stopAirbrush, airbrushTick, airbrushInterval,
     pixelWalkActive, pixelPerfectActive, flushPixelPerfect, PP_MAX_WIDTH,
     strokeHeading, dabRotation, flushOpeningDab,
-    setAirbrushClock, AIR_MAX_RATE, AIR_MIN_RATE, AIR_STILL_PX,
-    noteStrokeUndo, clearStrokeUndo, abortStroke,
+    setAirbrushClock, AIR_MAX_RATE, AIR_MIN_RATE, AIR_STILL_PX, setPivotFill,
+    noteStrokeUndo, clearStrokeUndo, abortStroke, strokeTargetIsCurrent,
+    hasGenerationMask, clearGenerationMask,
     _blendToPS,
     _blendFromPS,
     _adjustDefaults,
@@ -7272,6 +7477,7 @@ window.StudioCore = {
 
     // Callback hooks for UI layer
     set onUndoRedo(fn) { _onUndoRedo = fn; },
+    set onAirbrushDeposit(fn) { _onAirbrushDeposit = fn; },
 
     // Temp canvas utility (for UI overlays that need scratch space)
     getTempCanvas,

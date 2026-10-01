@@ -177,6 +177,7 @@ async function _serialize(doc) {
       regionMode: !!doc.regionMode,
       nextRegionId: doc._nextRegionId || 1,
       editingMask: !!doc.editingMask,
+      canvasTool: doc.canvasTool || null, maskReturnTool: doc.maskReturnTool || "brush",
       userMaskMode: !!doc._userMaskMode,
       canvasDirty: !!doc._canvasDirty,
       zoom: doc.zoom ? { scale: doc.zoom.scale, ox: doc.zoom.ox, oy: doc.zoom.oy } : null,
@@ -273,6 +274,7 @@ async function _deserialize(manifest, blobData, docId) {
     regionMode: !!manifest.regionMode,
     _nextRegionId: manifest.nextRegionId || 1,
     editingMask: !!manifest.editingMask,
+    canvasTool: manifest.canvasTool || null, maskReturnTool: manifest.maskReturnTool || "brush",
     _userMaskMode: !!manifest.userMaskMode,
     _canvasDirty: !!manifest.canvasDirty,
     zoom: manifest.zoom || { scale: 1, ox: 0, oy: 0 },
@@ -321,6 +323,12 @@ async function _upload(documentId, manifest, blobs) {
 async function _captureNow() {
   if (!_writesEnabled) return;              // the ordering gate
   if (_inFlight) { _pendingAgain = true; return; }
+  // A gesture in progress is not a document state. `docForRecovery` snapshots
+  // through `_saveDoc`, which resolves a pending stroke by aborting it -- so a
+  // capture that lands mid-stroke erased the stroke under the owner's pen.
+  // Wait instead; the stroke's own completion captures it.
+  var Core = window.StudioCore;
+  if (Core && Core.state && Core.state.drawing) { scheduleCapture(); return; }
   var Docs = window.StudioDocs;
   if (!Docs || typeof Docs.docForRecovery !== "function") return;
 
@@ -506,9 +514,10 @@ function enableWrites() {
   if (C && typeof C.onRevisionChange === "function") {
     // Still subscribed, but only as the safety net: `saveUndo` fires at
     // POINTER-DOWN, so this edge sees the document as it was BEFORE the
-    // stroke. Debounced, it lands after the stroke finished and does no
-    // harm; it is what catches a mutation that never reaches an action
-    // boundary.
+    // stroke. A debounce does NOT guarantee the stroke has finished -- any
+    // stroke longer than it is still down when it fires -- so `_captureNow`
+    // defers while a gesture is in progress. It is what catches a mutation
+    // that never reaches an action boundary.
     C.onRevisionChange(function () { scheduleCapture(); });
   }
 

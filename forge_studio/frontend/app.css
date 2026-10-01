@@ -3517,3 +3517,10 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
 .studio-dir-entry.is-dir:hover { background: var(--hover, #2a2a2a); }
 .studio-dir-footer { display: flex; align-items: center; gap: 8px; }
 .studio-dir-message { flex: 1; font-size: 11px; opacity: .75; }
+
+/* Inpaint Mask uses native buttons with an explicit keyboard focus cue. */
+#toolstrip .tool-btn:focus-visible, #contextBar button:focus-visible, #maskOverlayToggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#contextBar [data-ctx="mask-target"] { order: -3; color: var(--text-2); }
+#contextBar [data-ctx="mask-operation"] { order: -2; white-space: nowrap; }
+#contextBar .ctx-drag-handle { order: -4; }
+#generationMaskStatus { color: var(--text-2); }

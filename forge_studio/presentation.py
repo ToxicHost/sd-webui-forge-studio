@@ -110,7 +110,11 @@ _SOURCE_LOADER_CSP_HASH = (
     # rule the test encodes, established by reproducing the previous constant:
     # hash the bytes BETWEEN the tags with CRLF normalised to LF. Hashing the
     # file's own CRLF gives a different digest and a page that does not boot.
-    "'sha256-YqDufItmaa6qc0c14aQGFWm+qcKyx6TszbQeL16rcDE='"
+    #
+    # SR3-4 moves it: the loader's comment on the V2 modules said they were
+    # inert and the default Legacy, and V2 is now the default engine. Same
+    # method; it reproduced the previous constant from the previous file.
+    "'sha256-I8LM5PPZCry/y2DAeN0CoRFV86WvxNu+h2bpJhAvXcI='"
 )
 _UPDATE_HANDLER_CSP_HASH = (
     "'sha256-q6WhThBFsQIP9RODqeJp+tqgTSG3Y20BYxMivfQlkX0='"

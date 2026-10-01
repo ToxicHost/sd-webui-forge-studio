@@ -47,6 +47,7 @@
     <div class="toolstrip" id="toolstrip">
       <button class="tool-btn active" data-tool="brush" data-tool-tip="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
       <button class="tool-btn" data-tool="eraser" data-tool-tip="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
+      <button class="tool-btn" data-tool="mask" aria-label="Inpaint Mask" title="Inpaint Mask" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z"/><path d="M4 14 13 5M8 19 20 7M14 19l6-6"/></svg></button>
       <button class="tool-btn" data-tool="eyedropper" data-tool-tip="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
       <div class="tool-sep"></div>
       <button class="tool-btn" data-tool="fill" data-tool-tip="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
@@ -105,13 +106,16 @@
         <span class="ctx-drag-handle" id="ctxDragHandle" data-i18n-title="ctxBar.dragHandle.tooltip" title="Drag to reposition (double-click to reset)">&#x2801;&#x2801;</span>
         <span class="ctx-scrub ctx-item" data-ctx="size" data-key="size" data-min="1" data-max="500" data-step="1" data-suffix="" data-scale="1">Size: 15</span>
         <span class="ctx-scrub ctx-item" data-ctx="opacity" data-key="opacity" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Opacity: 100%</span>
-        <!-- CT3. Flow, beside Opacity because the pair is the point: Opacity
-             bounds the whole stroke and is applied once when it commits; Flow
-             is what ONE STAMP contributes. `S.brushFlow` existed as a field
-             with no writer anywhere and no control here, so it was a constant
-             1.0 that `pOp()` read and handed to every stamp. -->
-        <span class="ctx-scrub ctx-item" data-ctx="flow" data-key="flow" data-min="1" data-max="100" data-step="1" data-suffix="%" data-scale="100" data-help="help.canvas.flow">Flow: 100%</span>
+        <!-- No Flow control. CT3 added one beside Opacity; the owner scrapped
+             it at the first V2 sign-off (2026-09-29): "Opacity is the only
+             strength setting." The Extension never had one. -->
         <span class="ctx-scrub ctx-item" data-ctx="hardness" data-key="hardness" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Hardness: 100%</span>
+        <!-- SR2-2. Density, visible: the owner's second V2 sign-off asked for it
+             ("make density a visible setting") when Sketch Light was cut in
+             favour of Pencil. Same range AND step as the Brush Dynamics
+             slider: at step 1 the bar could hold 76% while the slider's thumb
+             snapped to 75. -->
+        <span class="ctx-scrub ctx-item" data-ctx="density" data-key="density" data-min="5" data-max="100" data-step="5" data-suffix="%" data-scale="100">Density: 100%</span>
         <span class="ctx-scrub ctx-item" data-ctx="smoothing" data-key="smoothing" data-min="0" data-max="20" data-step="1" data-suffix="" data-scale="1">Smoothing: 4</span>
         <!-- Symmetry toggle -->
         <span class="ctx-item" data-ctx="sym-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;align-items:center;">
@@ -133,9 +137,15 @@
           <button class="ctx-mode-btn" id="aliasedBtn" data-i18n-title="ctxBar.aliased.tooltip" title="Aliased: hard pixel edges, no antialiasing">Alias</button>
           <button class="ctx-mode-btn" id="pixelPerfectBtn" data-i18n-title="ctxBar.pixelPerfect.tooltip" title="Pixel Perfect: one-pixel corners (needs Aliased and a 1px brush)">PP</button>
         </span>
-        <span class="ctx-item" data-ctx="mask-toggle" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn" id="maskModeBtn" data-tool-tip="mask">Mask</button>
+        <span class="ctx-item" data-ctx="mask-target"><strong>Inpaint Mask</strong> · Generation mask</span>
+        <span class="ctx-item" data-ctx="mask-operation" role="group" aria-label="Mask operation">
+          <button class="ctx-mode-btn" data-mask-operation="add" aria-pressed="true">+ Add</button>
+          <button class="ctx-mode-btn" data-mask-operation="subtract" aria-pressed="false">− Subtract</button>
         </span>
+        <label class="ctx-item" data-ctx="mask-overlay"><input type="checkbox" id="maskOverlayToggle" checked> Show overlay</label>
+        <span class="ctx-item" data-ctx="mask-clear"><button class="ctx-mode-btn" id="maskClearBtn" disabled>Clear mask</button></span>
+        <span class="ctx-item" data-ctx="mask-selection" id="maskSelectionStatus">Hard round · pressure off</span>
+        <span id="generationMaskStatus" role="status" aria-live="polite">Generation mask: empty</span>
         <!-- Pen pressure toggle + Size/Opacity sub-options -->
         <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
           <button class="ctx-mode-btn" id="pressureBtn" data-i18n-title="ctxBar.penPressure.tooltip" title="Pen pressure">Pen</button>
@@ -1606,6 +1616,13 @@
                     </div>
                     <div class="settings-item-control"><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
                   </div>
+                  <div class="settings-item" data-setting-key="toggleMousePress" data-setting-search="mouse pressure medium press paper grain material brush pen">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.canvas.mousePress">Mouse strokes press at medium strength</span>
+                      <p class="settings-item-description" data-i18n="settings.canvas.mousePress.desc">Brushes with paper grain or material (Pencil, Charcoal, Pastel, Bristle Rake) respond to a mouse as to a medium pen press, so the grain shows. Off: a mouse is a full press.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleMousePress"><div class="toggle-knob"></div></div></div>
+                  </div>
                 </div>
               </section>
             </div>
@@ -2200,10 +2217,10 @@
   ];
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
-  // U3 appends the V2 kernel and its Canvas adapter. They are INERT
-  // until the internal adapter flag is set -- it is false at load and
-  // nothing reads these modules until it is true, so the shipping
-  // default stays Legacy. Kept on ONE line: other suites parse this
+  // U3 appends the V2 kernel and its Canvas adapter. Since SR3-4 the
+  // adapter's internal flag is ON at load, so V2 paints every brush and
+  // eraser contact it does not refuse by name; without these modules
+  // Legacy paints everything. Kept on ONE line: other suites parse this
   // array with a non-DOTALL regex and a wrapped array is invisible to
   // them.
   const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js", "studio-model-controls.js", "studio-dir-picker.js", "v2/brush-contracts.js", "v2/input.js", "v2/sampler.js", "v2/filters.js", "v2/dynamics.js", "v2/coverage.js", "v2/canvas-adapter.js"];

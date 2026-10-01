@@ -1,6 +1,6 @@
 # Studio Standalone — feature status for testers
 
-Features reviewed 2026-09-13; Git installation verified 2026-09-15. This describes the current Standalone source and the
+Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30. This describes the current Standalone source and the
 verification performed for this candidate, not the inherited Neo README.
 
 **Available** means there is an implemented Standalone path. **Contract-tested**
@@ -20,7 +20,7 @@ generation-model paths were accessed.
 | Hires | Implemented; GPU retest required | Hires and Img2Img/Hires contracts passed. Requires a suitable upscaler/model and enough memory. |
 | Auto Detail | Implemented; GPU retest required | Detector/slot contracts passed. Five pinned detectors included and ultralytics declared. A detector finding no target can leave the image unchanged. |
 | Queue and cancellation | Available | Queue/lifecycle contracts passed. Cancellation is bounded by safe execution points, not necessarily immediate. |
-| Canvas brushes, layers and masks | Available for testing | Existing brush probes and source checks passed after refreshing stale aggregate metadata. No new tablet/interactive-browser certification. |
+| Canvas brushes, layers and masks | Available for testing | Brush Engine V2 is the default painting engine (2026-09-30): automated brush checks passed and every preset was reviewed with a mouse. Aliased/Pixel Perfect brushes, touch input and mask/region painting use the previous engine. No tablet certification. |
 | Canvas recovery | Implemented | Recovery-store tests passed. Undo history is not restored. Keep separate artwork backups. |
 | Gallery | Implemented with limitations | Service contract tests passed; fresh browser behavior still needs tester feedback. Image similarity/metadata are not universal format guarantees. |
 | Preferences | Available with persistence limits | Server persistence tests passed. An ephemeral port changes browser origin, resetting browser-local theme/tool/layout state; use a stable port when needed. |

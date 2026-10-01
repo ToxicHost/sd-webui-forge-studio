@@ -2,9 +2,9 @@
  * Forge Studio — Brush Engine V2 → Canvas raster-layer adapter (U3)
  * by ToxicHost & Moritz
  *
- * The first slice where V2 paints on a real document. Internal only: the
- * shipping default is Legacy until U3's acceptance is complete, and there is no
- * public engine choice anywhere in this file.
+ * The first slice where V2 paints on a real document. V2 is the shipping
+ * default since SR3-4, with Legacy painting every contact V2 refuses by name;
+ * there is no public engine choice anywhere in this file.
  *
  * THE SEAM IS DELIBERATELY NARROW, and the Canvas integration gate argued for
  * exactly this shape: Legacy's stroke slot ALREADY IS a coverage sink with the
@@ -53,9 +53,14 @@ for (const [name, mod] of [["input", I], ["filters", F], ["sampler", SAMP],
 
 //: INTERNAL. Not persisted, not in settings, not in the DOM. §14: the flag must
 //: be reversible without touching saved brush preferences, so it deliberately
-//: has no storage at all -- it resets to Legacy on reload, which is the safe
-//: direction for a migration switch.
-let _enabled = false;
+//: has no storage at all.
+//:
+//: ON SINCE SR3-4. The owner approved V2 as the default painting engine "after
+//: my re-check" (sign-off round 1, 2026-09-29); round 2 passed, its Changes
+//: were made, and SR3 closed the four inputs V2 ignored. Legacy still paints
+//: every contact V2 refuses by name. Rollback: this line, or `_setEnabled(false)`
+//: for one session.
+let _enabled = true;
 
 //: Named refusals. A combination this slice does not support must FAIL LOUDLY
 //: to Legacy rather than silently lose the stroke, and the reason has to be
@@ -68,6 +73,12 @@ const REFUSE_HIDDEN = "target-layer-is-hidden";
 const REFUSE_LOCKED = "target-layer-is-locked";
 const REFUSE_MASK_MODE = "mask-and-region-targets-are-not-in-this-slice";
 const REFUSE_TOUCH = "touch-is-not-a-paint-contact";
+//: SR3-3. Aliased coverage is binary and Pixel Perfect is a cell walk with a
+//: corner filter; neither is a coverage model, which is the one thing V2 is.
+//: Legacy's path is exact, and V2 painting the Pixel Perfect preset was
+//: measured breaking all three of its promises (soft edge on every pixel, 1.8x
+//: the pixels, 131 doubled corners on one diagonal). So Legacy keeps it.
+const REFUSE_ALIASED = "aliased-and-pixel-perfect-stay-on-legacys-pixel-walk";
 
 //: One contact's frozen state. Everything the stroke needs is captured at
 //: `begin` and never re-read, because re-resolving mid-stroke is how a stroke
@@ -102,6 +113,9 @@ function refusalFor(S, event) {
     // decision is BE8's and is not pre-empted here.
     if (event && event.pointerType === "touch") return REFUSE_TOUCH;
     if (S.editingMask || S.regionMode) return REFUSE_MASK_MODE;
+    //: Pixel Perfect does nothing unless the brush is aliased (Legacy's
+    //: `pixelPerfectActive`), so the one flag decides both.
+    if (S.brushAliased) return REFUSE_ALIASED;
     const layers = S.layers || [];
     const L = layers[S.activeLayerIdx];
     if (!L) return REFUSE_NO_LAYER;
@@ -172,8 +186,25 @@ function _dyn(S, name) {
 
 function describeStroke(S, C) {
     const sizePx = Math.max(1, C.brushPx ? C.brushPx() : 16);
+    //: S. THE PRESET'S AUTHORED SPACING. `S.brushSpacing` had no producer
+    //: anywhere in the shipped frontend -- only the measurement harness wrote
+    //: it -- so every preset took the 0.15 fallback whatever it declared
+    //: (`Evidence/source-review/U3S-spacing-is-never-forwarded.md`): Fine
+    //: Liner asked for 0.03, Pixel Perfect for 1.0. The declared value is now
+    //: read; 0.15 remains the default for a brush that declares none, and an
+    //: explicit `S.brushSpacing` (the harness) still wins.
+    //:
+    //: LEGACY'S HARDNESS LAW IS STILL NOT COPIED (U3-R, spec §9.3). Legacy
+    //: tightens SOFT tips, `* (0.3 + 0.7 * hardness)`, so separate stamps
+    //: blend; the spec asks the opposite -- soft, low-frequency tips may be
+    //: sparse -- and the sweep integrates the pass continuously. Measured
+    //: after the pass-pricing repair: soft swept presets within 1 level of
+    //: the tightened result at a third to a tenth of the cost.
+    const dynSpacing = S.brushDynamics && typeof S.brushDynamics.spacing === "number"
+        ? S.brushDynamics.spacing : 0;
+    const declaredSpacing = dynSpacing > 0 ? Math.max(0.02, dynSpacing) : 0.15;
     const spacing = (typeof S.brushSpacing === "number" && S.brushSpacing > 0)
-        ? S.brushSpacing : 0.15;
+        ? S.brushSpacing : declaredSpacing;
     return {
         sizePx: sizePx,
         spacingFraction: spacing,
@@ -269,7 +300,51 @@ function describeStroke(S, C) {
         //: Frozen with everything else, so a mid-stroke change cannot alter
         //: the contact in flight.
         pressureWidthFloor: _pressureWidthFloor,
+        //: SR3-1. THE PRESET'S AUTHORED DYNAMICS, which V2 never read. Twelve
+        //: of the thirteen presets declare curves (BE11) and Legacy applies
+        //: them to every dab whatever the pressure toggle says -- so under V2
+        //: Marker did not "skip when hurried", Ink Wash did not thin with
+        //: speed, and a pen got no pressure response from any preset unless
+        //: the toggle was on. Copied, so the contact cannot see a later edit.
+        curves: _curvesOf(S),
+        //: SR3-1. Taper In, which Ink Wash ships at 0.35 and the Brush
+        //: Dynamics flyout offers for every brush. Legacy's `_taperFactor`.
+        taperIn: (typeof S.brushTaperIn === "number" && S.brushTaperIn > 0)
+            ? Math.min(1, S.brushTaperIn) : 0,
     };
+}
+
+//: SR3-1. The owner's curve rules that name an input and a target V2's
+//: evaluator knows, copied and frozen; null when there are none, which keeps a
+//: curveless brush on exactly the path it always took.
+function _curvesOf(S) {
+    const src = S && Array.isArray(S.brushCurves) ? S.brushCurves : null;
+    if (!src || !src.length) return null;
+    const out = [];
+    for (let i = 0; i < src.length; i++) {
+        const r = src[i];
+        if (!r || D.INPUTS.indexOf(r.input) < 0 || D.TARGETS.indexOf(r.target) < 0) continue;
+        out.push(Object.freeze(Object.assign({}, r)));
+    }
+    return out.length ? Object.freeze(out) : null;
+}
+
+//: SR3-1. Which targets the curves can move, decided once so the per-mark
+//: code asks a boolean rather than scanning the rules.
+function _curveTargets(curves) {
+    const t = { size: false, flow: false, angle: false, ratio: false };
+    if (curves) for (let i = 0; i < curves.length; i++) t[curves[i].target] = true;
+    return Object.freeze(t);
+}
+
+//: SR3-1. Legacy's `_taperFactor`, on the stroke's arc length at the mark:
+//: from 0.12 of the width at the contact point to full width after three
+//: brush widths times the setting. The floor keeps the first mark a point
+//: rather than a gap.
+function _taperAt(st, arcPx) {
+    if (!st.taperRamp) return 1;
+    const t = arcPx / st.taperRamp;
+    return 0.12 + 0.88 * (t < 1 ? t : 1);
 }
 
 // ───────────────────────────────────────────────────────── the transfer
@@ -317,6 +392,89 @@ function transfer(S) {
     _stats.transfers += 1;
     _stats.transferredPixels += view.width * view.height;
     return view.width * view.height;
+}
+
+// ───────────────────────────────────────────────────────── symmetry (SR3-2)
+
+/*
+ * SR3-2. SYMMETRY, which V2 ignored: with it switched on, only the stroke under
+ * the hand painted.
+ *
+ * EVERY MARK V2 LAYS GOES THROUGH `_stamp` OR `_sweep`, and each lays its
+ * copies there -- so bristle lanes, scatter particles, loose specks, pivot
+ * fans and held-airbrush puffs are mirrored by construction rather than one
+ * provider at a time. The copies deposit into the one coverage buffer under
+ * the same deposition, so where they overlap at an axis they meet exactly as
+ * a stroke meets itself.
+ *
+ * THE AXES ARE THE DRAWN GUIDES, `W / 2` and `H / 2` (`symGuides`). In V2's
+ * convention pixel i spans [i, i+1), so `x' = W - x` is the exact mirror about
+ * that line; Legacy's index-is-centre convention puts its axis half a pixel off
+ * the guide.
+ *
+ * A MIRRORED COPY'S TIP IS MIRRORED TOO, and that is a deliberate divergence
+ * from Legacy and the Extension, which keep the angle for `h` and `v`
+ * (Extension `canvas-core.js:814-816`). Kept, the copy of a Calligraphy or
+ * chisel stroke is the same nib translated, not a mirror image. Round tips
+ * cannot show the difference. Radial is Legacy's: the copy turns with its
+ * rotation.
+ *
+ * Each copy is `x' = a x + b y + c`, `y' = d x + e y + f`, `angle' = s angle + k`.
+ */
+function _symmetryFor(S) {
+    const mode = S.symmetry;
+    if (mode !== "h" && mode !== "v" && mode !== "both" && mode !== "radial") return null;
+    const W = S.W, H = S.H, out = [];
+    if (mode === "h" || mode === "both") {
+        out.push(Object.freeze({ a: -1, b: 0, c: W, d: 0, e: 1, f: 0, s: -1, k: Math.PI }));
+    }
+    if (mode === "v" || mode === "both") {
+        out.push(Object.freeze({ a: 1, b: 0, c: 0, d: 0, e: -1, f: H, s: -1, k: 0 }));
+    }
+    if (mode === "both") {
+        out.push(Object.freeze({ a: -1, b: 0, c: W, d: 0, e: -1, f: H, s: 1, k: Math.PI }));
+    }
+    if (mode === "radial") {
+        //: Legacy's count, `S.symmetryAxes || 4`, as copies 1..n-1.
+        const n = Math.max(1, Math.floor(Number(S.symmetryAxes) || 4));
+        const cx = W / 2, cy = H / 2;
+        for (let i = 1; i < n; i++) {
+            const t = (2 * Math.PI * i) / n, cos = Math.cos(t), sin = Math.sin(t);
+            out.push(Object.freeze({ a: cos, b: -sin, c: cx - cx * cos + cy * sin,
+                                     d: sin, e: cos, f: cy - cx * sin - cy * cos,
+                                     s: 1, k: t }));
+        }
+    }
+    return out.length ? Object.freeze(out) : null;
+}
+
+//: A point (and its heading, which a material's strands read) under one copy.
+function _mirror(T, p) {
+    const q = { x: T.a * p.x + T.b * p.y + T.c, y: T.d * p.x + T.e * p.y + T.f };
+    if (typeof p.headingRad === "number") q.headingRad = T.s * p.headingRad + T.k;
+    return q;
+}
+
+//: `V.stamp` and its copies. An undefined angle means the tip's frozen one,
+//: which a copy still has to turn.
+function _stamp(st, at, r, dep, angle, j, arc) {
+    V.stamp(st.buffer, at, r, dep, angle, j, arc);
+    const sym = st.symmetry;
+    if (!sym) return;
+    const base = typeof angle === "number" ? angle : (dep.tip ? dep.tip.angle : 0);
+    for (let i = 0; i < sym.length; i++) {
+        V.stamp(st.buffer, _mirror(sym[i], at), r, dep, sym[i].s * base + sym[i].k, j, arc);
+    }
+}
+
+//: `V.sweep` and its copies. A sweep is round, so there is no angle to turn.
+function _sweep(st, from, to, r, dep, depTo, j, arc) {
+    V.sweep(st.buffer, from, to, r, dep, depTo, j, arc);
+    const sym = st.symmetry;
+    if (!sym) return;
+    for (let i = 0; i < sym.length; i++) {
+        V.sweep(st.buffer, _mirror(sym[i], from), _mirror(sym[i], to), r, dep, depTo, j, arc);
+    }
 }
 
 // ───────────────────────────────────────────────────────── the contact
@@ -383,6 +541,7 @@ function begin(S, C, event, toDoc) {
     //: rather than `Math.random()` so a session replays identically and a test
     //: painting the same stroke from a fresh module gets the same pixels.
     const strokeSeed = _nextStippleSeed();
+    const material = _materialFor(S, spec, strokeSeed);
     const renderer = V.rendererFor({
         hardness: spec.hardness, textured: false,
         scatter: spec.tipKind === "scatter",
@@ -396,6 +555,7 @@ function begin(S, C, event, toDoc) {
         swept: renderer === V.RENDER_SWEEP,
         tipKind: spec.tipKind, ratio: spec.ratio, spikes: spec.spikes,
         angle: (spec.angleDeg * Math.PI) / 180,
+        material: material,
     });
 
     _stroke = {
@@ -428,6 +588,8 @@ function begin(S, C, event, toDoc) {
         }),
         sampler: new SAMP.ArcSampler({
             spacingFraction: spec.spacingFraction, sizePx: spec.sizePx,
+            //: SR1-3. Omitted before, so every tip was spaced as a circle.
+            extentFor: _extentFor(S, spec, dep) || undefined,
         }),
         buffer: new V.CoverageBuffer(S.W, S.H),
         //: U3-R R2. One rule per dimension the owner actually selected, so
@@ -467,10 +629,71 @@ function begin(S, C, event, toDoc) {
         began: false,
         samples: 0,
         marks: 0,
+        //: G1. Decided ONCE: whether this contact's tip turns with the stroke
+        //: in a way that can change what it paints, and how far its ends reach
+        //: as a fraction of the radius. Null for a round tip (no frame), a held
+        //: nib (does not follow), or rotation jitter (turns are deliberate
+        //: randomness, not a path). See `_pivotFill`.
+        pivot: _pivotCapability(spec, dep, radius),
+        lastStamp: null,
+        //: G1. A following tip's opening mark, held until a heading exists --
+        //: Legacy BE16 parity. Painting it at once laid a bar at the frozen
+        //: angle across the start of every chisel stroke.
+        pendingOpening: null,
+        pivots: 0,
+        //: G2. What the scatter provider laid, for evidence and tests.
+        subDabs: 0,
+        particles: 0,
+        particleDeps: null,
+        //: M1a. The dry medium's strands, frozen with the rest, or null; and
+        //: the loose specks laid past the edge.
+        material: material,
+        specks: 0,
+        arc: 0,
+        //: M1b. Bristle lanes, or null; built just below from the seed.
+        lanes: null,
+        lanesPlaced: false,
+        laneDeps: null,
+        laneSegments: 0,
+        //: SR1-4. The held airbrush: the hand, the last mark's size and flow,
+        //: the puff depositions and how many were laid.
+        lastSample: null,
+        lastR: null,
+        lastFlowMul: null,
+        puffDeps: null,
+        puffs: 0,
+        //: SR1-5. 1 for a pen; the owner's Mouse press setting for a mouse.
+        press: _pressFor(S, event),
+        //: SR3-1. The preset's curves and what they can move, and whether this
+        //: device MEASURES pressure and tilt -- noted from every sample, since
+        //: the sampler's marks do not carry it. A mouse measures neither, so
+        //: each of its curves takes the rule's own fallback, as in Legacy.
+        curves: spec.curves,
+        curveTargets: _curveTargets(spec.curves),
+        pressureAvailable: false,
+        tiltAvailable: false,
+        //: SR3-1. Legacy's ramp: three brush widths times the setting.
+        taperRamp: spec.taperIn > 0 ? Math.max(1, spec.sizePx * 3 * spec.taperIn) : 0,
+        //: SR3-2. The copies every mark is laid again at, frozen: changing
+        //: symmetry mid-contact must not split a stroke.
+        symmetry: _symmetryFor(S),
     };
+    _stroke.lanes = _lanesFor(_stroke, S);
+    //: Lanes turn by their own geometry -- each follows the heading across
+    //: the tip -- so G1's pivot fan and held opening, which exist for a
+    //: stamped flat tip, do not apply.
+    if (_stroke.lanes) _stroke.pivot = null;
     _stats.contacts += 1;
 
     _takeOwnership(S);
+    //: P. After `beginStroke` cleared it, so this contact's table is the only
+    //: one the merge can see. Null for anything that is not a dry medium on
+    //: paper, which leaves Legacy's reveal in charge exactly as before.
+    //: The ceiling is the deposition target at a full press: every flow rule
+    //: and jitter scales flow DOWN from it, never up.
+    const paperTable = S.stroke ? _paperTableFor(S, dep.target, _stroke.press) : null;
+    if (S.stroke) S.stroke.paperTable = paperTable;
+    _stroke.paper = paperTable ? S.brushMaterial : null;
 
     // THE CONTACT POINT IS A SAMPLE, and §17 requires it represented exactly.
     // Feeding it here is what makes the stroke start where the pointer went
@@ -568,7 +791,7 @@ function _jitter(seed, markIndex, salt) {
  * allocate on the hot path, so they are cached by bucket: at most 64 objects
  * per contact, built lazily, and a steady hand reuses one.
  */
-function _depositionForMark(st, flowMultiplier) {
+function _depositionForMark(st, flowMultiplier, ratioMultiplier) {
     //: U3-J. OPACITY JITTER IS A SECOND REASON TO VARY FLOW PER MARK.
     //:
     //: This returned the frozen deposition whenever pressure did not drive
@@ -577,19 +800,30 @@ function _depositionForMark(st, flowMultiplier) {
     //: (0.15), Scatter Dust (0.2), Pencil and Charcoal (0.1) all painted
     //: exactly as if the control were zero -- measured, total alpha identical
     //: to the baseline down to the byte.
+    //:
+    //: SR3-1. A preset curve on flow or ratio is a third and a fourth.
+    const ct = st.curveTargets;
     if (!st.spec.pressureToFlow
-        && !(st.spec.jitter && st.spec.jitter.opacity > 0)) return st.dep;
+        && !(st.spec.jitter && st.spec.jitter.opacity > 0)
+        && !(ct && (ct.flow || ct.ratio))) return st.dep;
     const m = flowMultiplier === undefined || flowMultiplier === null
         ? 1 : flowMultiplier;
-    const bucket = Math.max(0, Math.min(FLOW_BUCKETS,
-                                        Math.round(m * FLOW_BUCKETS)));
+    const flowBucket = Math.max(0, Math.min(FLOW_BUCKETS,
+                                            Math.round(m * FLOW_BUCKETS)));
+    //: SR3-1. Legacy clamps the dab's ratio to 0.05..1 (`stampWet`). Keyed
+    //: beside flow only when a ratio curve exists, so every other brush keeps
+    //: exactly the keys -- and the objects -- it had.
+    const ratio = (ct && ct.ratio && typeof ratioMultiplier === "number")
+        ? Math.max(0.05, Math.min(1, st.spec.ratio * ratioMultiplier)) : st.spec.ratio;
+    const ratioBucket = (ct && ct.ratio) ? Math.round(ratio * RATIO_BUCKETS) : 0;
+    const bucket = flowBucket + (FLOW_BUCKETS + 1) * ratioBucket;
     if (!st.depCache) st.depCache = new Map();
     let dep = st.depCache.get(bucket);
     if (dep) return dep;
     const spec = st.spec;
     dep = V.depositionFor({
         hardness: spec.hardness,
-        flow: spec.flow * (bucket / FLOW_BUCKETS),
+        flow: spec.flow * (flowBucket / FLOW_BUCKETS),
         opacity: spec.opacity, density: spec.density, buildup: spec.buildup,
         seed: st.stippleSeed, falloff: spec.falloff,
         step: spec.spacingFraction * 2,
@@ -617,11 +851,507 @@ function _depositionForMark(st, flowMultiplier) {
         //: the same thing from the other side: a V2 Bristle Rake tap at
         //: aspect 1.0000 for a preset whose whole identity is a splayed
         //: flat nib.
-        tipKind: spec.tipKind, ratio: spec.ratio, spikes: spec.spikes,
+        tipKind: spec.tipKind, ratio: ratio, spikes: spec.spikes,
         angle: (spec.angleDeg * Math.PI) / 180,
+        //: M1a. The same lesson as the tip above: a rebuilt deposition that
+        //: omitted the material would fall back to the stipple at every
+        //: pressure step.
+        material: st.material,
     });
     st.depCache.set(bucket, dep);
     return dep;
+}
+
+//: SR3-1. Ratio steps for a curve-driven tip, e.g. Flat Chisel's tilt. Fine
+//: enough that a tilting pen does not step visibly; bounded like the flow table
+//: by the mark count, since entries are built lazily.
+const RATIO_BUCKETS = 64;
+
+//: P. THE DOCUMENT'S PAPER, ANSWERED THE WAY THE APPROVED STUDY ANSWERS IT.
+//:
+//: Legacy's reveal is linear -- `a * (1 - strength * (1 - h))` -- so pressing
+//: harder scales the grain with the paint and never fills it: at the shipped
+//: Depth 0.20 it takes at most a fifth off, and the study's own caption for
+//: today's Pastel is "the paper never shows". The approved dry media answer
+//: with a THRESHOLD that moves with coverage (DEC-BRUSH;
+//: `Evidence/brush-material-study-2026-09-28/template.html` `flush`):
+//:
+//:     th = 1 - r * gain,  r = a / ceiling
+//:     a' = a * ((1 - k) + k * smoothstep(th - tooth, th + tooth, h))
+//:
+//: Light coverage puts the threshold high, so only the peaks take paint;
+//: heavy coverage drops it until the grain fills. `gain` below 1 keeps it
+//: from ever filling, which is Pastel. `gain` and `tooth` are the study's,
+//: per medium.
+//:
+//: `r` IS COVERAGE AGAINST THE STROKE'S OWN CEILING, not against 255. The
+//: study's alpha was a function of PRESSURE reaching 1 at a full press; a
+//: Studio preset's coverage stops at its deposition target -- Flow, or Flow x
+//: Opacity with buildup -- and the dry presets declare 0.25 to 0.7. Keyed on
+//: raw coverage, every one of them stayed "light" at any pressure: measured on
+//: a pen ramp, Pastel kept 28% of its ink at BOTH ends and never filled.
+//: Keyed on the ceiling, a full press is the study's full press.
+//:
+//: STILL THE DOCUMENT'S PAPER: the same tile, indexed by document coordinate
+//: in the same merge, behind the same gates (a Surface chosen, Depth off zero,
+//: a Tooth declared, not a mask). What V2 changes is the RESPONSE, not the
+//: surface -- "Pencil and Pastel share the same paper and reveal it
+//: differently" (BE10) holds as it did. The study's per-family grain SIZE
+//: was its stand-in for a paper and is not reproduced; Scale is the owner's.
+//:
+//: `k` IS `|Depth| * Tooth * 4`. Fitted, not derived: at the shipped Depth
+//: 0.20 it gives Pencil 0.68, Charcoal 0.80 and Pastel 0.76 against the
+//: study's approved 0.70, 0.80 and 0.85, and it stays proportional to both
+//: controls, so Tooth 0 or Depth 0 is still exactly off.
+//:
+//: A (coverage, height) TABLE, 64 KiB, built once per medium and amount: the
+//: merge already walks only the dirty rectangle, and a lookup keeps it one.
+const DRY_PAPER = Object.freeze({
+    pencil:   Object.freeze({ gain: 0.95, tooth: 0.17 }),
+    charcoal: Object.freeze({ gain: 0.98, tooth: 0.14 }),
+    pastel:   Object.freeze({ gain: 0.74, tooth: 0.12 }),
+});
+const PAPER_AMOUNT_PER_DEPTH = 4;
+const _paperTables = new Map();
+
+//: M1a. THE STUDY'S STRANDS, per medium (`template.html` FAMILIES): strand
+//: width across and streak length along, in px; `band` is how sharply Density
+//: cuts them; `floor` the haze left between strands; `rough` the ragged edge;
+//: `loose` = [specks per px of radius, reach in radii, alpha, speck size px]
+//: for material landing past the edge. See `materialAt` in coverage.js.
+const DRY_MATERIAL = Object.freeze({
+    pencil:   Object.freeze({ strand: 0.9, streak: 60, band: 0.18, floor: 0.14, rough: 0,
+                              loose: null }),
+    charcoal: Object.freeze({ strand: 1.1, streak: 40, band: 0.12, floor: 0.14, rough: 0.16,
+                              loose: Object.freeze([0.14, 1.55, 0.3, 0.55]) }),
+    pastel:   Object.freeze({ strand: 2.2, streak: 3.2, band: 0.2, floor: 0.45, rough: 0.08,
+                              loose: Object.freeze([0.014, 1.35, 0.8, 1.4]) }),
+});
+const SALT_MATERIAL = 0x2c1b3c6d;
+const SALT_LOOSE = 0x632be5ab;
+//: The study laid its dry dabs every `size * 0.08`, i.e. 0.16 of a radius, and
+//: counted loose specks PER DAB. Per px of travel that is `rate / 0.16` --
+//: independent of size -- and that is the rate kept here, so Studio's own
+//: spacing (0.05 for Charcoal) does not lay 1.6x the study's dust.
+const STUDY_DRY_GAP_RADII = 0.16;
+
+//: The material a contact carries, or null. Null at Density 0.99 and above --
+//: the exact bypass the study and DEC-BRUSH both require -- and for anything
+//: that is not a dry medium, which keeps its stipple exactly as before.
+function _materialFor(S, spec, strokeSeed) {
+    const fam = S.brushMaterial ? DRY_MATERIAL[S.brushMaterial] : null;
+    if (!fam || !(spec.density < V.STIPPLE_BELOW)) return null;
+    return Object.freeze({
+        strand: fam.strand, streak: fam.streak, band: fam.band, floor: fam.floor,
+        rough: fam.rough, loose: fam.loose,
+        seed: (strokeSeed ^ SALT_MATERIAL) | 0,
+    });
+}
+
+//: M1b. BRISTLE LANES (DEC-BRUSH; the study's `makeLanes` / `dabRake`).
+//:
+//: Separate bristles across a flat tip that turns with the stroke. Each lane
+//: has its own place across the tip, width, paint load, dry length and contact
+//: threshold, all drawn once per stroke from the stroke seed. Density decides
+//: which lanes touch (`th < density`); pressure widens the band in contact and
+//: loads the paint; a lane dries along its own length of travel and starts
+//: skipping. At Density 0.99 and above the flat tip draws exactly as before.
+const SALT_LANE = 0x5bd1e995;
+const LANE_MIN = 7, LANE_MAX = 42;
+
+function _lanesWanted(S, spec) {
+    return S.brushMaterial === "bristle" && spec.density < V.STIPPLE_BELOW;
+}
+
+//: The sampler's gap follows the tip's extent ALONG THE TRAVEL (Legacy BE7),
+//: or null for a circle, which leaves the sampler's own isotropic default --
+//: so every round tip keeps its spacing byte for byte. A following tip's
+//: angle is the heading plus the owner's offset; a held nib's is the offset.
+//:
+//: NOT FOR BRISTLE LANES. Lanes are segments between marks and do not stamp
+//: the flat tip at all; denser marks would only chop each lane into shorter
+//: skip-dashes and change the look the owner approved.
+function _extentFor(S, spec, dep) {
+    if (_lanesWanted(S, spec)) return null;
+    const tip = dep.tip;
+    if (!V.tipFrame(10, tip)) return null;
+    const offset = (spec.angleDeg * Math.PI) / 180;
+    return spec.tipFollowsStroke
+        ? function (heading) { return V.alongExtent(tip, heading, heading + offset); }
+        : function (heading) { return V.alongExtent(tip, heading, offset); };
+}
+
+function _lanesFor(st, S) {
+    const spec = st.spec;
+    if (!_lanesWanted(S, spec)) return null;
+    const size = spec.sizePx;
+    const n = Math.max(LANE_MIN, Math.min(LANE_MAX, Math.round(size / 2.2)));
+    const lanes = [];
+    for (let i = 0; i < n; i++) {
+        lanes.push({
+            i: i,
+            u: -1 + 2 * (i + 0.5 + (_draw(st, -1, i, 0, SALT_LANE) - 0.5) * 0.7) / n,
+            w: (0.7 + _draw(st, -1, i, 1, SALT_LANE) * 0.9) * Math.max(0.9, size / 26),
+            load: 0.65 + 0.35 * _draw(st, -1, i, 2, SALT_LANE),
+            dry: (12 + _draw(st, -1, i, 3, SALT_LANE) * 14) * size,
+            th: _draw(st, -1, i, 4, SALT_LANE),
+            px: null, py: null, seg: 0,
+        });
+    }
+    return lanes;
+}
+
+//: One lane deposition per alpha bucket, as G2 buckets its particles: a lane
+//: segment is one pass of a small round capsule.
+function _laneDeposition(st, alpha) {
+    const bucket = Math.max(0, Math.min(FLOW_BUCKETS, Math.round(alpha * FLOW_BUCKETS)));
+    if (!st.laneDeps) st.laneDeps = new Map();
+    let d = st.laneDeps.get(bucket);
+    if (d) return d;
+    const spec = st.spec;
+    d = V.depositionFor({
+        hardness: Math.max(PARTICLE_MIN_HARDNESS, spec.hardness),
+        flow: spec.flow * (bucket / FLOW_BUCKETS),
+        opacity: spec.opacity, density: 1, buildup: spec.buildup,
+        seed: st.stippleSeed, falloff: spec.falloff,
+        step: 2, swept: true,
+        tipKind: "round", ratio: 1, spikes: 2, angle: 0,
+    });
+    st.laneDeps.set(bucket, d);
+    return d;
+}
+
+function _laneMark(st, mark, r, flowMul, j) {
+    //: The study draws nothing before a heading exists; lanes are laid out
+    //: across the travel, and there is no travel yet.
+    if (typeof mark.headingRad !== "number") return;
+    const p = (flowMul > 1 ? 1 : (flowMul < 0 ? 0 : flowMul)) * st.press;
+    const half = r * (0.62 + 0.38 * p);
+    const nx = -Math.sin(mark.headingRad), ny = Math.cos(mark.headingRad);
+    const contact = 0.3 + 0.7 * p;
+    //: The first placement starts from the previous mark, so the stroke
+    //: begins where the pointer went down rather than one gap later.
+    const origin = st.lanesPlaced ? null : (st.lastMark || mark);
+    const density = st.spec.density;
+    for (let k = 0; k < st.lanes.length; k++) {
+        const L = st.lanes[k];
+        const lx = mark.x + nx * L.u * half, ly = mark.y + ny * L.u * half;
+        const fx = L.px !== null ? L.px : origin.x + nx * L.u * half;
+        const fy = L.py !== null ? L.py : origin.y + ny * L.u * half;
+        if (L.th < density && Math.abs(L.u) <= contact + 0.05) {
+            const dry = Math.max(0, 1 - st.arc / L.dry);
+            L.seg += 1;
+            if (_draw(st, L.seg, L.i, 5, SALT_LANE) < 0.25 + 0.75 * dry + 0.15 * p) {
+                const tex = 0.72 + 0.28 * V.latticeNoise(st.arc / 6, L.i * 7.3,
+                                                         st.stippleSeed ^ SALT_LANE);
+                const ldep = _laneDeposition(st, Math.min(1,
+                    L.load * (0.55 + 0.45 * p) * (0.55 + 0.45 * dry) * tex));
+                _sweep(st, { x: fx, y: fy }, { x: lx, y: ly }, L.w / 2, ldep, ldep, j);
+                st.laneSegments += 1;
+            }
+        }
+        L.px = lx; L.py = ly;
+    }
+    st.lanesPlaced = true;
+    st.lastLaneFlow = p;
+}
+
+//: A tap never had a heading, so no lane moved: the study's ticks, a short
+//: stroke per lane in contact, across a tip held as the study holds it.
+function _laneTap(st) {
+    const m = st.lastMark;
+    const p = typeof st.lastLaneFlow === "number" ? st.lastLaneFlow : st.press;
+    const size = st.spec.sizePx, half = (size / 2) * (0.62 + 0.38 * p);
+    const contact = 0.3 + 0.7 * p;
+    for (let k = 0; k < st.lanes.length; k++) {
+        const L = st.lanes[k];
+        if (L.th >= st.spec.density || Math.abs(L.u) > contact + 0.05) continue;
+        const ly = m.y + L.u * half;
+        const ldep = _laneDeposition(st, Math.min(1, L.load * (0.35 + 0.65 * p)));
+        _sweep(st, { x: m.x - size * 0.04, y: ly }, { x: m.x + size * 0.04, y: ly },
+                L.w / 2, ldep, ldep, 0);
+        st.laneSegments += 1;
+    }
+}
+
+//: SR1-4. BUILDING WHILE HELD STILL (spec §9.4). The clock is Legacy's
+//: `airbrushTick` -- one clock for both engines: rate, time debt, one-second
+//: cap, stillness, token cancellation -- and while a V2 contact is active it
+//: asks here where the hand is and has each owed puff laid here, so no Legacy
+//: dab lands in the buffer V2 owns.
+//:
+//: A puff is a STAMP at the hand, not a mark in the sampler's row: it is a
+//: rate in time on the same pixels, so it is not normalised by spatial
+//: overlap. `step: 2` makes the overlap exactly one -- Legacy's
+//: `timeDepositStep` -- and a puff deposits its full target.
+function _puffDeposition(st, flowMul) {
+    const bucket = Math.max(0, Math.min(FLOW_BUCKETS, Math.round(flowMul * FLOW_BUCKETS)));
+    if (!st.puffDeps) st.puffDeps = new Map();
+    let d = st.puffDeps.get(bucket);
+    if (d) return d;
+    const spec = st.spec;
+    d = V.depositionFor({
+        hardness: spec.hardness,
+        flow: spec.flow * (bucket / FLOW_BUCKETS),
+        opacity: spec.opacity, density: spec.density, buildup: spec.buildup,
+        seed: st.stippleSeed, falloff: spec.falloff,
+        step: 2, swept: false,
+        tipKind: spec.tipKind, ratio: spec.ratio, spikes: spec.spikes,
+        angle: (spec.angleDeg * Math.PI) / 180,
+        material: st.material,
+    });
+    st.puffDeps.set(bucket, d);
+    return d;
+}
+
+function pointerAt() {
+    const st = _stroke;
+    if (!st) return null;
+    const at = st.lastSample || st.lastMark;
+    return at ? { x: at.x, y: at.y } : null;
+}
+
+function airbrushPuff(S) {
+    const st = _stroke;
+    if (!st) return 0;
+    const at = st.lastSample || st.lastMark;
+    if (!at) return 0;
+    const flowMul = typeof st.lastFlowMul === "number" ? st.lastFlowMul : 1;
+    const r = typeof st.lastR === "number" ? st.lastR : st.radius;
+    _stamp(st, { x: at.x, y: at.y }, r, _puffDeposition(st, flowMul), undefined, st.markIndex);
+    st.puffs += 1;
+    transfer(S);
+    return 1;
+}
+
+//: M1a. Charcoal's dust and Pastel's crumbs: seeded specks past the edge,
+//: more of them the harder the press (the flow multiplier stands in for it,
+//: as it does for everything pressure drives). G2's particle deposition, so a
+//: speck is one contribution and nothing new is invented to lay it.
+function _looseMaterial(st, mark, r, flowMul, j) {
+    const loose = st.material && st.material.loose;
+    if (!loose) return;
+    const rate = loose[0], far = loose[1], alpha = loose[2], size = loose[3];
+    const p = (flowMul > 1 ? 1 : (flowMul < 0 ? 0 : flowMul)) * st.press;
+    const gap = st.spec.spacingFraction * st.spec.sizePx;
+    const count = (rate / STUDY_DRY_GAP_RADII) * gap * (0.4 + 0.6 * p);
+    let n = Math.floor(count) + (_draw(st, j, 0, 7, SALT_LOOSE) < count % 1 ? 1 : 0);
+    for (let k = 1; k <= n; k++) {
+        const ang = _draw(st, j, k, 0, SALT_LOOSE) * Math.PI * 2;
+        const dist = r * (0.85 + _draw(st, j, k, 1, SALT_LOOSE) * (far - 0.85));
+        const pr = Math.max(0.5, size * (0.6 + _draw(st, j, k, 2, SALT_LOOSE) * 0.8));
+        const pdep = _particleDeposition(st, Math.min(1,
+            alpha * (0.5 + 0.5 * _draw(st, j, k, 3, SALT_LOOSE)) * (0.5 + 0.5 * p)));
+        _stamp(st, { x: mark.x + Math.cos(ang) * dist, y: mark.y + Math.sin(ang) * dist },
+                pr, pdep, undefined, j);
+    }
+    st.specks += n;
+}
+
+//: SR1-5. How hard this contact presses, for the responses a pen's pressure
+//: would drive: 1 for a pen (its pressure already reaches the coverage), the
+//: owner's Mouse press setting for a mouse (`S.mousePress`, the study's 0.5 by
+//: default). Decided once at `begin`, like everything else about a contact.
+function _pressFor(S, event) {
+    if (!event || event.pointerType !== "mouse") return 1;
+    const m = Number(S.mousePress);
+    return m > 0 && m <= 1 ? m : 1;
+}
+
+function _paperTableFor(S, ceiling, press) {
+    const resp = S.brushMaterial ? DRY_PAPER[S.brushMaterial] : null;
+    const P = S.paper;
+    if (!resp || S.editingMask || !P || !P.texture || P.texture === "none") return null;
+    const depth = P.depth || 0;
+    const grain = S.brushGrain != null ? S.brushGrain : 1;
+    const k = Math.min(1, Math.abs(depth) * grain * PAPER_AMOUNT_PER_DEPTH);
+    if (!(k > 0)) return null;
+    //: Negative Depth reveals the valleys, as in Legacy: same paper, inverted.
+    const invert = depth < 0;
+    //: In coverage bytes, as the merge sees it. Never below 1, so a
+    //: vanishing Flow cannot divide by zero.
+    const ceil = Math.max(1, Math.round(255 * Math.min(1, ceiling > 0 ? ceiling : 1)));
+    //: SR1-5. A mouse at medium press reads its coverage as half of a full
+    //: press, as the study's mouse did -- so the grain shows instead of filling.
+    const pr = press > 0 && press <= 1 ? press : 1;
+    const key = S.brushMaterial + "|" + k + "|" + invert + "|" + ceil + "|" + pr;
+    const hit = _paperTables.get(key);
+    if (hit) return hit;
+    const tbl = new Uint8Array(65536);
+    for (let a = 1; a < 256; a++) {
+        const th = 1 - Math.min(1, a / ceil) * pr * resp.gain;
+        const e0 = th - resp.tooth, span = 2 * resp.tooth;
+        for (let h = 0; h < 256; h++) {
+            let t = ((invert ? 255 - h : h) / 255 - e0) / span;
+            t = t < 0 ? 0 : (t > 1 ? 1 : t);
+            //: Same rounding as Legacy's merge, so the two differ only in the
+            //: response and never by a rounding step.
+            tbl[(a << 8) | h] = (a * ((1 - k) + k * t * t * (3 - 2 * t)) + 0.5) | 0;
+        }
+    }
+    if (_paperTables.size >= 16) _paperTables.clear();
+    _paperTables.set(key, tbl);
+    return tbl;
+}
+
+//: G1. A SHARP TURN IS FILLED BY PIVOTING THE TIP, NOT BY LAGGING THE HEADING.
+//:
+//: The sampler's heading is the path's tangent (Legacy BE7), which snaps at a
+//: vertex: measured on Flat Chisel, 34-55 degrees in ONE mark at a right-angle
+//: corner and 51-78 at a zig-zag point, with marks 3.5 px apart -- so the
+//: tip's far end jumped 13-30 px and left a bow-tie. Legacy `_pivotFill` is
+//: the same rule: pivot stamps between two marks, interpolating position and
+//: angle, until neither end moves more than one gap per stamp.
+//:
+//: A PIVOT DEPOSITS ONCE. The fan is a rotational sweep, so it takes the
+//: sweep's semantic -- accumulation weight 0, the MAX floor `cov * target` --
+//: and a corner reaches the one-pass level instead of darkening.
+const PIVOT_MAX = 64;
+const _PIVOT_DEPS = new WeakMap();
+
+function _pivotCapability(spec, dep, radius) {
+    if (!spec.tipFollowsStroke) return null;
+    if (spec.jitter && spec.jitter.rotation > 0) return null;
+    const frame = V.tipFrame(Math.max(0.5, radius), dep.tip);
+    if (!frame) return null;
+    return { reach: Math.max(frame.rx, frame.ry) / Math.max(0.5, radius) };
+}
+
+function _pivotDeposition(dep) {
+    let p = _PIVOT_DEPS.get(dep);
+    if (!p) {
+        p = Object.freeze(Object.assign({}, dep, { swept: true }));
+        _PIVOT_DEPS.set(dep, p);
+    }
+    return p;
+}
+
+//: Test seam, as Legacy's `setPivotFill`: the same stroke with and without the
+//: fill, so "a pivot adds no darkness" is measured directly. Product code
+//: never turns it off.
+let _pivotFillOn = true;
+
+function _pivotFill(st, placed, r, dep, tipAngle, j) {
+    const from = st.lastStamp;
+    if (!_pivotFillOn || !st.pivot || !from || typeof tipAngle !== "number") return;
+    const turn = Math.atan2(Math.sin(tipAngle - from.angle), Math.cos(tipAngle - from.angle));
+    const gap = Math.max(1, Math.hypot(placed.x - from.x, placed.y - from.y));
+    const reach = Math.max(r, from.r) * st.pivot.reach;
+    const n = Math.min(PIVOT_MAX, Math.ceil(reach * Math.abs(turn) / gap) - 1);
+    if (!(n > 0)) return;
+    const pdep = _pivotDeposition(dep);
+    for (let k = 1; k <= n; k++) {
+        const t = k / (n + 1);
+        _stamp(st, { x: from.x + (placed.x - from.x) * t, y: from.y + (placed.y - from.y) * t },
+                from.r + (r - from.r) * t, pdep, from.angle + turn * t, j);
+    }
+    st.pivots += n;
+}
+
+//: G2. THE SCATTER PROVIDER.
+//:
+//: V2 drew Scatter Dust as ONE round dab per mark. Both oracles draw a CLUSTER
+//: (Extension `canvas-core.js` stampAlphaMap scatter branch; Legacy's copy
+//: routes it through `cover`): `max(3, size/3)` round sub-dabs at
+//: `(u - 0.5) * size * 0.8` per axis, radius `u * r * 0.3 + 1`. That cluster is
+//: the plain brush, and at Density 1 it is drawn here -- seeded from `hash01`
+//: per (stroke, mark, sub-dab), never `Math.random`, so a stroke replays.
+//:
+//: BELOW DENSITY 1 IT IS THE APPROVED PARTICLE MATERIAL (DEC-BRUSH, owner
+//: 2026-09-28), not the per-pixel stipple the owner rejected as static:
+//: small seeded particles scattered round the mark, Scatter setting the
+//: cloud's reach and Density the COUNT, derived from the occupancy it should
+//: reach once the marks either side have landed. Each particle is one
+//: contribution (`overlapK` 1) with no stipple -- Density already chose which
+//: particles exist, and thinning them per pixel as well would spend it twice.
+const SCATTER_PLAIN_DENSITY = 0.99;
+const SALT_SUBDAB = 0x7f4a7c15;
+const SALT_PARTICLE = 0x94d049bb;
+const PARTICLE_MIN_HARDNESS = 0.75;
+const PARTICLE_MAX_OCCUPANCY = 0.97;
+
+function _draw(st, j, k, channel, salt) {
+    return V.hash01((k * 8 + channel) | 0,
+                    (st.stippleSeed ^ salt ^ Math.imul(j + 1, 0x9E3779B1)) | 0);
+}
+
+function _particleDeposition(st, flowMul) {
+    const bucket = Math.max(0, Math.min(FLOW_BUCKETS, Math.round(flowMul * FLOW_BUCKETS)));
+    if (!st.particleDeps) st.particleDeps = new Map();
+    let d = st.particleDeps.get(bucket);
+    if (d) return d;
+    const spec = st.spec;
+    d = V.depositionFor({
+        hardness: Math.max(PARTICLE_MIN_HARDNESS, spec.hardness),
+        flow: spec.flow * (bucket / FLOW_BUCKETS),
+        opacity: spec.opacity, density: 1, buildup: spec.buildup,
+        seed: st.stippleSeed, falloff: spec.falloff,
+        //: `2 / step` contributions cover a pixel; a particle is one.
+        step: 2, swept: false,
+        tipKind: "round", ratio: 1, spikes: 2, angle: 0,
+    });
+    st.particleDeps.set(bucket, d);
+    return d;
+}
+
+function _scatterMark(st, mark, r, dep, flowMul, j, jit) {
+    const size = r * 2;
+    if (!(st.spec.density < SCATTER_PLAIN_DENSITY)) {
+        let cx = mark.x, cy = mark.y;
+        //: The whole cluster takes U3-J's perpendicular scatter, as Legacy's
+        //: dab does before its sub-dabs are drawn.
+        if (jit.scatter > 0 && typeof mark.headingRad === "number") {
+            const d = _jitter(st.stippleSeed, j, JITTER_SCATTER) * st.radius * 2 * jit.scatter;
+            cx -= Math.sin(mark.headingRad) * d;
+            cy += Math.cos(mark.headingRad) * d;
+        }
+        const n = Math.max(3, Math.floor(size / 3));
+        for (let k = 0; k < n; k++) {
+            _stamp(st,
+                    { x: cx + (_draw(st, j, k, 0, SALT_SUBDAB) - 0.5) * size * 0.8,
+                      y: cy + (_draw(st, j, k, 1, SALT_SUBDAB) - 0.5) * size * 0.8 },
+                    _draw(st, j, k, 2, SALT_SUBDAB) * r * 0.3 + 1, dep, undefined, j);
+        }
+        st.subDabs += n;
+        return;
+    }
+    const reach = r * (1 + 2 * jit.scatter);
+    const pr0 = Math.max(0.55, size * 0.035);
+    //: How many marks overlap one point of the cloud, at the nominal gap.
+    const gap = Math.max(1, st.spec.spacingFraction * st.spec.sizePx);
+    const hits = Math.max(1, (2 * reach) / gap);
+    const occupancy = Math.min(PARTICLE_MAX_OCCUPANCY, Math.max(0, st.spec.density));
+    const n = Math.max(1, Math.round(-Math.log(1 - occupancy) * (reach * reach)
+                                     / (pr0 * pr0 * 1.3) / hits));
+    const sigma = reach / 2.2;
+    for (let k = 0; k < n; k++) {
+        const ang = _draw(st, j, k, 0, SALT_PARTICLE) * Math.PI * 2;
+        const rad = sigma * Math.sqrt(-2 * Math.log(1 - _draw(st, j, k, 1, SALT_PARTICLE) * 0.999));
+        const pr = pr0 * (0.5 + _draw(st, j, k, 2, SALT_PARTICLE) * 1.1);
+        const pdep = _particleDeposition(st, flowMul * (0.55 + 0.45 * _draw(st, j, k, 3, SALT_PARTICLE)));
+        _stamp(st, { x: mark.x + Math.cos(ang) * rad, y: mark.y + Math.sin(ang) * rad },
+                pr, pdep, undefined, j);
+    }
+    st.particles += n;
+}
+
+/** Lay the held opening mark, at `angle` or at the frozen angle for a tap. */
+function _flushOpening(st, angle) {
+    const o = st.pendingOpening;
+    if (!o) return;
+    st.pendingOpening = null;
+    const a = typeof angle === "number" ? angle : (st.spec.angleDeg * Math.PI) / 180;
+    _stamp(st, o, o.r, o.dep, a, o.j);
+    _noteStamp(st, o, o.r, a);
+    st.marks += 1;
+    _stats.marks += 1;
+}
+
+/** Remember the stamp just laid, reusing one object for the contact. */
+function _noteStamp(st, placed, r, angle) {
+    if (!st.pivot) return;
+    const v = st.lastStamp || (st.lastStamp = { x: 0, y: 0, r: 0, angle: 0 });
+    v.x = placed.x; v.y = placed.y; v.r = r; v.angle = angle;
 }
 
 function _placeMarks(S, dabs) {
@@ -637,6 +1367,18 @@ function _placeMarks(S, dabs) {
             speed: st.lastMark ? D.segmentSpeed(st.lastMark, mark) : null,
         };
         const dyn = st.rules ? D.evaluate(st.rules, ctx) : D.NEUTRAL;
+        //: SR3-1. THE PRESET'S CURVES, on what this device actually measures.
+        //: Separate from the toggle's rules above, which keep the inputs they
+        //: were built and measured against; Legacy likewise multiplies BE11's
+        //: modifiers onto what `pSz`/`pOp` already returned.
+        const pre = st.curves ? D.evaluate(st.curves, {
+            pressure: mark.pressure,
+            pressureAvailable: st.pressureAvailable,
+            tiltXDeg: mark.tiltXDeg, tiltYDeg: mark.tiltYDeg,
+            tiltAvailable: st.tiltAvailable,
+            headingRad: mark.headingRad,
+            speed: ctx.speed,
+        }) : D.NEUTRAL;
         //: U3-J. THE DAB INDEX IS THE DRAW'S ADDRESS. Counted on the
         //: stroke rather than taken from `i`, because `_placeMarks` is
         //: called once per batch of dabs and `i` restarts at zero every
@@ -646,12 +1388,20 @@ function _placeMarks(S, dabs) {
         //: A spec built by a caller that predates U3-J has no `jitter`
         //: at all. Absent must mean OFF, not a throw at paint time.
         const jit = st.spec.jitter || NO_JITTER;
-        let r = Math.max(0.5, st.radius * dyn.size);
+        let r = Math.max(0.5, st.radius * dyn.size * pre.size);
         if (jit.size > 0) {
             //: Legacy floors at 1 PIXEL, not at a fraction of the
             //: radius (`canvas-core.js:2914`).
             r = Math.max(1, r * (1 + _jitter(st.stippleSeed, j,
                                              JITTER_SIZE) * jit.size));
+        }
+        //: SR3-1. Taper after the jitter, as `stampWet` orders it, at this
+        //: mark's arc length -- the stroke's so far plus the step to here.
+        if (st.taperRamp) {
+            const arcHere = st.lastMark
+                ? st.arc + Math.hypot(mark.x - st.lastMark.x, mark.y - st.lastMark.y)
+                : st.arc;
+            r = Math.max(0.5, r * _taperAt(st, arcHere));
         }
         //: U3-TF. A FOLLOWING TIP GETS ITS ANGLE PER MARK. Only a flat follows
         //: the stroke -- every other kind uses the owner's offset alone, which
@@ -684,18 +1434,26 @@ function _placeMarks(S, dabs) {
             tipAngle = base + _jitter(st.stippleSeed, j, JITTER_ROTATION)
                               * Math.PI * jit.rotation;
         }
+        //: SR3-1. A curve on angle ADDS DEGREES, as `stampWet` adds `M.angle`:
+        //: to the heading for a following tip, to the frozen angle for a held
+        //: one.
+        if (pre.angle) {
+            const base = tipAngle === undefined
+                ? (st.spec.angleDeg * Math.PI) / 180 : tipAngle;
+            tipAngle = base + (pre.angle * Math.PI) / 180;
+        }
         //: U3-J. OPACITY JITTER RIDES THE FLOW MULTIPLIER, which the
         //: deposition cache already buckets, so a jittered dab costs a
         //: cache lookup rather than a table build. Legacy clamps to
         //: [0.01, 1] (`canvas-core.js:2915`); the bucketing floors at 0
         //: anyway, so only the upper clamp has to be written here.
-        let flowMul = dyn.flow;
+        let flowMul = dyn.flow * pre.flow;
         if (jit.opacity > 0) {
             const f = flowMul * (1 + _jitter(st.stippleSeed, j,
                                              JITTER_OPACITY) * jit.opacity);
             flowMul = f < 0.01 ? 0.01 : (f > 1 ? 1 : f);
         }
-        const dep = _depositionForMark(st, flowMul);
+        const dep = _depositionForMark(st, flowMul, pre.ratio);
         if (st.renderer === V.RENDER_SWEEP && st.lastMark) {
             // U3-R2F F2. BOTH ENDS, so the segment carries a flow gradient
             // instead of one value. Without `st.lastDep` the sweep was flat
@@ -709,7 +1467,14 @@ function _placeMarks(S, dabs) {
             // `none` and `size` are kept from accidentally gaining a gradient,
             // and it is a property of the object rather than a mode check that
             // could fall out of step with the descriptor.
-            V.sweep(st.buffer, st.lastMark, mark, r, st.lastDep || dep, dep, j);
+            _sweep(st, st.lastMark, mark, r, st.lastDep || dep, dep, j, st.arc);
+        } else if (st.spec.tipKind === "scatter") {
+            //: G2. A SCATTER TIP IS A PROVIDER, not one round dab. See
+            //: `_scatterMark` for the cluster (Density 1) and the particles.
+            _scatterMark(st, mark, r, dep, flowMul, j, jit);
+        } else if (st.lanes) {
+            //: M1b. Bristle lanes below the bypass; see `_laneMark`.
+            _laneMark(st, mark, r, flowMul, j);
         } else {
             //: U3-J. SCATTER DISPLACES THE DAB PERPENDICULAR TO TRAVEL,
             //: which is Legacy's geometry (`canvas-core.js:3115`).
@@ -732,8 +1497,31 @@ function _placeMarks(S, dabs) {
                 placed = { x: mark.x - Math.sin(mark.headingRad) * d,
                            y: mark.y + Math.cos(mark.headingRad) * d };
             }
-            V.stamp(st.buffer, placed, r, dep, tipAngle, j);
+            if (st.pivot && typeof mark.headingRad !== "number" && !st.lastStamp) {
+                //: G1. THE OPENING MARK WAITS FOR A DIRECTION. Legacy BE16
+                //: defers it rather than guess; stamping it now at the frozen
+                //: angle laid a bar across the start of every chisel stroke.
+                //: `_flushOpening` lays it with the first heading, or at the
+                //: frozen angle if the stroke ends without moving (a tap).
+                st.pendingOpening = { x: placed.x, y: placed.y, r: r, dep: dep, j: j };
+                st.lastMark = mark;
+                st.lastDep = dep;
+                continue;
+            }
+            if (st.pendingOpening) _flushOpening(st, tipAngle);
+            _pivotFill(st, placed, r, dep, tipAngle, j);
+            _stamp(st, placed, r, dep, tipAngle, j);
+            _noteStamp(st, placed, r, typeof tipAngle === "number" ? tipAngle
+                : (st.spec.angleDeg * Math.PI) / 180);
         }
+        if (st.material) _looseMaterial(st, mark, r, flowMul, j);
+        //: SR1-4. What an airbrush puff held here would lay: this mark's size
+        //: and flow, so pressure still sets the amount while the hand rests.
+        st.lastR = r;
+        st.lastFlowMul = flowMul;
+        //: M1a. The arc length along the chain of marks the sweep draws, so the
+        //: next segment's strands start exactly where this one's ended.
+        if (st.lastMark) st.arc += Math.hypot(mark.x - st.lastMark.x, mark.y - st.lastMark.y);
         st.lastMark = mark;
         st.lastDep = dep;
         st.marks += 1;
@@ -749,6 +1537,8 @@ function addFromEvent(S, event, toDoc) {
     st.samples += samples.length;
     _stats.samples += samples.length;
     for (let i = 0; i < samples.length; i++) {
+        //: SR3-1. What the device measures, for the preset's curves.
+        _noteDevice(st, samples[i]);
         // ONE SAMPLE IN, ONE SAMPLE OUT. `StrokeFilter.push` returns a sample,
         // not a list -- the filter is causal and never fans out. Treating it as
         // a list silently iterated the sample's own KEYS and placed nothing:
@@ -756,11 +1546,22 @@ function addFromEvent(S, event, toDoc) {
         // opening dab made the canvas look almost right.
         const s = st.filter.push(samples[i]);
         if (!s) continue;
+        //: SR1-4. Where the hand IS, for the airbrush clock's stillness test and
+        //: its puffs -- the sampler's last mark can lag it by up to one gap.
+        st.lastSample = s;
         const dabs = st.began ? st.sampler.push(s) : st.sampler.begin(s);
         st.began = true;
         if (dabs && dabs.length) _placeMarks(S, dabs);
     }
     return transfer(S);
+}
+
+//: SR3-1. `input.js` decides per sample whether pressure and tilt were
+//: MEASURED (a pen) or are placeholders (a mouse); the sampler's marks drop the
+//: flags, so the contact keeps them here for the curves.
+function _noteDevice(st, sample) {
+    st.pressureAvailable = !!sample.pressureAvailable;
+    st.tiltAvailable = !!sample.tiltAvailable;
 }
 
 /** The final endpoint, which §17 requires to be exact. */
@@ -771,6 +1572,7 @@ function finish(S, event, toDoc) {
     if (event) {
         const samples = st.input.samplesFrom(event, toDoc);
         if (samples.length) last = samples[samples.length - 1];
+        if (last) _noteDevice(st, last);
     }
     // `flush` returns the TRUE final sample unfiltered, or null when there is
     // none. §5.1: emit what actually arrived rather than extrapolating, and let
@@ -779,8 +1581,18 @@ function finish(S, event, toDoc) {
     const endSample = tail || last;
     const finalDabs = st.sampler.finish(endSample);
     if (finalDabs && finalDabs.length) _placeMarks(S, finalDabs);
+    //: G1. A tap never produced a heading: its held opening mark lands now,
+    //: at the frozen angle, so it still leaves a mark.
+    if (st.pendingOpening) _flushOpening(st, undefined);
+    //: M1b. A tap with lanes leaves the study's ticks.
+    if (st.lanes && st.laneSegments === 0 && st.lastMark) _laneTap(st);
     const moved = transfer(S);
-    const summary = { samples: st.samples, marks: st.marks, moved: moved };
+    const summary = { samples: st.samples, marks: st.marks, moved: moved, pivots: st.pivots,
+                      subDabs: st.subDabs, particles: st.particles, paper: st.paper,
+                      material: st.material ? S.brushMaterial : null, specks: st.specks,
+                      lanes: st.lanes ? st.lanes.length : 0, laneSegments: st.laneSegments,
+                      lanesInContact: st.lanes ? st.lanes.filter(L => L.th < st.spec.density).length : 0,
+                      puffs: st.puffs };
     _stroke = null;
     return summary;
 }
@@ -796,12 +1608,13 @@ function cancel() {
 
 window.StudioBrushV2Adapter = {
     REFUSE_FLAG_OFF, REFUSE_TOOL, REFUSE_NO_LAYER, REFUSE_NOT_RASTER,
-    REFUSE_HIDDEN, REFUSE_LOCKED, REFUSE_MASK_MODE, REFUSE_TOUCH,
+    REFUSE_HIDDEN, REFUSE_LOCKED, REFUSE_MASK_MODE, REFUSE_TOUCH, REFUSE_ALIASED,
 
     isEnabled: function () { return _enabled; },
     //: Internal. Named with a leading underscore and never referenced from any
     //: settings surface, so the absence is testable.
     _setEnabled: function (on) { _enabled = !!on; if (!on) cancel(); return _enabled; },
+    _setPivotFill: function (on) { _pivotFillOn = !!on; return _pivotFillOn; },
     //: Internal, like the flag above. Exists so the lightest-touch width can be
     //: chosen by painting rather than argued about; no settings surface reads
     //: it and nothing persists it, so a reload returns to the default.
@@ -827,11 +1640,20 @@ window.StudioBrushV2Adapter = {
     isActive: function () { return _stroke !== null; },
     refusalFor: refusalFor,
     describeStroke: describeStroke,
+    //: P. Read-only views for evidence and tests; the merge reads the table
+    //: from `S.stroke.paperTable`, never from here.
+    DRY_PAPER: DRY_PAPER,
+    DRY_MATERIAL: DRY_MATERIAL,
+    PAPER_AMOUNT_PER_DEPTH: PAPER_AMOUNT_PER_DEPTH,
+    _paperTableFor: _paperTableFor,
 
     begin: begin,
     addFromEvent: addFromEvent,
     finish: finish,
     cancel: cancel,
+    //: SR1-4. Called by Legacy's airbrush clock while a V2 contact is active.
+    pointerAt: pointerAt,
+    airbrushPuff: airbrushPuff,
 
     stats: function () {
         return {

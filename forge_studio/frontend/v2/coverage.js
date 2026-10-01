@@ -996,6 +996,104 @@ function hash01(i, seed) {
     return h / 4294967296;
 }
 
+/*
+ * M1a. DRY-MEDIA STRANDS: THE APPROVED MATERIAL, NOT A PIXEL MASK.
+ *
+ * DEC-BRUSH (owner, 2026-09-28) rejected every universal per-pixel mask -- the
+ * stipple reads as one-pixel spray at every size -- and approved the study's
+ * family materials (`Evidence/brush-material-study-2026-09-28/template.html`
+ * `dabDry`). For the dry media that material is STRANDS: a noise field indexed
+ * by where a pixel sits ACROSS the tip (`u`, signed px from the path) and how
+ * far ALONG the stroke it is (`s`, arc length in px). Because `s` is the
+ * stroke's own arc length, the strands move with the tip and run continuous
+ * along travel; `streak` against `strand` is what makes Charcoal scratch and
+ * Pastel powder.
+ *
+ *     m    = smooth(0.2, 0.8, 0.6 n(u/su, s/ss) + 0.4 n(2u/su, s/(0.35 ss)))
+ *     mult = floor + (1 - floor) smooth(th - band, th + band, m),  th = 1 - density
+ *
+ * The multiplier scales a contribution's coverage -- the floor AND the pass
+ * price -- so a full pass lands on `target * shape * mult` and the stroke's
+ * accumulation model is untouched. It REPLACES the stipple for these media;
+ * running both would spend Density twice, U3-D's own argument.
+ *
+ * `n` is the study's value noise over its own lattice hash -- the same hash,
+ * read from a 256-cell tile (`noiseTileFor`) so the approved look is the one
+ * built and the hash is paid once per seed rather than per pixel.
+ */
+function latticeHash(x, y, z) {
+    let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(z | 0, 0x3c6ef372);
+    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function latticeNoise(x, y, seed) {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = latticeHash(xi, yi, seed), b = latticeHash(xi + 1, yi, seed);
+    const c = latticeHash(xi, yi + 1, seed), d = latticeHash(xi + 1, yi + 1, seed);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+//: THE SAME NOISE FROM A TILE, because the hash was the cost. A sweep visits
+//: every pixel once per covering segment -- twenty or more at the dry presets'
+//: spacing -- and hashing twelve lattice points each time made a Charcoal
+//: stroke 2.4x slower than its stipple. The tile holds the SAME `latticeHash`
+//: values for one 256-cell period; beyond it the lattice repeats, 256 strands
+//: across (280 px at Charcoal's width) and 256 streaks along (10,240 px).
+//: Built once per seed, about 65k hashes, and kept for the few seeds a stroke
+//: and its neighbours use.
+const NOISE_TILE = 256;
+const _noiseTiles = new Map();
+function noiseTileFor(seed) {
+    const key = seed | 0;
+    let t = _noiseTiles.get(key);
+    if (t) return t;
+    t = new Float32Array(NOISE_TILE * NOISE_TILE);
+    for (let y = 0; y < NOISE_TILE; y++) {
+        for (let x = 0; x < NOISE_TILE; x++) t[(y << 8) | x] = latticeHash(x, y, key);
+    }
+    if (_noiseTiles.size >= 12) _noiseTiles.clear();
+    _noiseTiles.set(key, t);
+    return t;
+}
+
+function tileNoise(t, x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const x0 = xi & 255, x1 = (xi + 1) & 255, y0 = (yi & 255) << 8, y1 = ((yi + 1) & 255) << 8;
+    const a = t[y0 | x0], b = t[y0 | x1], c = t[y1 | x0], d = t[y1 | x1];
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+function smoothBand(e0, e1, x) {
+    let t = (x - e0) / (e1 - e0);
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return t * t * (3 - 2 * t);
+}
+
+/** The strand multiplier at tip-local (`u` across, `s` along), in [floor, 1]. */
+function materialAt(mat, u, s) {
+    const n = 0.6 * tileNoise(mat.n0, u / mat.strand, s / mat.streak)
+            + 0.4 * tileNoise(mat.n1, u / (mat.strand * 0.5), s / (mat.streak * 0.35));
+    const m = smoothBand(0.2, 0.8, n);
+    return mat.floor + (1 - mat.floor) * smoothBand(mat.th - mat.band, mat.th + mat.band, m);
+}
+
+//: The study's edge noise period, in px.
+const MATERIAL_EDGE_PERIOD = 1.7;
+
+/**
+ * A ragged edge: the tip's radius at this PIXEL, as a factor of the nominal.
+ * Indexed by document position, not tip position, so overlapping marks agree
+ * on where the edge is and a stroke's rim cannot shimmer mark to mark.
+ */
+function materialEdge(mat, x, y) {
+    return 1 - mat.rough + 2 * mat.rough
+        * tileNoise(mat.ne, x / MATERIAL_EDGE_PERIOD, y / MATERIAL_EDGE_PERIOD);
+}
+
 /** `-ln(1 - tc)`, from the `NEGLOG` table built above. */
 function negLogOf(tc) {
     if (tc <= 0) return 0;
@@ -1066,6 +1164,22 @@ function depositionFor(spec) {
     const fEff = accumulating
         ? 1 - Math.pow(1 - target, 1 / overlapK)
         : target;
+    //: M1a. A dry medium below the bypass carries STRANDS instead of the
+    //: stipple. At Density 0.99 and above there is neither: the plain brush.
+    const ms = s.material;
+    const material = (ms && density < STIPPLE_BELOW)
+        ? (function () {
+            const seed = (Number(ms.seed) || 0) | 0;
+            return Object.freeze({
+                strand: ms.strand, streak: ms.streak, band: ms.band, floor: ms.floor,
+                rough: ms.rough || 0, seed: seed, th: 1 - density,
+                //: The study's three noise fields: two strand octaves and the
+                //: edge, each its own seed as `dabDry` seeds them.
+                n0: noiseTileFor(seed), n1: noiseTileFor(seed + 7),
+                ne: (ms.rough || 0) > 0 ? noiseTileFor(seed + 3) : null,
+            });
+        })()
+        : null;
     return Object.freeze({
         hardness: hardness, flow: flow, opacity: opacity, density: density,
         step: step, buildup: !!s.buildup, swept: swept,
@@ -1093,7 +1207,8 @@ function depositionFor(spec) {
         //: SPACING SETTING, which is not the overlap an isolated dab has, so
         //: Legacy stipples a lone Bristle Rake tap to 7.3%. A dab that is the
         //: only dab overlaps nothing, so it draws against the declared density.
-        stipple: density < STIPPLE_BELOW
+        material: material,
+        stipple: (density < STIPPLE_BELOW && !material)
             ? Object.freeze({
                 p: 1 - Math.pow(1 - density, 1 / Math.max(1, 2 / step)),
                 pOpening: density,
@@ -1287,6 +1402,34 @@ function foldSpikes(xr, yr, spikes) {
 }
 
 /**
+ * The tip's radius ALONG A DIRECTION OF TRAVEL, as a fraction of the nominal.
+ *
+ * Legacy BE7's `alongExtentFor` (`canvas-core.js`), ported: same table, same
+ * ellipse, same answer of 1.0 for a circle or for a caller with no heading.
+ * The sampler scales its gap by it, so a flat tip travelling across its thin
+ * side is spaced by the width it PRESENTS. V2 never passed it -- the sampler
+ * has taken `extentFor` since V2-03 and defaulted to a circle -- so a Flat
+ * Chisel with its broad face across the travel was stamped about 3.3x too far
+ * apart, and the owner's first V2 sign-off saw it: "Has bumpy sides, seems
+ * like it's making a stamp every stroke?"
+ */
+function alongExtent(tip, travelAngle, tipAngle) {
+    if (typeof travelAngle !== "number" || typeof tipAngle !== "number") return 1.0;
+    const t = tip || {};
+    const kind = TIP_ASPECT[t.kind] !== undefined ? t.kind : "round";
+    const ratio = Math.min(1, Math.max(0.05, Number(t.ratio) || 1));
+    const aspect = TIP_ASPECT[kind] * ratio;
+    if (Math.abs(aspect - 1) <= 1e-6) return 1.0;
+    const extent = TIP_EXTENT[kind] || 1.0;
+    //: Travel expressed in the tip's own frame.
+    const phi = travelAngle - tipAngle;
+    const c = Math.cos(phi), s = Math.sin(phi);
+    const rx = extent, ry = aspect;
+    const denom = Math.sqrt((ry * c) * (ry * c) + (rx * s) * (rx * s));
+    return denom > 1e-9 ? (rx * ry) / denom : rx;
+}
+
+/**
  * Everything about a dab's shape that does not vary per pixel, resolved once.
  *
  * RETURNS null FOR A TIP THAT IS ALREADY A CIRCLE, and that is load-bearing
@@ -1344,16 +1487,28 @@ function tipFrame(r, tip) {
  * One stamped mark. §11.1's renderer for textured paint, grain, scatter,
  * airbrush and custom tips.
  */
-function stamp(buffer, mark, radiusPx, dep, tipAngle, dabIndex) {
+function stamp(buffer, mark, radiusPx, dep, tipAngle, dabIndex, arcPx) {
     const r = Math.max(SUBPIXEL_FLOOR_RADIUS, radiusPx);
+    //: M1a. The strand frame is read BEFORE the lattice snap replaces the mark.
+    //: `arcPx` is the stroke's arc length at this mark, from the caller: NOT
+    //: `mark.travelPx`, which is the travel of the INPUT SAMPLE the mark was
+    //: placed from and is shared by every mark that sample produced -- the
+    //: strands jumped 8.5 px at some boundaries and not at others. Omitted, it
+    //: is 0, which is exact for the one stamp a dry stroke lays: its opening.
+    const mat = dep.material || null;
+    const matS = mat && typeof arcPx === "number" ? arcPx : 0;
+    const matHeading = mat && typeof mark.headingRad === "number" ? mark.headingRad : 0;
+    const matTx = Math.cos(matHeading), matTy = Math.sin(matHeading);
     //: Sub-pixel tips are placed on the lattice. See `SUBPIXEL_FLOOR_RADIUS`.
     if (radiusPx <= SUBPIXEL_FLOOR_RADIUS) {
         mark = { x: snapToPixelCentre(mark.x), y: snapToPixelCentre(mark.y) };
     }
-    const x0 = Math.max(0, Math.floor(mark.x - r));
-    const y0 = Math.max(0, Math.floor(mark.y - r));
-    const x1 = Math.min(buffer.width - 1, Math.ceil(mark.x + r));
-    const y1 = Math.min(buffer.height - 1, Math.ceil(mark.y + r));
+    //: A ragged edge can reach past the nominal radius.
+    const reachR = mat && mat.rough ? r * (1 + mat.rough) : r;
+    const x0 = Math.max(0, Math.floor(mark.x - reachR));
+    const y0 = Math.max(0, Math.floor(mark.y - reachR));
+    const x1 = Math.min(buffer.width - 1, Math.ceil(mark.x + reachR));
+    const y1 = Math.min(buffer.height - 1, Math.ceil(mark.y + reachR));
     let touched = 0;
     // Accumulated locally and unioned ONCE. A method call per painted pixel
     // would put the bookkeeping inside the hot loop of a performance unit.
@@ -1392,8 +1547,17 @@ function stamp(buffer, mark, radiusPx, dep, tipAngle, dabIndex) {
         };
     for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
-            const cov = coverageAt(x, y, r, dep.hardness, distance, dep.profile);
+            //: M1a. A ragged edge moves the radius per pixel; without one it
+            //: is `r` and the call is the one it always was.
+            const re = (mat && mat.rough) ? r * materialEdge(mat, x, y) : r;
+            let cov = coverageAt(x, y, re, dep.hardness, distance, dep.profile);
             if (cov <= 0) continue;
+            if (mat) {
+                const dx = x + 0.5 - mx, dy = y + 0.5 - my;
+                //: `u` has the sweep's sign (`d x t`), so an opening stamp and
+                //: the segment after it read the same strand.
+                cov *= materialAt(mat, dx * matTy - dy * matTx, matS + dx * matTx + dy * matTy);
+            }
             if (deposit(buffer, y * buffer.width + x, cov, dep, dabIndex) > 0) {
                 if (maxX < minX) { minX = maxX = x; minY = maxY = y; }
                 else {
@@ -1452,8 +1616,13 @@ function stamp(buffer, mark, radiusPx, dep, tipAngle, dabIndex) {
  * boolean. That is what keeps §14's "constant-flow strokes remain
  * byte-identical" true by construction rather than by tolerance.
  */
-function sweep(buffer, from, to, radiusPx, dep, depTo, dabIndex) {
+function sweep(buffer, from, to, radiusPx, dep, depTo, dabIndex, arcFromPx) {
     const r = Math.max(SUBPIXEL_FLOOR_RADIUS, radiusPx);
+    //: M1a. The stroke's arc length at `from`, from the caller; the strand
+    //: coordinate along the stroke starts here. Not `from.travelPx` -- see
+    //: `stamp` for why that field cannot be used.
+    const mat = dep.material || null;
+    const matS = mat && typeof arcFromPx === "number" ? arcFromPx : 0;
     //: BOTH ends, and before the bounds and the direction vector, so the whole
     //: segment moves together rather than changing angle. Consecutive marks
     //: that snap to the same lattice point give a zero-length segment, which
@@ -1462,10 +1631,12 @@ function sweep(buffer, from, to, radiusPx, dep, depTo, dabIndex) {
         from = { x: snapToPixelCentre(from.x), y: snapToPixelCentre(from.y) };
         to = { x: snapToPixelCentre(to.x), y: snapToPixelCentre(to.y) };
     }
-    const x0 = Math.max(0, Math.floor(Math.min(from.x, to.x) - r));
-    const y0 = Math.max(0, Math.floor(Math.min(from.y, to.y) - r));
-    const x1 = Math.min(buffer.width - 1, Math.ceil(Math.max(from.x, to.x) + r));
-    const y1 = Math.min(buffer.height - 1, Math.ceil(Math.max(from.y, to.y) + r));
+    //: A ragged edge can reach past the nominal radius.
+    const reachR = mat && mat.rough ? r * (1 + mat.rough) : r;
+    const x0 = Math.max(0, Math.floor(Math.min(from.x, to.x) - reachR));
+    const y0 = Math.max(0, Math.floor(Math.min(from.y, to.y) - reachR));
+    const x1 = Math.min(buffer.width - 1, Math.ceil(Math.max(from.x, to.x) + reachR));
+    const y1 = Math.min(buffer.height - 1, Math.ceil(Math.max(from.y, to.y) + reachR));
     const vx = to.x - from.x, vy = to.y - from.y;
     const len2 = vx * vx + vy * vy;
     let touched = 0;
@@ -1483,6 +1654,15 @@ function sweep(buffer, from, to, radiusPx, dep, depTo, dabIndex) {
     };
     //: U3-R2F F2. Hoisted out of the pixel loop entirely: a constant-flow
     //: stroke at full flow reads two booleans and takes the path it always took.
+    //: S. The distance to the segment's LINE, for pricing a pass (below). Only
+    //: tiny tips call it; above the supersampling radius `perp` already is it.
+    const lineDistance = function (sx, sy) {
+        const px = sx - fx, py = sy - fy;
+        if (!(len2 > 0)) return Math.sqrt(px * px + py * py);
+        const cr = px * vy - py * vx;
+        return (cr < 0 ? -cr : cr) / Math.sqrt(len2);
+    };
+    const shapeAtFn = (dep.profile || SMOOTHSTEP).at;
     const gradient = !!depTo && depTo !== dep && depTo.target !== dep.target;
     const t0 = dep.target, tSpan = gradient ? depTo.target - t0 : 0;
     //: Arc-length deposition runs whenever the accumulator can run at all. At
@@ -1548,8 +1728,26 @@ function sweep(buffer, from, to, radiusPx, dep, depTo, dabIndex) {
     for (let y = y0; y <= y1; y++) {
         const py = y + 0.5 - fy;
         for (let x = x0; x <= x1; x++) {
-            const cov = coverageAt(x, y, r, dep.hardness, distance, dep.profile);
+            //: M1a. Without a material every one of these is its constant and
+            //: `mult` is exactly 1, so the plain brush is byte-identical.
+            let rX = r, invRX = invR, rrX = rr, mult = 1;
+            if (mat && mat.rough) {
+                rX = r * materialEdge(mat, x, y);
+                invRX = 1 / rX;
+                rrX = rX * rX;
+            }
+            let cov = coverageAt(x, y, rX, dep.hardness, distance, dep.profile);
             if (cov <= 0) continue;
+            if (mat) {
+                //: The segment's own frame: `across` is the signed offset from
+                //: its line, `along` the travel past `from`. Unclamped, as the
+                //: study's disc is, so a cap continues the strands it ends.
+                const mpx = x + 0.5 - fx;
+                const along = segLen > 0 ? (mpx * vx + py * vy) * invLen : 0;
+                const across = segLen > 0 ? (mpx * vy - py * vx) * invLen : 0;
+                mult = materialAt(mat, across, matS + along);
+                cov *= mult;
+            }
             let target = dep.target;
             let accumulating = dep.accumulating;
             let weight = cov * dep.fEff;
@@ -1579,19 +1777,38 @@ function sweep(buffer, from, to, radiusPx, dep, depTo, dabIndex) {
                     //: integral is naturally bounded and no window floor is
                     //: needed -- the half-pixel fudge the share form required
                     //: is gone with it.
-                    const reach = Math.sqrt(rr - (perp2 > 0 ? perp2 : 0));
+                    const reach = Math.sqrt(rrX - (perp2 > 0 ? perp2 : 0));
                     //: The interval of THIS segment, expressed as travel
                     //: relative to closest approach, clipped to reach.
                     let t0 = -u, t1 = segLen - u;
                     if (t0 < -reach) t0 = -reach;
                     if (t1 > reach) t1 = reach;
                     if (t1 > t0) {
-                        const frac = passTau(passTbl, perp * invR,
-                                             t0 * invR, t1 * invR, dep.hardness);
-                        //: Magnitude from `cov`, distribution from the table.
-                        //: A whole pass is `frac == 1`, which lands exactly on
-                        //: `target * cov` -- the value the floor already holds.
-                        const tau = frac * negLogOf(target * cov);
+                        const frac = passTau(passTbl, perp * invRX,
+                                             t0 * invRX, t1 * invRX, dep.hardness);
+                        //: Magnitude from the coverage at the PERPENDICULAR
+                        //: distance, distribution from the table. A whole pass
+                        //: is `frac == 1` summed over the segments that carry
+                        //: it, and lands exactly on `target * shape(p)`.
+                        //:
+                        //: S. IT WAS `cov`, the coverage at the distance to
+                        //: THIS SEGMENT -- clamped to its ends, so every
+                        //: segment that did not contain the closest point
+                        //: priced its share of the pass lower than the pass is.
+                        //: The shares summed to one, the amounts did not: on a
+                        //: straight soft stroke the accumulator fell 16 levels
+                        //: short of the floor at spacing 0.15 and 30 at 0.015,
+                        //: so the `peak` MAX decided the body -- and where a
+                        //: stroke crossed itself that max of two arms was C2's
+                        //: medial-axis crease again, worse the tighter the
+                        //: spacing. Caps stay honest: past the end the chord is
+                        //: truncated in `frac`, not in the magnitude.
+                        const covPass = rX >= SUPERSAMPLE_BELOW_RADIUS
+                            ? shapeAtFn(perp * invRX, dep.hardness)
+                            : coverageAt(x, y, rX, dep.hardness, lineDistance, dep.profile);
+                        //: M1a. `mult` prices the pass at the strand, exactly
+                        //: as it scaled the floor above.
+                        const tau = frac * negLogOf(target * covPass * mult);
                         //: Optical depth becomes a union weight. The product of
                         //: (1 - weight) over contributions is exp(-sum tau), so
                         //: the accumulator is integrating tau even though it
@@ -1790,6 +2007,13 @@ window.StudioBrushCoverageV2 = {
     shapeAtGauss: shapeAtGauss,
     //: U3-J. The adapter draws its per-dab jitter from the same hash.
     hash01: hash01,
+    //: M1a. The adapter decides the material bypass at the same threshold the
+    //: stipple uses, read from here rather than restated.
+    STIPPLE_BELOW: STIPPLE_BELOW,
+    //: M1a. Exposed for evidence and tests; the renderers call them directly.
+    materialAt: materialAt,
+    materialEdge: materialEdge,
+    latticeNoise: latticeNoise,
     profileFor: profileFor,
     profileMean: profileMean,
     DirtyRegion: DirtyRegion,
@@ -1802,6 +2026,7 @@ window.StudioBrushCoverageV2 = {
     TIP_NORM: TIP_NORM,
     TIP_EXTENT: TIP_EXTENT,
     tipFrame: tipFrame,
+    alongExtent: alongExtent,
     foldSpikes: foldSpikes,
     merge: merge,
     totalCoverage: totalCoverage,

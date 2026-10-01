@@ -65,6 +65,7 @@ function updateStatus() {
 // Per-tool brush settings memory
 var _TOOL_SETTINGS_KEY = "studio-tool-settings";
 var _toolSettingsDefaults = {
+    mask: { brushSize: 20, brushSizeMode: "relative", smoothing: 4, maskOperation: "add" },
     brush:   { brushSize: 20, brushOpacity: 1.0, brushHardness: 1.0, smoothing: 4, toolStrength: 0.5 },
     eraser:  { brushSize: 20, brushOpacity: 1.0, brushHardness: 1.0, smoothing: 4, toolStrength: 0.5 },
     smudge:  { brushSize: 20, brushOpacity: 1.0, brushHardness: 0.5, smoothing: 4, toolStrength: 0.5 },
@@ -117,11 +118,21 @@ window.addEventListener("beforeunload", function() {
 })();
 
 function _saveToolSettings(tool) {
+    if (tool === "mask") {
+        _toolSettings.mask = { brushSize: S.brushSize, brushSizeMode: S.brushSizeMode,
+            smoothing: S.smoothing, maskOperation: S.maskOperation };
+        _persistToolSettings(); return;
+    }
     if (!_brushSettingTools.includes(tool)) return;
     _toolSettings[tool] = {
+        brushPreset: S.brushPreset,
+        presetName: document.getElementById("brushPresetPicker")?.value || "",
+        pressureSensitivity: S.pressureSensitivity, pressureAffects: S.pressureAffects,
+        brushDynamics: Object.assign({}, S.brushDynamics), symmetry: S.symmetry,
         brushSize: S.brushSize,
         brushOpacity: S.brushOpacity,
-        brushFlow: S.brushFlow,
+        // Flow is no longer saved: the owner scrapped the control (V2 sign-off
+        // round 1). A setting saved before that is migrated on restore.
         brushBuildup: S.brushBuildup,
         brushHardness: S.brushHardness,
         smoothing: S.smoothing,
@@ -156,6 +167,9 @@ function _saveToolSettings(tool) {
         // a shared array would let a later edit reach a saved setting, and a
         // saved setting is exactly the thing an owner expects to stay put.
         brushGrain: S.brushGrain,
+        // P. Travels with the tooth it shapes: a Pencil restored without it
+        // would answer the paper like Legacy's linear reveal.
+        brushMaterial: S.brushMaterial,
         brushCurves: (S.brushCurves || []).map(r => Object.assign({}, r)),
         brushAirbrush: S.brushAirbrush,
         brushAliased: S.brushAliased,
@@ -169,9 +183,28 @@ function _saveToolSettings(tool) {
 }
 
 function _restoreToolSettings(tool) {
+    if (tool === "mask") {
+        const saved = _toolSettings.mask;
+        S.brushSize = saved.brushSize; S.brushSizeMode = saved.brushSizeMode === "document_pixels" ? "document_pixels" : "relative";
+        S.smoothing = saved.smoothing; S.maskOperation = saved.maskOperation === "subtract" ? "subtract" : "add";
+        S.brushPreset = "round"; S.brushOpacity = 1; S.brushFlow = 1; S.brushHardness = 1;
+        S.brushBuildup = false; S.brushAngle = 0; S.brushTaperIn = 0; S.brushRatio = 1;
+        S.brushSpikes = 2; S.brushFalloff = "default"; S.brushDensity = 1; S.brushGrain = 0; S.brushMaterial = null;
+        S.brushCurves = []; S.brushAirbrush = false; S.brushAliased = false; S.brushPixelPerfect = false;
+        S.pressureSensitivity = false; S.pressureAffects = "none"; S.symmetry = "none";
+        S.brushDynamics = { sizeJitter: 0, opacityJitter: 0, scatter: 0, rotationJitter: 0, followStroke: false, spacing: 0.08 };
+        return;
+    }
     if (!_brushSettingTools.includes(tool)) return;
     var saved = _toolSettings[tool];
     if (!saved) return;
+    S.brushPreset = saved.brushPreset ?? "round";
+    S.pressureSensitivity = saved.pressureSensitivity ?? false;
+    S.pressureAffects = saved.pressureAffects ?? "none";
+    S.brushDynamics = Object.assign({ sizeJitter: 0, opacityJitter: 0, scatter: 0, rotationJitter: 0, followStroke: true, spacing: 0.08 }, saved.brushDynamics || {});
+    S.symmetry = saved.symmetry ?? "none";
+    const picker = document.getElementById("brushPresetPicker");
+    if (picker) picker.value = saved.presetName || "";
     // Mode first, and defaulted rather than assumed: settings saved before
     // this field existed carry no mode, and those are all relative brushes.
     S.brushSizeMode = saved.brushSizeMode === "document_pixels"
@@ -181,9 +214,18 @@ function _restoreToolSettings(tool) {
     S.brushHardness = saved.brushHardness;
     S.smoothing = saved.smoothing;
     S.toolStrength = saved.toolStrength;
-    // `??`, not `||`: a saved Flow of 0.01 is a deliberate choice and `||`
-    // would replace it with 1. Absent still means the default.
-    S.brushFlow = saved.brushFlow ?? 1.0;
+    // FLOW WAS SCRAPPED (owner, V2 sign-off round 1). A setting saved while it
+    // was a control carries one: fold it into Opacity, exactly as the presets
+    // were folded, so a saved Soft Round keeps its strength. `??`, not `||`: a
+    // saved Flow of 0.01 was a deliberate choice. The saved record is updated
+    // in place, so switching tools back and forth cannot fold it twice.
+    const savedFlow = saved.brushFlow ?? 1.0;
+    if (savedFlow !== 1 && typeof S.brushOpacity === "number") {
+        S.brushOpacity = S.brushOpacity * savedFlow;
+        saved.brushOpacity = S.brushOpacity;
+    }
+    delete saved.brushFlow;
+    S.brushFlow = 1;
     S.brushBuildup = saved.brushBuildup ?? false;
     S.brushAngle = saved.brushAngle ?? 0;
     S.brushTaperIn = saved.brushTaperIn ?? 0;
@@ -197,6 +239,7 @@ function _restoreToolSettings(tool) {
     // fields existed carry none of them, and those defaults are the state
     // block's.
     S.brushGrain = saved.brushGrain ?? 0;
+    S.brushMaterial = saved.brushMaterial ?? null;
     S.brushCurves = (saved.brushCurves ?? []).map(r => Object.assign({}, r));
     S.brushAirbrush = saved.brushAirbrush ?? false;
     S.brushAliased = saved.brushAliased ?? false;
@@ -215,6 +258,8 @@ function _restoreToolSettings(tool) {
 }
 
 function setTool(t) {
+    const maskTargetChanged = (S.tool === "mask") !== (t === "mask") || (t === "mask" && S.regionMode);
+    if (S.drawing) C.abortStroke();
     // BE12. A tool switch mid-stroke is one of the five exits the brief
     // names. Harmless when nothing is running.
     if (C.stopAirbrush) C.stopAirbrush();
@@ -224,9 +269,12 @@ function setTool(t) {
     }
 
     // Save current tool's brush settings before switching
-    _saveToolSettings(_prevTool || S.tool);
+    if (_prevTool) _saveToolSettings(_prevTool);
 
+    if (t === "mask" && S.tool !== "mask") S._maskReturnTool = S.tool || "brush";
     S.tool = t;
+    S.editingMask = t === "mask";
+    if (S.editingMask) S.regionMode = false;
 
     // Restore this tool's saved settings (if any)
     _restoreToolSettings(t);
@@ -235,21 +283,18 @@ function setTool(t) {
         const bt = b.dataset.tool;
         const isLasso = bt === "lasso" && (t === "lasso" || t === "polylasso" || t === "maglasso");
         b.classList.toggle("active", bt === t || isLasso);
+        b.setAttribute("aria-pressed", String(bt === t || isLasso));
     });
 
     // Per-tool context bar visibility
     const show = {
-        // CT3. Flow is on BOTH now.
-        //
-        // It was withheld from the eraser one stage ago for a real reason --
-        // the eraser had no commit-time alpha, so its per-stamp value already
-        // WAS the Opacity the owner set, and a second multiplier there would
-        // have meant something different from the control beside it. That
-        // reason is gone: the eraser composites its alpha map at
-        // `S.brushOpacity` on commit exactly as the brush does, so Opacity
-        // bounds the stroke and Flow is the per-stamp contribution, in both.
-        brush:     ["size","opacity","flow","hardness","smoothing","pixel-opts","sym-opts","mask-toggle","pressure-opts"],
-        eraser:    ["size","opacity","flow","hardness","smoothing","pixel-opts","mask-toggle","pressure-opts"],
+        // Flow is on NEITHER: the owner scrapped it at the first V2 sign-off
+        // (2026-09-29), "Opacity is the only strength setting". CT3 had put it
+        // on both brush and eraser.
+        // SR2-2. Density on the bar for the brush (owner, V2 sign-off round 2).
+        brush:     ["size","opacity","hardness","density","smoothing","pixel-opts","sym-opts","pressure-opts"],
+        eraser:    ["size","opacity","hardness","smoothing","pixel-opts","pressure-opts"],
+        mask:      ["mask-target","mask-operation","size","smoothing","mask-overlay","mask-clear","mask-selection"],
         smudge:    ["size","strength","sym-opts"],
         blur:      ["size","strength"],
         pixelate:  ["size","strength"],
@@ -289,7 +334,6 @@ function setTool(t) {
     // is a scoped change with its own evidence, not a footnote to this one.
     if (S.editingMask) {
         visible.delete("opacity");
-        visible.delete("flow");
         visible.delete("hardness");
     }
     document.querySelectorAll("#contextBar .ctx-item").forEach(el => {
@@ -301,20 +345,15 @@ function setTool(t) {
     const presets = document.getElementById("brushPresets");
     if (presets) presets.style.display = (t === "brush" || t === "eraser") ? "" : "none";
 
-    // If switching away from brush/eraser, turn off mask mode
-    if (t !== "brush" && t !== "eraser" && S.editingMask && S._userMaskMode) {
-        S.editingMask = false;
-        S._userMaskMode = false;
-        _updateMaskToggleUI();
-        const ipBar = document.getElementById("inpaintBar");
-        if (ipBar) ipBar.style.display = "none";
-        const siSection = document.getElementById("softInpaintSection");
-        if (siSection) siSection.style.display = "none";
+    if (t === "mask") {
+        const dynamics = document.getElementById("dynamicsPanel");
+        if (dynamics) dynamics.style.display = "none";
     }
+    _updateMaskToggleUI();
 
     // Cursor style
     if (S.canvas) {
-        const customCursorTools = ["brush", "eraser", "smudge", "blur", "dodge", "clone", "liquify", "pixelate"];
+        const customCursorTools = ["mask", "brush", "eraser", "smudge", "blur", "dodge", "clone", "liquify", "pixelate"];
         if (customCursorTools.includes(t)) S.canvas.style.cursor = "none";
         else if (["eyedropper", "fill", "gradient", "select", "ellipse", "lasso", "polylasso", "maglasso", "wand", "crop"].includes(t)) S.canvas.style.cursor = "crosshair";
         else S.canvas.style.cursor = "default";
@@ -327,36 +366,46 @@ function setTool(t) {
 
     // Sync context bar to show this tool's restored settings
     _syncCtxBar();
+    for (const [id, on] of [["pressureBtn", S.pressureSensitivity], ["pressureSizeBtn", S.pressureAffects === "size" || S.pressureAffects === "both"], ["pressureOpacityBtn", S.pressureAffects === "opacity" || S.pressureAffects === "both"]]) {
+        const button = document.getElementById(id);
+        if (button) { button.classList.toggle("active", !!on); if (id !== "pressureBtn") button.style.display = S.pressureSensitivity ? "" : "none"; }
+    }
+    _syncDynamicsPanel();
+    if (maskTargetChanged) { renderLayerPanel(); renderRegionPanel(); }
+    const tips = ["round", "flat", "scatter", "marker", "custom"];
+    document.querySelectorAll("#brushPresets .brush-preset-btn:not(#dynamicsToggle)").forEach((b, i) => b.classList.toggle("active", tips[i] === S.brushPreset));
 }
 
-// Mask mode toggle — Q key or context bar button
+// Q retains its remappable action identity; the target is now a real tool.
 function toggleMaskMode() {
-    // Block mask toggle mid-stroke — drawTarget is locked at stroke start,
-    // but flipping the UI state mid-draw is confusing and can cause undo mismatches.
-    if (S.drawing) return;
-    S._userMaskMode = !S._userMaskMode;
-    S.editingMask = S._userMaskMode;
-    if (S._userMaskMode && window.StudioCore) {
-        window.StudioCore.state.mask.visible = true;
-    }
-    // Show/hide inpaint settings bar
-    const ipBar = document.getElementById("inpaintBar");
-    if (ipBar) ipBar.style.display = S._userMaskMode ? "" : "none";
-    const siSection = document.getElementById("softInpaintSection");
-    if (siSection) siSection.style.display = S._userMaskMode ? "" : "none";
-    _updateMaskToggleUI();
-    // The context bar is computed in `setTool`, so without this the three
-    // controls above only appear or disappear the next time the owner changes
-    // tool -- which is a bar that describes the previous mode.
-    setTool(S.tool);
+    setTool(S.tool === "mask" ? (S._maskReturnTool || "brush") : "mask");
     _redraw();
 }
-
+let _maskStatusVersion = -1, _maskStatusCanvas = null, _maskHasCoverage = false;
 function _updateMaskToggleUI() {
-    const btn = document.getElementById("maskModeBtn");
-    if (btn) {
-        btn.classList.toggle("active", S._userMaskMode);
-        btn.textContent = S._userMaskMode ? "Mask ●" : "Mask";
+    const version = C.getCompositeVersion();
+    if (_maskStatusVersion !== version || _maskStatusCanvas !== S.mask.canvas) {
+        _maskHasCoverage = C.hasGenerationMask();
+        _maskStatusVersion = version; _maskStatusCanvas = S.mask.canvas;
+    }
+    const status = document.getElementById("generationMaskStatus");
+    if (status) status.textContent = _maskHasCoverage
+        ? (S._userMaskMode ? "Generation mask: ready" : "Generation mask: saved, inactive") + (S.mask.visible ? "" : " · overlay hidden")
+        : "Generation mask: empty";
+    document.querySelectorAll("[data-mask-operation]").forEach(b => {
+        const selected = b.dataset.maskOperation === S.maskOperation;
+        b.classList.toggle("active", selected); b.setAttribute("aria-pressed", String(selected));
+    });
+    const overlay = document.getElementById("maskOverlayToggle");
+    if (overlay) overlay.checked = !!S.mask.visible;
+    for (const id of ["maskClearBtn", "clearMaskBtn"]) {
+        const button = document.getElementById(id); if (button) button.disabled = !_maskHasCoverage;
+    }
+    const selection = document.getElementById("maskSelectionStatus");
+    if (selection) selection.textContent = S.selection.active ? "Selection limits coverage; export is binary" : "Hard round · pressure off";
+    for (const id of ["inpaintBar", "softInpaintSection"]) {
+        const bar = document.getElementById(id);
+        if (bar) bar.style.display = S.tool === "mask" || S._userMaskMode ? "" : "none";
     }
 }
 
@@ -434,17 +483,25 @@ function drawCursor() {
         }
     }
     // Mask mode indicator — red tint fill inside cursor
-    if (S.editingMask && S._userMaskMode) {
+    if (S.tool === "mask") {
         c.fillStyle = "rgba(255,40,40,0.18)";
         c.beginPath(); c.arc(pos.x, pos.y, Math.max(1 / z.scale, pr), 0, Math.PI * 2); c.fill();
     }
     // Crosshair — red when mask mode active
     c.setLineDash([]);
-    c.strokeStyle = S.editingMask && S._userMaskMode ? "rgba(255,40,40,0.9)" : "rgba(0,0,0,0.8)";
+    c.strokeStyle = S.tool === "mask" ? "rgba(255,40,40,0.9)" : "rgba(0,0,0,0.8)";
     c.lineWidth = 1.5 / z.scale;
     const ch = 4 / z.scale;
     c.beginPath(); c.moveTo(pos.x - ch, pos.y); c.lineTo(pos.x + ch, pos.y); c.stroke();
     c.beginPath(); c.moveTo(pos.x, pos.y - ch); c.lineTo(pos.x, pos.y + ch); c.stroke();
+    if (S.tool === "mask") {
+        // A non-color operation cue follows the same document transform.
+        c.font = (14 / z.scale) + "px sans-serif"; c.textAlign = "left";
+        c.lineWidth = 3 / z.scale; c.strokeStyle = "white"; c.fillStyle = "black";
+        const cue = S.maskOperation === "subtract" ? "−" : "+";
+        c.strokeText(cue, pos.x + pr + 3 / z.scale, pos.y);
+        c.fillText(cue, pos.x + pr + 3 / z.scale, pos.y);
+    }
     // Clone stamp source indicator
     if (S.tool === "clone" && S._cloneSource) {
         let sx, sy;
@@ -673,6 +730,7 @@ function drawTransformHandles(c) {
 // ========================================================================
 function _redraw() {
     C.composite();
+    _updateMaskToggleUI();
     const c = S.ctx;
     if (!c) return;
     _refreshCtxBarIfDocumentResized();
@@ -846,6 +904,7 @@ const _origComposite = C.composite;
 // A capture is an optimisation: it keeps events coming while the pointer is
 // outside the element. Not getting one is a degraded stroke, never no stroke.
 function _capture(element, pointerId) {
+    S.stroke.pointerId = pointerId;
     const I = window.StudioInput;
     if (I) return I.capture(element, pointerId);
     try { element.setPointerCapture(pointerId); return true; }
@@ -1005,7 +1064,7 @@ function bindCanvas() {
 
     // === DRAWING / TOOLS ===
     cv.addEventListener("pointerdown", e => {
-        if (e.button !== 0) return;
+        if (e.button !== 0 || S.drawing) return;
         // CT2. Every finger after the first in a multi-touch gesture, and every
         // pen after the first on a shared display, reports `isPrimary === false`.
         // Nothing checked it, so a second contact opened a second stroke into
@@ -1035,7 +1094,7 @@ function bindCanvas() {
             return;
         }
 
-        if (S.tool === "eyedropper") { C.saveUndo("Eyedropper"); C.pickColor(p); updateColorUI(); _redraw(); return; }
+        if (S.tool === "eyedropper") { C.pickColor(p); updateColorUI(); _redraw(); return; }
         if (S.tool === "fill") { C.saveUndo("Flood fill"); C.floodFill(p); renderHistoryPanel(); _redraw(); return; }
 
         // Wand
@@ -1231,8 +1290,8 @@ function bindCanvas() {
         if (S.tool === "clone") {
             if (e.altKey) { S._cloneSource = { x: p.x, y: p.y }; S._cloneOffset = null; return; }
             if (!S._cloneSource) return;
+            if (!C.noteStrokeUndo("Clone stamp")) return;
             if (!S._cloneOffset) S._cloneOffset = { dx: S._cloneSource.x - p.x, dy: S._cloneSource.y - p.y };
-            C.saveUndo("Clone stamp"); S.drawing = true;
             _beginWebGLLiveFallbackIfNeeded();
             S.stroke.points = [];
             S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure;
@@ -1242,7 +1301,7 @@ function bindCanvas() {
 
         // Liquify
         if (S.tool === "liquify") {
-            C.saveUndo("Liquify"); S.drawing = true;
+            if (!C.noteStrokeUndo("Liquify")) return;
             _beginWebGLLiveFallbackIfNeeded();
             S.stroke.points = []; S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure;
             S.stroke._liquifyDist = 0; // accumulated distance for spacing
@@ -1257,7 +1316,7 @@ function bindCanvas() {
 
         // Region painting
         if (S.regionMode && C.activeRegion() && (S.tool === "brush" || S.tool === "eraser")) {
-            C.saveUndo("Region paint: " + C.activeRegion().name);
+            if (!C.noteStrokeUndo("Region paint: " + C.activeRegion().name)) return;
             window.Education?.maybeShowTip?.("regions");
             S.drawing = true; _capture(cv, e.pointerId);
             _beginWebGLLiveFallbackIfNeeded();
@@ -1268,7 +1327,7 @@ function bindCanvas() {
         }
 
         // Auto-select nearest paint layer if active layer is an adjustment layer
-        if (S.layers[S.activeLayerIdx]?.type === "adjustment") {
+        if (!S.editingMask && S.layers[S.activeLayerIdx]?.type === "adjustment") {
             let found = -1;
             for (let _i = S.activeLayerIdx - 1; _i >= 0; _i--) {
                 if (S.layers[_i].type !== "adjustment") { found = _i; break; }
@@ -1288,9 +1347,7 @@ function bindCanvas() {
 
         // Brush/eraser/smudge/blur/dodge — only if click is within document bounds
         if (p.x < 0 || p.y < 0 || p.x >= S.W || p.y >= S.H) return;
-        C.saveUndo();
-        // CT2: open the stroke transaction, so a cancel can put this back.
-        C.noteStrokeUndo();
+        if (!C.noteStrokeUndo()) return;
         S.drawing = true; _capture(cv, e.pointerId);
         _beginWebGLLiveFallbackIfNeeded();
         const T = C.drawTarget();
@@ -1312,6 +1369,8 @@ function bindCanvas() {
     });
 
     cv.addEventListener("pointermove", e => {
+        if (S.drawing && S.stroke.pointerId != null && e.pointerId !== S.stroke.pointerId) return;
+        if (S.drawing && !C.strokeTargetIsCurrent()) { C.abortStroke(); _redraw(); return; }
         if (S.zoom.panning) return;
         if (S.studioMode === "img2img") return;
         const p = pos(e);
@@ -1635,6 +1694,8 @@ function bindCanvas() {
     });
 
     cv.addEventListener("pointerup", e => {
+        if (S.drawing && S.stroke.pointerId != null && e.pointerId !== S.stroke.pointerId) return;
+        if (S.drawing && !C.strokeTargetIsCurrent()) { C.abortStroke(); _redraw(); return; }
         // Shift-drag brush resize end
         if (_brushResizing) {
             _brushResizing = null;
@@ -1690,6 +1751,7 @@ function bindCanvas() {
         }
         // Liquify up — clear snapshot and spacing state
         if (S.tool === "liquify" && S.drawing) {
+            C.clearStrokeUndo();
             S.drawing = false;
             _endWebGLLiveFallback();
             S._liquifySnapshot = null;
@@ -1699,6 +1761,7 @@ function bindCanvas() {
         }
         // Clone up
         if (S.tool === "clone" && S.drawing) {
+            C.clearStrokeUndo();
             S.drawing = false;
             _endWebGLLiveFallback();
             try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
@@ -1721,7 +1784,7 @@ function bindCanvas() {
             // dab -- the brief forbids that, and BE3's spacing debt still
             // governs whether any dab is due at all, so a stroke that already
             // ended on the pointer emits nothing.
-            if ((S.tool === "brush" || S.tool === "eraser") && !S.regionMode) {
+            if ((S.tool === "brush" || S.tool === "eraser" || S.tool === "mask") && !S.regionMode) {
                 // U3-V. THE TWO ENDPOINT COMPLETIONS ARE MUTUALLY EXCLUSIVE.
                 //
                 // `finishStroke` walks from LEGACY's last dab (`S.stroke.lx/ly`)
@@ -1775,11 +1838,13 @@ function bindCanvas() {
     // Without capture -- a browser that refused it, or a capture already lost
     // -- the old behaviour is exactly right, because no pointer-up is coming.
     cv.addEventListener("pointerleave", e => {
+        if (S.drawing && S.stroke.pointerId != null && e.pointerId !== S.stroke.pointerId) return;
+        if (S.drawing && !C.strokeTargetIsCurrent()) { C.abortStroke(); _redraw(); return; }
         const stillCaptured = typeof cv.hasPointerCapture === "function"
             && e && typeof e.pointerId === "number"
             && cv.hasPointerCapture(e.pointerId);
         if (S.drawing && !stillCaptured) {
-            if ((S.tool === "brush" || S.tool === "eraser") && !S.regionMode) {
+            if ((S.tool === "brush" || S.tool === "eraser" || S.tool === "mask") && !S.regionMode) {
                 // U3. The exact final endpoint reaches the alpha map before the
                 // Canvas commits it. Ordering matters: after `commitStroke` the
                 // alpha map is gone.
@@ -1819,6 +1884,7 @@ function bindCanvas() {
     // which paint STRAIGHT to the layer, real pixels with no commit behind
     // them. That is the half-committed state CT2 forbids in as many words.
     cv.addEventListener("pointercancel", e => {
+        if (S.drawing && S.stroke.pointerId != null && e.pointerId !== S.stroke.pointerId) return;
         if (window.StudioInput && e) window.StudioInput.release(cv, e.pointerId);
         _brushResizing = null;
         if (S.selection.dragging) { S.selection.dragging = false; S.selection.lassoPoints = null; }
@@ -1829,7 +1895,13 @@ function bindCanvas() {
         _redraw();
         renderHistoryPanel();
     });
+    cv.addEventListener("lostpointercapture", e => {
+        if (S.drawing && e.pointerId === S.stroke.pointerId) {
+            C.abortStroke(); _redraw(); renderHistoryPanel();
+        }
+    });
     window.addEventListener("blur", () => {
+        _spaceHeld = false; _zoomDrag.active = false; S.zoom.panning = false;
         // No pointerId to release here -- a blur is not a pointer event -- but
         // the stroke still has to be rolled back rather than abandoned.
         _brushResizing = null;
@@ -3611,6 +3683,8 @@ function renderLayerPanel() {
         row.appendChild(thumb); row.appendChild(info); row.appendChild(vis);
         row.addEventListener("click", () => {
             const wasActive = !S.editingMask && !S.regionMode && S.activeLayerIdx === layerIdx;
+            if (S.drawing) C.abortStroke();
+            if (S.tool === "mask") setTool(S._maskReturnTool || "brush");
             S.editingMask = false; S.regionMode = false; S.activeLayerIdx = layerIdx;
             // Skip re-render when this row was already active so a
             // double-click on the layer name can land on the same DOM
@@ -3625,6 +3699,8 @@ function renderLayerPanel() {
         row.addEventListener("contextmenu", e => {
             e.preventDefault();
             e.stopPropagation();
+            if (S.drawing) C.abortStroke();
+            if (S.tool === "mask") setTool(S._maskReturnTool || "brush");
             S.editingMask = false; S.regionMode = false; S.activeLayerIdx = layerIdx;
             renderLayerPanel();
             _showLayerCtxMenu(e.clientX, e.clientY);
@@ -3816,11 +3892,13 @@ function renderRegionPanel() {
 
         // Click row to select/deselect region (toggle)
         row.addEventListener("click", () => {
+            if (S.drawing) C.abortStroke();
             if (S.activeRegionId === r.id && S.regionMode) {
                 // Already selected — deselect
                 S.activeRegionId = null;
                 S.regionMode = false;
             } else {
+                if (S.tool === "mask") setTool("brush");
                 // Select this region and enter paint mode
                 S.activeRegionId = r.id;
                 S.regionMode = true;
@@ -3848,6 +3926,10 @@ function renderRegionPanel() {
     }
     panel.appendChild(hint);
 }
+
+// SR2-1. A held airbrush builds with no pointer events to redraw on; without
+// this the owner saw the build "only after releasing the click".
+C.onAirbrushDeposit = () => _redraw();
 
 // Wire undo/redo callback
 C.onUndoRedo = () => {
@@ -4251,6 +4333,9 @@ function bindKeys() {
         if (!document.getElementById("app-studio")?.classList.contains("active")) return;
         if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.target.isContentEditable) return;
 
+        // Let focused native controls keep Enter/Space activation.
+        if ((e.key === " " || e.key === "Enter") && e.target.closest?.("#toolstrip button, #contextBar button")) return;
+
         // Space for pan mode
         if (e.key === " " && !e.repeat) {
             e.preventDefault();
@@ -4419,6 +4504,7 @@ function bindKeys() {
             }
         }
         if (e.key === "Escape") {
+            if (S.drawing) { e.preventDefault(); C.abortStroke(); _redraw(); renderHistoryPanel(); return; }
             if (S._polyPoints) { e.preventDefault(); S._polyPoints = null; _redraw(); return; }
             if (S._magAnchors) { e.preventDefault(); _clearMagLasso(); _redraw(); return; }
             if (S.transform.active) {
@@ -4460,10 +4546,7 @@ function bindKeys() {
 const _scrubMap = {
     size:      { get: () => S.brushSize,                    set: v => { S.brushSize = v; } },
     opacity:   { get: () => Math.round(S.brushOpacity*100), set: v => { S.brushOpacity = v/100; } },
-    // CT3. Floored at 1%, not 0: a zero-flow brush is a brush that paints
-    // nothing, which is indistinguishable from a broken one. `index.html`
-    // carries the same `data-min="1"` so the drag and the typed value agree.
-    flow:      { get: () => Math.round((S.brushFlow ?? 1)*100), set: v => { S.brushFlow = Math.max(0.01, v/100); } },
+    // No `flow` entry: the owner scrapped the control (V2 sign-off round 1).
     hardness:  { get: () => Math.round(S.brushHardness*100),set: v => { S.brushHardness = v/100; } },
     smoothing: { get: () => S.smoothing ?? 4,               set: v => { S.smoothing = v; } },
     strength:  { get: () => Math.round(S.toolStrength*100), set: v => { S.toolStrength = v/100; } },
@@ -4475,7 +4558,9 @@ const _scrubMap = {
     sampleRadius: { get: () => S.sampleRadius || 1, set: v => { S.sampleRadius = v; } },
     symmetryAxes: { get: () => S.symmetryAxes || 4, set: v => { S.symmetryAxes = v; _redraw(); } },
     ratio:     { get: () => Math.round((S.brushRatio || 1.0) * 100), set: v => { S.brushRatio = v / 100; } },
-    density:   { get: () => Math.round((S.brushDensity || 1.0) * 100), set: v => { S.brushDensity = v / 100; } },
+    // SR2-2. A context-bar scrub now as well as the flyout slider, so it
+    // refreshes the flyout rather than leave it showing a stale value.
+    density:   { get: () => Math.round((S.brushDensity || 1.0) * 100), set: v => { S.brushDensity = v / 100; _syncDynamicsPanel(); } },
     spikes:    { get: () => S.brushSpikes || 2, set: v => { S.brushSpikes = v; } },
     angle:     { get: () => Math.round(S.brushAngle || 0), set: v => { S.brushAngle = v; } },
     taperIn:   { get: () => Math.round((S.brushTaperIn || 0) * 100), set: v => { S.brushTaperIn = v / 100; } },
@@ -4916,6 +5001,8 @@ function bindToolbar() {
     document.getElementById("dynDensity")?.addEventListener("input", e => {
         S.brushDensity = +e.target.value / 100;
         const v = document.getElementById("dynDensityVal"); if (v) v.textContent = Math.round(+e.target.value) + "%";
+        // SR2-2. And the context bar's Density scrub.
+        _syncCtxBar();
     });
     document.getElementById("dynAngle")?.addEventListener("input", e => {
         S.brushAngle = +e.target.value;
@@ -5368,10 +5455,21 @@ function bootUI() {
     bindKeys();
 
     // Mask mode toggle button
-    document.getElementById("maskModeBtn")?.addEventListener("click", toggleMaskMode);
+    document.querySelectorAll("[data-mask-operation]").forEach(button => button.addEventListener("click", () => {
+        if (S.drawing) C.abortStroke();
+        S.maskOperation = button.dataset.maskOperation;
+        _saveToolSettings("mask"); _redraw();
+    }));
+    document.getElementById("maskOverlayToggle")?.addEventListener("change", e => {
+        S.mask.visible = e.target.checked; _redraw();
+        if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+    });
+    for (const id of ["maskClearBtn", "clearMaskBtn"]) document.getElementById(id)?.addEventListener("click", () => {
+        C.clearGenerationMask(); renderHistoryPanel(); _redraw();
+    });
 
     // Initialize mask mode state
-    S._userMaskMode = false;
+    S._userMaskMode = !!S._userMaskMode;
 
     // Initial sync
     setTool(S.tool || "brush");
@@ -5386,8 +5484,7 @@ function bootUI() {
     _updateHSVFromColor(S.color);
     _drawHueWheel();
     _drawSVSquare();
-    S.pressureSensitivity = false; // off until _applyDefaults + _syncPressureState
-    S.pressureAffects = "none";
+    // Pressure is restored with its image tool; Mask always forces it off.
     S.showGrid = false;            // off until _applyDefaults loads saved state (prevents flash)
     // Hide the CSS grid div — grid is now drawn on canvas
     const cssGrid = document.querySelector(".canvas-grid");
