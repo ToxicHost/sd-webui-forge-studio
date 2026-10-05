@@ -295,6 +295,91 @@ class WildcardEditor:
             raise EditorRefused("That could not be renamed.") from error
         return {"ok": True, "new_path": destination.relative}
 
+    def duplicate(self, relative: str) -> dict[str, Any]:
+        """P7. The Extension's `file/duplicate` (`studio_lexicon.py:399-425`):
+        `<stem>_copy.txt`, then `_copy2`, `_copy3`... beside the original."""
+
+        import shutil
+
+        target = self._resolve(relative)
+        if not target.path.is_file():
+            raise EditorRefused("File not found")
+        if target.path.suffix.lower() != WILDCARD_SUFFIX:
+            raise EditorRefused("Only .txt files")
+        stem = target.path.name[: -len(WILDCARD_SUFFIX)]
+        parent = "/".join(target.relative.split("/")[:-1])
+        counter = 1
+        while True:
+            name = f"{stem}_copy{WILDCARD_SUFFIX}" if counter == 1 \
+                else f"{stem}_copy{counter}{WILDCARD_SUFFIX}"
+            copy = self._resolve(f"{parent}/{name}" if parent else name, must_exist=False)
+            if not copy.path.exists():
+                break
+            counter += 1
+        try:
+            shutil.copy2(target.path, copy.path)
+        except OSError as error:
+            raise EditorRefused(f"Duplicate error: {error.strerror or error}") from error
+        return {"ok": True, "path": copy.relative}
+
+    def move(self, relative: str, destination: str) -> dict[str, Any]:
+        """P7. The Extension's `file/move` (`studio_lexicon.py:431-483`): a file
+        or folder into another folder ("" is the root). Refuses moving a folder
+        into itself and overwriting; the same place is a no-op."""
+
+        import shutil
+
+        source = self._resolve(relative)
+        if source.path == self._real_root():
+            raise EditorRefused("The wildcard folder itself cannot be moved.")
+        holder = self._resolve(destination)
+        if not holder.path.is_dir():
+            raise EditorRefused("Destination is not a folder")
+        if source.path.is_dir() and (holder.path == source.path
+                                     or holder.path.is_relative_to(source.path)):
+            raise EditorRefused("Cannot move a folder into itself")
+        if source.path.parent == holder.path:
+            return {"ok": True, "new_path": source.relative}
+        name = source.path.name
+        moved = self._resolve(f"{holder.relative}/{name}" if holder.relative else name,
+                              must_exist=False)
+        if moved.path.exists():
+            raise EditorRefused(f'"{name}" already exists in destination')
+        try:
+            shutil.move(str(source.path), str(moved.path))
+        except OSError as error:
+            raise EditorRefused(f"Move error: {error.strerror or error}") from error
+        return {"ok": True, "new_path": moved.relative}
+
+    def search_content(self, query: str) -> list[dict[str, Any]]:
+        """P7. The Extension's `search_content` (`studio_lexicon.py:522-550`):
+        files whose text contains `query` (2+ characters), one hit per file,
+        at most 100, the matching line trimmed to 120 characters."""
+
+        needle = str(query or "").lower()
+        if len(needle) < 2:
+            return []
+        real_root = self._real_root()
+        results: list[dict[str, Any]] = []
+        for path in sorted(real_root.rglob(f"*{WILDCARD_SUFFIX}")):
+            try:
+                if not path.is_file() or not path.resolve().is_relative_to(real_root):
+                    continue
+                if path.stat().st_size > MAX_FILE_BYTES:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for number, line in enumerate(text.splitlines(), 1):
+                if needle in line.lower():
+                    results.append({"name": path.name,
+                                    "path": path.relative_to(real_root).as_posix(),
+                                    "line": number, "text": line.strip()[:120]})
+                    break
+            if len(results) >= 100:
+                break
+        return results
+
     def delete(self, relative: str, *, force: bool = False) -> dict[str, Any]:
         """To the operating system's bin, never straight to nothing."""
 

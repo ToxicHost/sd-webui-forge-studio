@@ -27,7 +27,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 
 _LOOPBACK_HOST = "127.0.0.1"
@@ -1273,7 +1273,7 @@ def _validated_output(value: Any) -> Any:
     if not isinstance(value, Mapping):
         raise PresentationError("output settings must be a JSON object.")
     unknown = sorted(str(k) for k in value if k not in
-                     ("format", "quality", "lossless", "embed_metadata"))
+                     ("format", "quality", "lossless", "embed_metadata", "watermark"))
     if unknown:
         raise PresentationError(
             f"Unknown output settings: {', '.join(unknown)}.")
@@ -1302,7 +1302,52 @@ def _validated_output(value: Any) -> Any:
     from .contracts import OutputSettings
 
     return OutputSettings(format=fmt, quality=quality, lossless=lossless,
-                          embed_metadata=embed_metadata)
+                          embed_metadata=embed_metadata,
+                          watermark=_validated_watermark(value.get("watermark")))
+
+
+def _validated_watermark(value: Any) -> Any:
+    """P11. The generation-time watermark group, or None.
+
+    The Extension's fields and defaults (`studio_api.py:1134-1140`). A bare
+    file name only -- a separator is refused here, before the writer's own
+    guard ever sees it. Out-of-range numbers are refused rather than clamped,
+    as every other group here does.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise PresentationError("output watermark must be a JSON object.")
+    unknown = sorted(str(k) for k in value if k not in
+                     ("name", "position", "opacity", "scale", "margin", "rotation"))
+    if unknown:
+        raise PresentationError(f"Unknown watermark settings: {', '.join(unknown)}.")
+    name = value.get("name")
+    if not isinstance(name, str) or not name.strip() or "/" in name or "\\" in name:
+        raise PresentationError("watermark name must be a file name in the watermarks folder.")
+    from forge_headless.watermark import POSITIONS
+
+    position = value.get("position", "bottom-right")
+    if position not in POSITIONS:
+        raise PresentationError(f"watermark position must be one of {', '.join(POSITIONS)}.")
+
+    def number(key: str, default: float, low: float, high: float, *, whole: bool = False):
+        raw = value.get(key, default)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or (whole and not isinstance(raw, int)):
+            raise PresentationError(f"watermark {key} must be a number.")
+        if not low <= raw <= high:
+            raise PresentationError(f"watermark {key} must be between {low:g} and {high:g}.")
+        return int(raw) if whole else float(raw)
+
+    from .contracts import WatermarkSettings
+
+    return WatermarkSettings(
+        name=name.strip(), position=position,
+        opacity=number("opacity", 1.0, 0.0, 1.0),
+        scale=number("scale", 0.15, 0.0, 1.0),
+        margin=number("margin", 16, 0, 10_000, whole=True),
+        rotation=number("rotation", 0.0, -360.0, 360.0))
 
 
 def _validated_hires(value: Any) -> Any:
@@ -2002,6 +2047,55 @@ class StudioPresentation:
     def read_result_asset(self, handle: str) -> Any:
         return self._application.read_result_asset(handle)
 
+    def session_thumbnail(self, entry_id: Any, size: Any) -> tuple[bytes, str] | None:
+        """P10. The session strip's thumbnail for one result, by entry id.
+
+        `app.js` asks `/studio/session_thumb?id=<entry_id>&size=256` for every
+        entry carrying a server id, and Standalone's results carry the job id
+        as `entry_id`, so every one of those requests failed. The Extension
+        (`studio_api.py:3482-3503`) answers by registered id only -- never a
+        path -- with a WebP thumbnail, size clamped to 64..640, and the
+        original bytes when a thumbnail cannot be made. Same here, through the
+        job's opaque result handle.
+        """
+
+        import io
+
+        entry = str(entry_id or "").strip()
+        if not entry:
+            return None
+        handle = getattr(self.result_asset(entry), "handle", None)
+        if not handle:
+            return None
+        try:
+            payload = self.read_result_asset(handle)
+        except Exception as exc:  # noqa: BLE001 - an owned refusal is "none"
+            if getattr(exc, "error", None) is None:
+                raise
+            return None
+        try:
+            side = max(64, min(640, int(size)))
+        except (TypeError, ValueError):
+            side = 256
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(payload.content)) as image:
+                image.thumbnail((side, side))
+                subject = image if image.mode in ("RGB", "RGBA") else image.convert("RGBA")
+                buffer = io.BytesIO()
+                subject.save(buffer, format="WEBP", quality=85)
+            return buffer.getvalue(), "image/webp"
+        except Exception:  # noqa: BLE001 - the original, as the Extension
+            return payload.content, payload.media_type
+
+    def register_saved_file(self, path: Any, *, media_type: str) -> Any:
+        """P3. See `StudioApplication.register_saved_file`; None when the
+        application has no such capability."""
+
+        register = getattr(self._application, "register_saved_file", None)
+        return register(path, media_type=media_type) if callable(register) else None
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         """One cancel verb. Coordinator ids cover queued AND running jobs;
         backend ids keep the pre-existing behaviour for hosts without a
@@ -2044,8 +2138,13 @@ class _StudioHTTPServer(ThreadingHTTPServer):
         defaults: Any = None,
         state_root: Any = None,
         result_root: Any = None,
+        updater: Any = None,
     ) -> None:
         from forge_studio.source_api_adapter import SourceFrontendAdapter
+
+        #: U1. Check for Updates, for the launcher's own Git checkout. Absent on
+        #: every other host, which keeps the adapter's "unavailable" answers.
+        self.updater = updater
 
         self.presentation = presentation
         # Optional: hosts that do not configure model roots simply do not expose
@@ -2071,7 +2170,18 @@ class _StudioHTTPServer(ThreadingHTTPServer):
         # opens no database and reads no disk -- the store opens on the first
         # request that needs it.
         self.gallery_service = None
+        #: P1. Studio's output folder, where Save and Save to Gallery write.
+        #: None on a host that owns no output folder; the route then refuses.
+        self.result_root = result_root
+        #: P9. Where durable owner data lives (Develop presets); None on a
+        #: host without one.
+        self.state_root = state_root
         if state_root:
+            # P11. The generation writer has no state root of its own; the
+            # legacy "generation" watermark resolves its file here.
+            from forge_headless.watermark import set_watermark_folder
+
+            set_watermark_folder(Path(state_root) / "watermarks")
             from forge_studio.gallery_service import GalleryService
 
             # The result root travels with it so the Gallery can adopt
@@ -2092,6 +2202,13 @@ class _StudioHTTPServer(ThreadingHTTPServer):
             defaults=defaults,
             gallery=self.gallery_service,
         )
+        #: W1. Workshop needs the model roots to read and write models; a host
+        #: without them answers 404, so the tab's probe keeps it hidden.
+        self.workshop_service = None
+        if registry is not None:
+            from forge_studio.workshop_service import WorkshopService
+
+            self.workshop_service = WorkshopService(registry, state_root)
         super().__init__(server_address, _StudioRequestHandler)
 
     def server_close(self) -> None:
@@ -2653,6 +2770,140 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(pixels.rgba)
 
+    def _open_watermarks_folder(self) -> dict[str, Any]:
+        """P11. The Extension opens the folder so the owner can drop images in,
+        and on a host with no file manager answers `unavailable` WITH the path
+        so the page can show where to put them (`studio_api.py:5677-5699`).
+        The open goes through `NativeActions.reveal`, the vetted spawn."""
+
+        from forge_headless.contracts import HeadlessError
+        from forge_studio.watermarks import watermarks_dir
+
+        folder = watermarks_dir(getattr(self.server, "state_root", None))
+        if folder is None:
+            return {"ok": False, "error": "Studio has no state folder for watermarks."}
+        adapter = getattr(self.server, "source_adapter", None)
+        actions = getattr(adapter, "_native_actions", None)
+        if actions is None:
+            from forge_studio.native_actions import NativeActions
+
+            actions = NativeActions()
+            if adapter is not None:
+                adapter._native_actions = actions
+        try:
+            actions.reveal(folder)
+        except HeadlessError as error:
+            return {"ok": False, "unavailable": True, "path": str(folder),
+                    "error": getattr(error, "message", str(error))}
+        return {"ok": True}
+
+    def _save_output_image(self) -> None:
+        """P1: Save and Save to Gallery. The logic is `output_save.py`.
+
+        The STRICT origin check, as the Extension's CSRF guard on this route:
+        it writes files, and `dest_dir` names a folder. Bounded like the other
+        image-carrying routes. A save tells the Gallery, as a generation does,
+        so Save to Gallery shows up there.
+        """
+
+        from forge_studio.output_save import (
+            SaveRefusal,
+            configured_save_roots,
+            save_output_image,
+        )
+
+        if not self._is_allowed_origin_strict():
+            self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden"})
+            return
+        payload = self._read_json_bounded(maximum_bytes=_MAX_PIXEL_REQUEST_BYTES)
+        gallery = self._gallery
+        roots: list[Any] = list(configured_save_roots())
+        if gallery is not None:
+            roots.extend(gallery.linked_folder_paths())
+        try:
+            saved = save_output_image(
+                payload,
+                result_root=getattr(self.server, "result_root", None),
+                extra_roots=roots,
+            )
+        except SaveRefusal as refusal:
+            self._send_json(HTTPStatus(refusal.status),
+                            {"ok": False, "error": refusal.message})
+            return
+        if gallery is not None:
+            gallery.note_generation()
+        reply: dict[str, Any] = {"ok": True, "filename": saved.filename}
+        # P3. Canvas Export opens what it saved. The Extension sent an absolute
+        # path for `/file=`; Standalone sends a handle, and only for a file in
+        # its own result root -- a linked folder outside it has nothing to open.
+        asset = self._presentation.register_saved_file(
+            saved.path, media_type=saved.media_type)
+        handle = getattr(asset, "handle", None)
+        if handle:
+            reply["url"] = "/studio/file?path=" + quote(str(handle), safe="")
+        self._send_json(HTTPStatus.OK, reply)
+
+    def _workshop_route(self, method: str, path: str) -> None:
+        """W1: everything under `/studio/workshop/`. The logic is
+        `workshop_service.py`. Writes take the strict origin check, as Save
+        does; a sample image may be several MiB, a chain's board a little
+        more than the default body."""
+
+        from forge_studio.workshop_service import WorkshopRefusal
+
+        service = getattr(self.server, "workshop_service", None)
+        if service is None:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Workshop is unavailable."})
+            return
+        try:
+            if method == "GET":
+                prefix = "/studio/workshop/journal/image/"
+                if path.startswith(prefix):
+                    found = service.journal_image(unquote(path[len(prefix):]))
+                    if found is None:
+                        self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                    else:
+                        self._send_result_bytes(found[1], found[0])
+                    return
+                status, payload = service.handle_get(path, parse_qs(urlsplit(self.path).query))
+            else:
+                if not self._is_allowed_origin_strict():
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                    return
+                limit = (_MAX_PIXEL_REQUEST_BYTES if path.endswith("/journal/image")
+                         else 4 * 1024 * 1024)
+                body = (self._read_json_bounded(maximum_bytes=limit)
+                        if int(self.headers.get("Content-Length") or 0) else {})
+                status, payload = service.handle_post(path, body)
+        except WorkshopRefusal as refusal:
+            self._send_json(HTTPStatus(refusal.status), {"error": refusal.message})
+            return
+        except PresentationError:
+            raise
+        except Exception as error:  # noqa: BLE001 - a bad file is the owner's to see
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR,
+                            {"error": service._scrub(str(error) or type(error).__name__)})
+            return
+        self._send_json(HTTPStatus(status), payload)
+
+    def _export_exr(self) -> None:
+        """P12: Export EXR (Standard). The logic is `exr_export.py`; guarded
+        and bounded as Save is, because it writes a file."""
+
+        from forge_studio.exr_export import export_exr
+        from forge_studio.output_save import SaveRefusal
+
+        if not self._is_allowed_origin_strict():
+            self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden"})
+            return
+        payload = self._read_json_bounded(maximum_bytes=_MAX_PIXEL_REQUEST_BYTES)
+        try:
+            saved = export_exr(payload, result_root=getattr(self.server, "result_root", None))
+        except SaveRefusal as refusal:
+            self._send_json(HTTPStatus(refusal.status), {"ok": False, "error": refusal.message})
+            return
+        self._send_json(HTTPStatus.OK, {"ok": True, "filename": saved.filename})
+
     def _pixel_route(self, path: str) -> None:
         """Decode to sRGB RGBA on the server, from a HANDLE or from bytes.
 
@@ -3193,6 +3444,17 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             # same reason: thumbnails and full images are bytes.
             if self._serve_gallery("GET"):
                 return
+            # W1. Workshop, before the catch-all; its sample images are bytes.
+            if path.startswith("/studio/workshop/"):
+                self._workshop_route("GET", path)
+                return
+            # U1. Check for Updates. Without an updater the adapter answers.
+            updater = getattr(self.server, "updater", None)
+            if updater is not None and path in ("/studio/api/check-update",
+                                                "/studio/api/update-status"):
+                self._send_json(HTTPStatus.OK, updater.check() if path.endswith("check-update")
+                                else updater.status())
+                return
             if path == "/studio/settings/model_roots":
                 settings = self._settings
                 if settings is None:
@@ -3238,6 +3500,61 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                         getattr(self._settings, "registry", None)
                     ),
                 )
+                return
+            # P3. The sRGB profile the PSD exporter embeds -- the same bytes
+            # every saved PNG/JPEG/WebP carries (`studio_api.py:3679-3686`).
+            if path == "/studio/srgb-icc":
+                from forge_headless.live_generation_port import _srgb_icc_bytes
+
+                profile = _srgb_icc_bytes()
+                if not profile:
+                    self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                    {"error": "sRGB profile unavailable"})
+                    return
+                self._send_result_bytes("application/vnd.iccprofile", profile)
+                return
+            # P11. The watermark library for Settings' dropdown.
+            if path == "/studio/watermarks":
+                from forge_studio.watermarks import list_watermarks
+
+                self._send_json(HTTPStatus.OK,
+                                list_watermarks(getattr(self.server, "state_root", None)))
+                return
+            # P10. Session-strip thumbnails, by entry id -- never a path.
+            if path == "/studio/session_thumb":
+                query = parse_qs(urlsplit(self.path).query)
+                found = self._presentation.session_thumbnail(
+                    (query.get("id") or [""])[0], (query.get("size") or ["256"])[0])
+                if found is None:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+                    return
+                self._send_result_bytes(found[1], found[0])
+                return
+            # P9. Develop's presets, from the state root.
+            if path == "/studio/develop/presets":
+                from forge_studio.develop_presets import list_presets
+
+                self._send_json(HTTPStatus.OK,
+                                list_presets(getattr(self.server, "state_root", None)))
+                return
+            # P4. A model's preview image, by catalogue id -- never a path.
+            # P6. A Civitai-cached LoRA preview, by LoRA name.
+            if path in ("/studio/model_preview", "/studio/civitai_preview"):
+                from forge_studio.civitai_lookup import read_cached_preview
+                from forge_studio.model_browser import read_preview
+
+                query = parse_qs(urlsplit(self.path).query)
+                registry = getattr(
+                    getattr(self.server, "model_root_settings", None), "registry", None)
+                if path == "/studio/civitai_preview":
+                    found = read_cached_preview(registry, (query.get("name") or [""])[0])
+                else:
+                    found = read_preview(registry, (query.get("role") or [""])[0],
+                                         (query.get("id") or [""])[0])
+                if found is None:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "No preview."})
+                    return
+                self._send_result_bytes(found[1], found[0])
                 return
             parts = [part for part in path.split("/") if part]
             if len(parts) == 3 and parts[:2] == ["api", "jobs"]:
@@ -3458,6 +3775,60 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                 "/studio/sample_image_pixels",
             ):
                 self._pixel_route(path)
+                return
+            # P1. Save / Save to Gallery. Above the catch-all for the same
+            # reason as the two routes above.
+            if path == "/studio/save_image":
+                self._save_output_image()
+                return
+            # P12. Export EXR (Standard).
+            if path == "/studio/export/exr":
+                self._export_exr()
+                return
+            # W1. Workshop.
+            if path.startswith("/studio/workshop/"):
+                self._workshop_route("POST", path)
+                return
+            # U1. Update Now: it rewrites Studio's own files, so strict origin.
+            if path == "/studio/api/update" and getattr(self.server, "updater", None) is not None:
+                if not self._is_allowed_origin_strict():
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden"})
+                    return
+                self._read_json_optional()
+                self._send_json(HTTPStatus.OK, self.server.updater.apply())
+                return
+            # P11. Export-time watermark stamp, and the folder button.
+            if path == "/studio/export_watermark":
+                from forge_studio.watermarks import stamp_export
+
+                payload = self._read_json_bounded(maximum_bytes=_MAX_PIXEL_REQUEST_BYTES)
+                try:
+                    reply = stamp_export(payload, getattr(self.server, "state_root", None))
+                except ValueError as refusal:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(refusal)})
+                    return
+                except Exception:  # noqa: BLE001 - the page exports unstamped
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR,
+                                    {"ok": False, "error": "The watermark could not be applied."})
+                    return
+                self._send_json(HTTPStatus.OK, reply)
+                return
+            if path == "/studio/watermarks/open_folder":
+                self._read_json_optional()
+                self._send_json(HTTPStatus.OK, self._open_watermarks_folder())
+                return
+            # P9. Develop's presets, kept in the state root.
+            if path == "/studio/develop/presets":
+                from forge_studio.develop_presets import PresetRefusal, save_preset
+
+                try:
+                    reply = save_preset(getattr(self.server, "state_root", None),
+                                        self._read_json())
+                except PresetRefusal as refusal:
+                    self._send_json(HTTPStatus(refusal.status),
+                                    {"ok": False, "error": refusal.message})
+                    return
+                self._send_json(HTTPStatus.OK, reply)
                 return
             if path == "/api/assets":
                 # Same bound as generate: this route exists to carry exactly
@@ -3859,7 +4230,11 @@ def run_loopback_ui(port: int = _DEFAULT_PORT) -> int:
     presentation = _create_mock_presentation()
     server: _StudioHTTPServer | None = None
     try:
-        server = _StudioHTTPServer((_LOOPBACK_HOST, port), presentation)
+        # P1: the folder `_create_mock_presentation` writes its results to, so
+        # Save writes beside them rather than refusing for want of one.
+        server = _StudioHTTPServer(
+            (_LOOPBACK_HOST, port), presentation,
+            result_root=_EVIDENCE_DIRECTORY / "results")
         actual_port = int(server.server_address[1])
         print(
             f"Forge Studio Alpha S0.7: "

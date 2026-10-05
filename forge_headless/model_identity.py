@@ -59,10 +59,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-#: Privacy-safe stand-in for the checkpoint name. Deliberately not derived from
-#: the model filename or path: this string reaches infotext and, on paths this
-#: milestone does not use, filename patterns.
+#: Stand-in for the checkpoint name when the loader was given no checkpoint
+#: reference. MI1 (2026-10-03): this used to be the label for EVERY load, so
+#: every image's metadata read `Model: studio-tier0-session` where Neo and the
+#: Extension write the checkpoint's name. The loader now passes
+#: `checkpoint_label(...)`; this remains the fallback.
 DEFAULT_RUNTIME_LABEL = "studio-tier0-session"
+
+
+def checkpoint_label(reference: object) -> str:
+    """The name Neo writes as `Model:` for a checkpoint file.
+
+    Neo's own derivation, `CheckpointInfo.name_for_extra` at
+    `modules/sd_models.py:73`: the file name without its folder or extension.
+    Only the basename, so no folder -- and no user directory -- reaches
+    metadata, which keeps the reason the placeholder existed while giving the
+    owner the name the Extension shows. Separators of either kind are handled,
+    so a Windows reference resolves the same on any host.
+
+    String operations only, with `os.path.splitext`'s semantics (the last dot,
+    and a leading dot is not an extension): this module is pinned to import
+    nothing that could touch a file.
+    """
+
+    name = str(reference or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+    dot = name.rfind(".")
+    stem = (name[:dot] if dot > 0 else name).strip()
+    return stem or DEFAULT_RUNTIME_LABEL
 
 #: Every identity field the Tier-0 closure reads, in `<object>.<field>` form.
 #: `tests/studio_alpha/test_tier0_model_identity.py` pins this against current

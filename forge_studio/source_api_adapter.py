@@ -379,6 +379,84 @@ class SourceFrontendAdapter:
             return None
         return str(job_id).strip() or None if job_id else None
 
+    def _civitai(self, route: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """P6. The Extension's four `/studio/civitai/*` routes
+        (`studio_civitai.py:656-797`)."""
+
+        from . import civitai_lookup as civitai
+
+        registry = self._model_roots
+        name = str(body.get("name") or "")
+        if route == "/studio/civitai/fetch":
+            result = civitai.refresh_one(registry, name)
+            if not result.get("ok"):
+                raise SourceFrontendAdapterError(str(result.get("error")), http_status=400)
+            return result
+        if route == "/studio/civitai/fetch_batch":
+            result = civitai.fetch_batch(registry, dict(body))
+            if not result.get("ok"):
+                raise SourceFrontendAdapterError(str(result.get("error")), http_status=400)
+            return result
+        if route in ("/studio/civitai/clear_cache", "/studio/civitai/private"):
+            found = civitai.locate(registry, name)
+            if found is None:
+                raise SourceFrontendAdapterError("LoRA file not found", http_status=400)
+            path, root = found
+            try:
+                sha = civitai.get_or_compute_hash(root, path)
+            except OSError as error:
+                raise SourceFrontendAdapterError(f"Hash failed: {error}",
+                                                 http_status=500) from None
+            if route == "/studio/civitai/clear_cache":
+                return {"ok": True, "removed": civitai.clear_cache(root, sha)}
+            entry = civitai.set_private_flag(root, sha, bool(body.get("private", True)))
+            return {"ok": True, "private": bool(entry.get("private"))}
+        raise SourceFrontendRouteError("POST", route)
+
+    def _open_lora_folder(self) -> dict[str, Any]:
+        """P5. The Extension opens the LoRA folder in the file manager
+        (`studio_api.py:5236-5258`). Standalone opens the FIRST configured
+        LoRA root through `NativeActions.reveal` -- the vetted, rate-limited
+        spawn the Gallery's "open in Explorer" uses -- and never echoes the
+        path."""
+
+        from forge_headless.contracts import HeadlessError
+        from forge_headless.lora_catalogue import configured_roots
+
+        roots = configured_roots(self._model_roots) if self._model_roots is not None else ()
+        if not roots:
+            raise SourceFrontendAdapterError("LoRA directory not found", http_status=404)
+        actions = getattr(self, "_native_actions", None)
+        if actions is None:
+            from .native_actions import NativeActions
+
+            actions = self._native_actions = NativeActions()
+        try:
+            actions.reveal(Path(roots[0]))
+        except HeadlessError as error:
+            raise SourceFrontendAdapterError(str(error), http_status=409) from None
+        return {"ok": True}
+
+    def _confirm_vae_selection(self, payload: Any) -> dict[str, Any]:
+        """P2. The requested VAE, checked against `/studio/vaes`, echoed back.
+
+        Accepts the ids that route offers ("Automatic" plus the configured VAE
+        catalogue) and the Extension's "None" sentinel. Anything else is a
+        400 the page shows, never an invented success.
+        """
+
+        name = str((payload or {}).get("name") or "Automatic").strip()
+        known = {"Automatic", "None"}
+        for entry in self._role_payload("vae") or []:
+            for key in ("model_id", "name"):
+                value = entry.get(key) if isinstance(entry, dict) else None
+                if value:
+                    known.add(str(value))
+        if name not in known:
+            raise SourceFrontendRequestError(
+                "That VAE is not in the configured VAE folder.")
+        return {"ok": True, "loaded": name, "applies": "next_generation"}
+
     def get(self, path: str) -> Any:
         """Return a canonical GET payload for ``path``."""
 
@@ -391,6 +469,21 @@ class SourceFrontendAdapter:
             if catalogued is not None:
                 return catalogued
             return [model.source_payload() for model in self._models()]
+        # P4. The Checkpoint browser's cards, by catalogue id. See
+        # `model_browser.py`.
+        if route == "/studio/checkpoints":
+            from .model_browser import checkpoint_listing
+
+            if self._model_roots is not None:
+                return checkpoint_listing(self._model_roots)
+            # No catalogue (the mock host): the dropdown's own list, so the
+            # browser shows exactly what the dropdown does. An empty `stem`
+            # disables preview edits in the browser -- there is no file.
+            # `title`, because that is what this list's dropdown holds
+            # (`source_payload` has no model_id, so app.js falls to title).
+            return [{"title": m.title, "name": m.name, "hash": None, "stem": "",
+                     "subfolder": "", "size": 0, "mtime": 0, "preview": None,
+                     "base_model": "", "arch": ""} for m in self._models()]
         if route == "/studio/current_model":
             return self.current_model()
         if route == "/studio/model_status":
@@ -506,9 +599,16 @@ class SourceFrontendAdapter:
             if registry is None:
                 return []
             try:
-                return [entry.to_dict() for entry in available_loras(registry)]
+                names = [entry.to_dict() for entry in available_loras(registry)]
             except Exception:  # noqa: BLE001 - a UI list is never fatal
                 return []
+            # P5. The browser's folders, sizes, previews, trigger words, weight
+            # and base model, as the Extension lists them -- still no path.
+            from .civitai_lookup import enrich_cards
+            from .model_browser import lora_listing
+
+            # P6: cached Civitai data only -- never a network call here.
+            return enrich_cards(registry, lora_listing(registry, names))
         if route in {
             "/studio/embeddings",
             "/studio/extensions",
@@ -588,6 +688,10 @@ class SourceFrontendAdapter:
         if route == "/studio/lexicon/file":
             with _editor_refusals():
                 return self._editor().read(_first_query_value(query, "path") or "")
+        # P7. Content search, as the Extension's route.
+        if route == "/studio/lexicon/search_content":
+            with _editor_refusals():
+                return self._editor().search_content(_first_query_value(query, "q") or "")
         if route == "/studio/wildcard_content":
             return self._wildcards.content(_first_query_value(query, "name") or "")
         if route == "/studio/api/check-update":
@@ -675,19 +779,66 @@ class SourceFrontendAdapter:
         if route == "/studio/unload_model":
             self._presentation.unload_model()
             return {"ok": True, "unloaded": True}
-        # NO /studio/load_vae stub. It answered {"ok": True, "loaded":
-        # "Automatic"} without ever reading the requested `name` or touching a
-        # backend. The caller's guard is correct -- app.js:5506 checks
-        # `r.ok && data.ok` -- so the route lied to a caller that was asking
-        # honestly: it toasted "VAE: Automatic" over whatever the owner picked,
-        # and then `rememberVAE` persisted that pick as backend-confirmed.
+        # P2. /studio/load_vae CONFIRMS A SELECTION; it loads nothing.
         #
-        # Falling through to the 404 lets the existing else-branch at
-        # app.js:5519-5521 fire, which toasts `toast.vae.loadFailed`. The real
-        # VAE selection is unaffected: it travels as
-        # `model_selection.vae_model_id` on the canonical request and is applied
-        # at load. This route was a second, out-of-band mutation of resident
-        # state, which is the thing "one canonical request" forbids.
+        # R1 removed a stub that answered {"ok": True, "loaded": "Automatic"}
+        # without reading `name` -- it toasted "VAE: Automatic" over whatever
+        # the owner picked. The 404 that replaced it was honest about the
+        # stub and wrong about the product: every VAE change toasted "VAE load
+        # failed" although the pick DOES apply, as `model_selection.vae_model_id`
+        # on the next Generate.
+        #
+        # The Extension answers exactly this when no model is resident: it
+        # records the preference and returns {"ok": True, "loaded": name}
+        # (`studio_api.py:4683-4685`), deferring to the next load. Standalone
+        # always defers -- Generate owns loading -- so this route checks the
+        # name against the list the dropdown was filled from and echoes it.
+        # Still no out-of-band mutation of resident state.
+        if route == "/studio/load_vae":
+            return self._confirm_vae_selection(payload)
+        # P5. The LoRA browser's edits. `name` is the engine's LoRA name.
+        if route in ("/studio/lora_preview", "/studio/lora_metadata"):
+            from .model_browser import (
+                BrowserRefusal,
+                lora_model_id,
+                save_lora_metadata,
+                save_preview,
+            )
+
+            body = payload if isinstance(payload, Mapping) else {}
+            try:
+                if route == "/studio/lora_metadata":
+                    save_lora_metadata(self._model_roots, dict(body))
+                else:
+                    name = str(body.get("name") or "")
+                    model_id = lora_model_id(self._model_roots, name)
+                    if not model_id and name and body.get("image_b64"):
+                        raise BrowserRefusal(f"LoRA not found: {name}", 404)
+                    save_preview(self._model_roots, "lora", model_id or "",
+                                 body.get("image_b64"))
+            except BrowserRefusal as refusal:
+                raise SourceFrontendAdapterError(
+                    refusal.message, http_status=refusal.status) from None
+            return {"ok": True}
+        if route == "/studio/open_lora_folder":
+            return self._open_lora_folder()
+        # P6. Civitai lookup -- opt-in; the page only calls these once the
+        # owner enables it. See `civitai_lookup.py`.
+        if route.startswith("/studio/civitai/"):
+            return self._civitai(route, payload if isinstance(payload, Mapping) else {})
+        # P4. "Set preview from file" / "Use last output": `name` is the
+        # browser's `stem`, which is the catalogue id.
+        if route == "/studio/checkpoint_preview":
+            from .model_browser import BrowserRefusal, save_preview
+
+            body = payload if isinstance(payload, Mapping) else {}
+            try:
+                save_preview(self._model_roots, "checkpoint",
+                             str(body.get("name") or ""), body.get("image_b64"))
+            except BrowserRefusal as refusal:
+                raise SourceFrontendAdapterError(
+                    refusal.message, http_status=refusal.status) from None
+            return {"ok": True}
         if route == "/studio/auto_unload":
             data = _mapping(payload)
             return {
@@ -753,6 +904,12 @@ class SourceFrontendAdapter:
                 if route == "/studio/lexicon/file/rename":
                     return editor.rename(str(body.get("path") or ""),
                                          str(body.get("new_name") or ""))
+                # P7. Duplicate and move, as the Extension's routes.
+                if route == "/studio/lexicon/file/duplicate":
+                    return editor.duplicate(str(body.get("path") or ""))
+                if route == "/studio/lexicon/file/move":
+                    return editor.move(str(body.get("path") or ""),
+                                       str(body.get("dest") or ""))
         if route == "/studio/wildcard_preview":
             return self._wildcards.preview(payload)
         if route in {
@@ -787,6 +944,31 @@ class SourceFrontendAdapter:
             with _preference_refusals():
                 self._preferences.clear()
             return {"ok": True}
+        # P5. The LoRA browser's "Remove preview", by LoRA name.
+        if route == "/studio/lora_preview":
+            from .model_browser import BrowserRefusal, delete_previews, lora_model_id
+
+            name = str(_first_query_value(_query, "name") or "")
+            model_id = lora_model_id(self._model_roots, name)
+            if name and not model_id:
+                raise SourceFrontendAdapterError(f"LoRA not found: {name}", http_status=404)
+            try:
+                removed = delete_previews(self._model_roots, "lora", model_id or "")
+            except BrowserRefusal as refusal:
+                raise SourceFrontendAdapterError(
+                    refusal.message, http_status=refusal.status) from None
+            return {"ok": removed}
+        # P4. "Remove preview": the `.preview.*` sidecars only.
+        if route == "/studio/checkpoint_preview":
+            from .model_browser import BrowserRefusal, delete_previews
+
+            try:
+                removed = delete_previews(self._model_roots, "checkpoint",
+                                          str(_first_query_value(_query, "name") or ""))
+            except BrowserRefusal as refusal:
+                raise SourceFrontendAdapterError(
+                    refusal.message, http_status=refusal.status) from None
+            return {"ok": removed}
         if route == "/studio/lexicon/file":
             with _editor_refusals():
                 return self._editor().delete(

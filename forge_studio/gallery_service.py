@@ -386,6 +386,23 @@ class GalleryService:
             return False
         return True
 
+    def linked_folder_paths(self) -> list[str]:
+        """The linked folders' locations, for server-side checks only.
+
+        P1: Save to Gallery may write into a folder the owner linked here, as
+        the Extension's `_safe_write_roots` allows. Never sent to a browser --
+        `_scan_folders_for_browser` is the projection that is. Never raises: a
+        Gallery that cannot open its index simply contributes no folders.
+        """
+
+        try:
+            if not self.capability().available:
+                return []
+            return [str(row["path"]) for row in GalleryScanner(self.store()).folders()
+                    if row.get("path")]
+        except Exception:  # noqa: BLE001 - see the docstring
+            return []
+
     def note_generation(self) -> None:
         """Studio just made a picture. Look for it, once the batch settles.
 
@@ -547,6 +564,13 @@ class GalleryService:
     def _get(self, route: str, query: dict[str, str]) -> Reply:
         if route == "/capability":
             return Reply(payload=self.capability().to_dict())
+        if route == "/folio":
+            # F1. Whether this machine has Folio at all, so the page offers
+            # Send to Folio only where it can mean something. One directory
+            # check: no network, nothing read.
+            from . import folio_bridge
+
+            return Reply(payload={"available": folio_bridge.installed()})
         if route == "/stats":
             return Reply(payload=gallery_query.statistics(self.store()))
         if route == "/scan-folders":
@@ -575,6 +599,12 @@ class GalleryService:
         parts = [part for part in route.split("/") if part]
         if parts[:1] == ["similar"] and len(parts) == 2:
             return self._similar(parts[1], query)
+        # P8. The Canvas -> Gallery detail bridge (`gallery.js` `_resolveByHash`;
+        # Extension `studio_gallery.py:3171-3201`): the listing's row shape, by
+        # content hash. `image_by_hash` existed and nothing routed to it.
+        if parts[:1] == ["by-hash"] and len(parts) == 2:
+            found = gallery_query.image_by_hash(self.store(), parts[1])
+            return Reply(payload=found) if found else _not_found()
         if parts[:1] == ["image"] and len(parts) >= 2:
             return self._image_route(parts)
         if parts[:1] == ["thumb"] and len(parts) == 2:
@@ -905,6 +935,11 @@ class GalleryService:
         if route == "/bulk-restore":
             return self._over(payload.get("trash_ids") or [],
                               gallery_actions.restore)
+        # F1. Dispatched by its full route, ahead of the other bulk actions,
+        # because it reaches another program: the route-coverage suite lists
+        # it among the side effects and checks this line rather than calling it.
+        if route == "/images/send-to-folio":
+            return self._send_to_folio(payload)
         if route.startswith("/images/"):
             return self._bulk(route[len("/images/"):], payload)
 
@@ -984,6 +1019,38 @@ class GalleryService:
             reason = getattr(error, "message", None) or str(error)
             return _refusal(reason or "That could not be opened.")
         return Reply(payload={"ok": True})
+
+    def _send_to_folio(self, payload: dict[str, Any]) -> Reply:
+        """F1: the selected images' original files, to Folio, in order.
+
+        Row ids only, as every Gallery action: the paths come from the index.
+        Each outcome is reported, as `_over` does; `folio_bridge` owns the
+        hand-off itself.
+        """
+
+        from . import folio_bridge
+
+        identifiers = payload.get("ids")
+        if not isinstance(identifiers, list) or not identifiers:
+            return _refusal("Choose at least one image to send.",
+                            int(HTTPStatus.BAD_REQUEST))
+        targets: list[tuple[Any, Path, str]] = []
+        unresolved: list[dict[str, Any]] = []
+        for item in identifiers:
+            try:
+                target = gallery_actions._target(self.store(), int(item))
+                targets.append((item, target.path, target.filename))
+            except gallery_actions.ActionRefused as error:
+                unresolved.append({"id": item, "error": str(error)})
+            except (TypeError, ValueError):
+                unresolved.append({"id": item, "error": "That is not an image."})
+        result = folio_bridge.send_images(targets) if targets else {
+            "ok": True, "sent": 0, "failed": 0, "failures": []}
+        if unresolved:
+            result["failures"] = unresolved + result["failures"]
+            result["failed"] += len(unresolved)
+            result["ok"] = False
+        return Reply(payload=result)
 
     # -- many at once ------------------------------------------------------
 

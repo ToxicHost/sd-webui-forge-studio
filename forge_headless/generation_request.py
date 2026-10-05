@@ -203,6 +203,23 @@ class OutputOptions:
     #: default -- see the note on Studio's `OutputSettings`, which is where the
     #: reasoning lives; repeating it here would let the two drift.
     embed_metadata: bool = True
+    #: P11. The legacy "generation" watermark mode, or None (the default).
+    watermark: "WatermarkOptions | None" = None
+
+
+@dataclass(frozen=True)
+class WatermarkOptions:
+    """P11. A watermark composited onto the result before it is written.
+
+    `name` is a bare file in the state root's `watermarks/`; the port resolves
+    it through `forge_headless.watermark`, which owns the guard."""
+
+    name: str
+    position: str = "bottom-right"
+    opacity: float = 1.0
+    scale: float = 0.15
+    margin: int = 16
+    rotation: float = 0.0
 
 
 @dataclass(frozen=True)

@@ -45,6 +45,11 @@ git pull --ff-only
 .\Start-Studio.bat
 ```
 
+From the 2026-10-05 update on, Settings > About > Check for Updates does the same
+thing from inside Studio: it lists what is new, fast-forwards the checkout, and asks
+you to close Studio and run Start-Studio.bat again. It refuses, and says why, if
+Studio's own files have been edited or the checkout has commits of its own.
+
 Git transfers source changes, not the venv or model weights. If Git reports local
 source edits or diverged history, resolve that explicitly; do not discard changes
 with reset/clean commands. Normal updates do not require deleting the venv.

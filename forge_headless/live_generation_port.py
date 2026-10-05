@@ -218,15 +218,109 @@ def _srgb_icc_bytes() -> bytes:
 
     if _SRGB_ICC_CACHE:
         return _SRGB_ICC_CACHE[0]
+    # P3. THE EXTENSION'S v2.1 PROFILE, not LittleCMS's runtime one. The
+    # Extension moved off `createProfile("sRGB")` because lcms2 stamps its own
+    # spec version (4.4 on recent builds) with v4-only tag types, which strict
+    # parsers -- certain Photoshop versions and asset tools -- reject as a
+    # broken profile, and a Pillow upgrade silently changed every output's
+    # profile (`studio_api.py:61-173`). Same colorimetry, so no pixel changes;
+    # the same self-check and the same fallback.
+    data = b""
     try:
+        import io as _io
+
         from PIL import ImageCms
 
-        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
-        data = profile.tobytes()
-    except Exception:  # noqa: BLE001 - absence is an outcome, not a failure
-        data = b""
+        built = _build_srgb_v2_profile()
+        ImageCms.ImageCmsProfile(_io.BytesIO(built))
+        data = built
+    except Exception:  # noqa: BLE001 - fall back exactly as the Extension does
+        try:
+            from PIL import ImageCms
+
+            data = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        except Exception:  # noqa: BLE001 - absence is an outcome, not a failure
+            data = b""
     _SRGB_ICC_CACHE.append(data)
     return data
+
+
+def _build_srgb_v2_profile() -> bytes:
+    """The Extension's canonical "sRGB IEC61966-2.1" ICC v2.1 profile, byte
+    for byte (`studio_api.py:82-158`): v2-only tag types (desc/text/XYZ/curv),
+    the classic HP/IEC tag layout, LCMS's fixed-point D50 primaries, and a
+    fixed creation date so the bytes are deterministic."""
+
+    import struct
+
+    def s15f16(v):
+        return int(round(v * 65536.0))
+
+    def xyz_tag(x, y, z):
+        return struct.pack(">4s4x3i", b"XYZ ", s15f16(x), s15f16(y), s15f16(z))
+
+    def desc_tag(text):
+        ascii_bytes = text.encode("ascii") + b"\x00"
+        return (struct.pack(">4s4xI", b"desc", len(ascii_bytes)) + ascii_bytes
+                + struct.pack(">II", 0, 0)
+                + struct.pack(">H", 0)
+                + b"\x00" * 68)
+
+    def text_tag(text):
+        return struct.pack(">4s4x", b"text") + text.encode("ascii") + b"\x00"
+
+    def curv_tag(n=1024):
+        pts = []
+        for i in range(n):
+            x = i / (n - 1)
+            y = x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+            pts.append(min(65535, max(0, round(y * 65535.0))))
+        return struct.pack(">4s4xI%dH" % n, b"curv", n, *pts)
+
+    r = xyz_tag(0.436035, 0.222488, 0.013916)
+    g = xyz_tag(0.385117, 0.716904, 0.097061)
+    b = xyz_tag(0.143051, 0.060608, 0.713913)
+    wtpt = xyz_tag(0.950455, 1.0, 1.089050)
+    desc = desc_tag("sRGB IEC61966-2.1")
+    cprt = text_tag("Public domain, no copyright")
+    trc = curv_tag()
+
+    tags = [(b"desc", desc), (b"cprt", cprt), (b"wtpt", wtpt),
+            (b"rXYZ", r), (b"gXYZ", g), (b"bXYZ", b),
+            (b"rTRC", trc), (b"gTRC", trc), (b"bTRC", trc)]
+
+    offset = 128 + 4 + 12 * len(tags)
+    placed = {}
+    blobs = []
+    entries = []
+    for sig, data in tags:
+        if id(data) not in placed:
+            pad = (4 - offset % 4) % 4
+            offset += pad
+            blobs.append(b"\x00" * pad + data)
+            placed[id(data)] = (offset, len(data))
+            offset += len(data)
+        o, s = placed[id(data)]
+        entries.append(struct.pack(">4sII", sig, o, s))
+
+    body = struct.pack(">I", len(tags)) + b"".join(entries) + b"".join(blobs)
+    header = struct.pack(
+        ">I4sI4s4s4s6H4s4sIIIQI3i I44x",
+        128 + len(body),
+        b"\x00" * 4,
+        0x02100000,
+        b"mntr",
+        b"RGB ",
+        b"XYZ ",
+        2026, 1, 1, 0, 0, 0,
+        b"acsp",
+        b"\x00" * 4,
+        0, 0, 0, 0,
+        0,
+        s15f16(0.9642), s15f16(1.0), s15f16(0.8249),
+        0,
+    )
+    return header + body
 
 
 def _looks_like_out_of_memory(exc: BaseException) -> bool:
@@ -511,6 +605,31 @@ def _hires_kwargs(request: Any) -> dict[str, Any]:
         "hr_cfg": float(getattr(request, "hr_cfg", 0.0) or 0.0),
         "hr_additional_modules": ["Use same choices"],
     }
+
+
+def _stamped(image: Any, request: Any) -> Any:
+    """P11. The legacy "generation" watermark, as the last pixel step.
+
+    The Extension's rule (`studio_generation.py:3061-3066`): skipped after an
+    inpaint, because the unmasked pixels came from the canvas and may already
+    carry the mark from an earlier generation. Never raises -- a missing or
+    unreadable watermark saves the picture unstamped."""
+
+    settings = getattr(getattr(request, "output", None), "watermark", None)
+    if settings is None:
+        return image
+    source = getattr(request, "source", None)
+    if (getattr(source, "mask", None) is not None
+            and getattr(source, "mask_present", False)):
+        return image
+    from .watermark import apply_watermark, configured_folder
+
+    stamped, _ = apply_watermark(image, {
+        "enable": True, "name": settings.name, "position": settings.position,
+        "opacity": settings.opacity, "scale": settings.scale,
+        "margin": settings.margin, "rotation": settings.rotation,
+    }, configured_folder())
+    return stamped
 
 
 def save_result_exclusively(image: Any, target: Path, *,
@@ -1512,9 +1631,11 @@ class StudioLiveGenerationPort:
         infotexts = list(getattr(processed, "infotexts", []) or [])
         infotext = str(infotexts[0]) if infotexts else ""
 
+        image = _stamped(images[0], request)
+
         self._result_root.mkdir(parents=True, exist_ok=True)
         save_result_exclusively(
-            images[0], self._result_root / name,
+            image, self._result_root / name,
             encoder_format=encoder_format,
             save_kwargs={
                 **output_save_kwargs(getattr(request, "output", None),
@@ -1527,7 +1648,7 @@ class StudioLiveGenerationPort:
                                        getattr(request, "output", None)),
             },
         )
-        width, height = images[0].size
+        width, height = image.size
 
         seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))
         progress.mark_completed()  # type: ignore[attr-defined]

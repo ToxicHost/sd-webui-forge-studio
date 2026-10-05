@@ -134,7 +134,7 @@ var ENTRIES = [
   { id: "shift_drag_resize", title: "Shift+Drag Brush Resize", category: "how_studio_works",
     tags: ["shift", "drag", "resize", "brush", "opacity", "krita"],
     shortcut: "Shift+Drag",
-    content: "<p>Hold <span class=\"cx-kbd\">Shift</span> and drag on the canvas: <strong>horizontal movement</strong> adjusts brush size, <strong>vertical movement</strong> adjusts opacity. Krita-style.</p><p>Works for brush, eraser, smudge, blur, dodge, clone, and liquify. Much faster than reaching for the context bar or using bracket keys.</p>",
+    content: "<p>Hold <span class=\"cx-kbd\">Shift</span> and drag on the canvas: <strong>horizontal movement</strong> adjusts brush size, <strong>vertical movement</strong> adjusts opacity. Krita-style.</p><p>Works for brush, mask, eraser, smudge, blur, dodge, clone, and liquify. Much faster than reaching for the context bar or using bracket keys.</p>",
   },
 
   { id: "drag_and_drop", title: "Drag & Drop", category: "how_studio_works",

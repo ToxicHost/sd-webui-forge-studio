@@ -39,6 +39,7 @@ const IC = {
     folder:     _s('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
     folderPlus: _s('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>'),
     explorer:   _s('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
+    folio:      _s('<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'),
     move:       _s('<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="19 9 22 12 19 15"/><polyline points="9 19 12 22 15 19"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>'),
     edit:       _s('<path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>'),
     trash:      _s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
@@ -580,6 +581,37 @@ async function _openFileSafe(id) {
         const r = await api("/image/" + id + "/open-file", { method: "POST" });
         if (r && r.error) toast("Couldn't open file", "warning");
     } catch (_) { toast("Couldn't open file", "warning"); }
+}
+// F1. Send the original files to Folio's Images tray, in selection order.
+// Studio's SERVER does the sending (`folio_bridge.py`): Folio refuses any
+// request that carries a browser Origin, so the page only names row ids.
+// Offered only on a machine that has Folio (its data folder exists). Checked
+// when the Gallery opens or is shown again; a tester without Folio never sees it.
+function _checkFolio() {
+    api("/folio").then(r => { G.folioAvailable = !!(r && r.available); }).catch(() => {});
+}
+function _folioButtonHtml(id) {
+    return '<button class="gal-detail-btn" data-action="send-folio" data-img-id="' + id + '">' + IC.folio + " " + _t("gallery.detail.sendToFolio", "Send to Folio") + '</button>';
+}
+async function sendToFolio(ids) {
+    ids = (ids || []).filter(Number.isFinite);
+    if (!ids.length) return;
+    let r;
+    try {
+        r = await api("/images/send-to-folio", { method: "POST", body: JSON.stringify({ ids }) });
+    } catch (_) {
+        toast(_t("gallery.toast.folioFailed", "Couldn't send to Folio"), "error");
+        return;
+    }
+    const sent = (r && r.sent) || 0;
+    const first = r && r.failures && r.failures[0] && r.failures[0].error;
+    if (r && r.ok) {
+        toast(_t("gallery.toast.folioSent", "Sent {n} to Folio", { n: sent }), "success");
+    } else if (sent) {
+        toast(_t("gallery.toast.folioPartial", "Sent {sent} of {total} to Folio — {reason}", { sent, total: ids.length, reason: first || "" }), "warning");
+    } else {
+        toast((r && r.error) || first || _t("gallery.toast.folioFailed", "Couldn't send to Folio"), "error");
+    }
 }
 async function bulkOpenExplorer() {
     for (const id of Array.from(G.selectedImages)) {
@@ -1177,6 +1209,7 @@ function showGalleryCtx(e, imgId) {
     if (!G.selectedImages.has(imgId)) { G.selectedImages.clear(); G.selectedImages.add(imgId); updateSelectionUI(); }
     const n = G.selectedImages.size; const label = n > 1 ? n + " images" : "image";
     const items = [{ icon: IC.explorer, label: "Open in Explorer", fn: bulkOpenExplorer }];
+    if (G.folioAvailable) items.push({ icon: IC.folio, label: _t("gallery.ctx.sendToFolio", "Send to Folio"), fn: () => sendToFolio(Array.from(G.selectedImages)) });
     if (n === 1 && typeof displayOnCanvas === "function") { items.push({ icon: IC.canvas, label: "Send to Canvas", fn: () => sendToCanvas(imgId) }); items.push({ icon: IC.canvas, label: "Send to Canvas — raw prompt", fn: () => sendToCanvas(imgId, "raw") }); items.push({ icon: IC.canvas, label: "Send to Canvas — resolved prompt", fn: () => sendToCanvas(imgId, "resolved") }); }
     items.push({ icon: IC.move, label: "Move to folder\u2026", fn: showMoveModal });
     items.push(null);
@@ -1988,7 +2021,7 @@ function showDetailOverlay() {
             ? '<button class="gal-detail-btn accent" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button>'
             : '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="' + _t("gallery.detail.choosePromptVersion", "Choose prompt version") + '">▾</button></span>')
         : '';
-    ov.innerHTML ='<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + '<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + sendCanvasHtml + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
+    ov.innerHTML ='<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + (eph || img.is_video || !G.folioAvailable ? '' : _folioButtonHtml(img.id)) +'<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + sendCanvasHtml + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
     _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img), 50);
     // Warm the neighbours so the next/prev arrow paints instantly.
@@ -2080,6 +2113,7 @@ function _wireDetailEvents(ov, img) {
             return;
         }
         if (act === "explorer") _openInExplorerSafe(id);
+        else if (act === "send-folio") sendToFolio([id]);
         else if (act === "find-similar") openSimilarModal(id);
         else if (act === "send-canvas") sendToCanvas(id);
         else if (act === "send-canvas-menu") { e.stopPropagation(); hideCtx(); const r = a.getBoundingClientRect(); _buildCtxMenu([{ icon: IC.canvas, label: "Send to Canvas — raw prompt", fn: () => sendToCanvas(id, "raw") }, { icon: IC.canvas, label: "Send to Canvas — resolved prompt", fn: () => sendToCanvas(id, "resolved") }], r.left, r.bottom + 2); }
@@ -2334,6 +2368,11 @@ function _upgradeOverlayInPlace(img) {
             browseBtn.dataset.imgId = idStr;
             browseBtn.innerHTML = IC.explorer + ' Browse';
             actionsDiv.insertAdjacentElement("afterbegin", browseBtn);
+        }
+        // F1. Send to Folio sits beside Browse, for images (not videos).
+        if (G.folioAvailable && !img.is_video && !actionsDiv.querySelector('[data-action="send-folio"]')) {
+            const browse = actionsDiv.querySelector('[data-action="explorer"]');
+            if (browse) browse.insertAdjacentHTML("afterend", _folioButtonHtml(idStr));
         }
         // Strip / Convert / Delete cluster at the end.
         if (!actionsDiv.querySelector('[data-action="strip-metadata"]')) {
@@ -2933,10 +2972,11 @@ if (window.StudioModules) {
             document.addEventListener("click", e => { if (!e.target.closest(".gal-ctx-menu")) hideCtx(); });
             G.scanFolders = await api("/scan-folders"); G.initialized = G.scanFolders.length > 0;
             if (G.initialized) await Promise.all([loadStats(), loadCharacters(), loadFolders(), loadImagesReset()]);
+            _checkFolio();
             connectSSE();
             render();
         },
-        activate(container) { G._container = container; if (G.initialized) { loadCharacters(); loadFolders(); } },
+        activate(container) { G._container = container; _checkFolio(); if (G.initialized) { loadCharacters(); loadFolders(); } },
         deactivate() { if (G.page === "detail") closeDetail(); },
     });
 } else console.warn(TAG, "StudioModules not available");

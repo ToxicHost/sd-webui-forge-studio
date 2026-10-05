@@ -56,89 +56,6 @@ const METHOD_INFO = {
         formula: "A + (B − C) × α",
         desc: "Extracts what Model B learned from Model C (its base), then applies that training to Model A. Use this to transplant a finetune’s skills (e.g. anime style, specific subject) into a different model. Requires Model C — the base model B was finetuned from.",
     },
-    ties: {
-        label: "TIES", needsC: false, params: ["density"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (λ)",
-        alphaHint: "Strength of the trimmed task vector. Start at 0.5–1.0.",
-        formula: "A + λ · trim(B − A, density)",
-        desc: "Trim, Elect Sign & Merge — extracts B’s training over A, then trims away the weakest changes, keeping only the most significant ones. The Density parameter controls how aggressively to trim. Great for noisy finetunes where you want only the strongest signal.",
-    },
-    dare: {
-        label: "DARE", needsC: false, params: ["drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (λ)",
-        alphaHint: "Strength of the sparsified task vector. Start at 0.5–1.0.",
-        formula: "A + λ · dare(B − A, drop_rate)",
-        desc: "Drop And REscale — randomly drops most of B’s training changes and rescales the survivors to compensate. Neural networks are redundant, so even dropping 90% of changes often preserves the effect. Produces surprisingly clean results from messy finetunes.",
-    },
-    dare_ties: {
-        label: "DARE-TIES", needsC: false, params: ["density", "drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (λ)",
-        alphaHint: "Strength of the processed task vector. Start at 0.5–1.0.",
-        formula: "A + λ · trim(dare(B − A, drop_rate), density)",
-        desc: "Combines DARE and TIES — randomly drops changes first, then trims the survivors by magnitude. The most aggressive filtering. Best when B is a very noisy finetune and you want only the absolute strongest signal.",
-    },
-    cosine_adaptive: {
-        label: "Cosine Adaptive", needsC: false, params: ["cosine_shift"], blockWeights: true,
-        showAlpha: false, alphaLabel: null, alphaHint: null,
-        formula: "A + cos_shift(A, B) · (B − A)",
-        desc: "Automatically computes a unique blend ratio for every weight based on how similar A and B are at that point. Where they already agree, it keeps A. Where they diverge, it incorporates B. The Shift parameter adjusts how conservative (positive) or aggressive (negative) the blending is. No alpha needed — the math decides.",
-    },
-    star: {
-        label: "STAR (Spectral)", needsC: false, params: ["eta"], blockWeights: true,
-        showAlpha: true, alphaLabel: "Lambda (λ)",
-        alphaHint: "Strength of the denoised task vector. Start at 0.5–1.0.",
-        formula: "A + λ · svd_truncate(B − A, η)",
-        desc: "Spectral Truncation and Rescale — decomposes B’s training via SVD and strips noisy components before merging. Produces cleaner results than element-wise methods, especially from overtrained or messy finetunes. The Eta parameter controls how aggressively noise is removed.",
-    },
-    svd_struct_a_mag_b: {
-        label: "SVD: Structure A + Mag B", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Blend Strength",
-        alphaHint: "0 = pure A. 1 = full spectral swap. Start at 0.3–0.5.",
-        formula: "U_A · Σ_B · V_Aᵀ · α + A · (1 − α)",
-        desc: "Decomposes both models via SVD, then takes A’s feature directions (what the layer detects) and B’s magnitudes (how strongly it responds). Example: photorealism model’s composition + anime model’s vibrancy. Produces results impossible from any weight-averaging method.",
-    },
-    svd_struct_b_mag_a: {
-        label: "SVD: Structure B + Mag A", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Blend Strength",
-        alphaHint: "0 = pure A. 1 = full spectral swap. Start at 0.3–0.5.",
-        formula: "U_B · Σ_A · V_Bᵀ · α + A · (1 − α)",
-        desc: "The inverse — takes B’s feature directions (what the layer detects) and A’s magnitudes (how strongly it responds). Same concept as Structure A + Mag B but swapped. Try both and compare — the results are surprisingly different.",
-    },
-    svd_blend: {
-        label: "SVD: Spectral Blend", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Secondary Weight",
-        alphaHint: "0 = 100% Primary/A, 1 = 100% Secondary/B, 0.5 = equal blend.",
-        formula: "procrustes_slerp(SVD(A), SVD(B), α)",
-        desc: "Aligns both models’ spectral decompositions via Procrustes rotation, then interpolates structure and magnitude together in spectral space. Smoother than Weighted Sum because it respects the geometric relationship between feature directions rather than averaging raw weights.",
-    },
-    della: {
-        label: "DELLA", needsC: false, params: ["drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (λ)",
-        alphaHint: "Strength of the sparsified task vector. Start at 0.5–1.0.",
-        formula: "A + λ · della(B − A, drop_rate)",
-        desc: "Like DARE but smarter about what it drops — drop probability is inversely proportional to magnitude, so large important changes survive while small noisy ones are more likely to be removed. Produces slightly more reliable results than DARE’s uniform random masking.",
-    },
-    della_ties: {
-        label: "DELLA-TIES", needsC: false, params: ["density", "drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (λ)",
-        alphaHint: "Strength of the processed task vector. Start at 0.5–1.0.",
-        formula: "A + λ · trim(della(B − A, drop_rate), density)",
-        desc: "Combines DELLA and TIES — magnitude-weighted dropout first, then trims survivors by magnitude. Like DARE-TIES but with smarter dropout that preferentially keeps important parameters.",
-    },
-    breadcrumbs: {
-        label: "Breadcrumbs", needsC: false, params: ["density", "drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (λ)",
-        alphaHint: "Strength of the trimmed task vector. Start at 0.5–1.0.",
-        formula: "A + λ · trim(B − A, density, drop_rate)",
-        desc: "Dual-threshold trimming — like TIES but also removes the largest outlier changes, not just the smallest. Density controls the lower cutoff (how much to keep), Drop Rate controls the upper cutoff (how many outliers to remove). Best for finetunes with both noise and overfitting artifacts.",
-    },
-};
-
-const PARAM_DEFS = {
-    density: { label: "Density", min: 0, max: 1, step: 0.05, default: 0.2 },
-    drop_rate: { label: "Drop Rate", min: 0, max: 0.99, step: 0.05, default: 0.9 },
-    cosine_shift: { label: "Cosine Shift", min: -1, max: 1, step: 0.05, default: 0.0 },
-    eta: { label: "Eta (η)", min: 0, max: 0.5, step: 0.01, default: 0.1 },
 };
 
 // Workshop alpha == backend alpha == Secondary (Model B) contribution.
@@ -213,11 +130,9 @@ const WS = {
     merging: false, progress: 0, status: "idle", error: null, result: null,
     elapsed: 0, keysDone: 0, keysTotal: 0,
     chainStep: 0, chainTotal: 0,   // chain-scoped meta from backend
-    memoryMergeActive: false, testMerging: false,
 
     // Inspector (driven by activeRow)
-    inspectA: null, inspectB: null, preflight: null, cosineDiff: null,
-    compatibility: null, healthScan: null, healthLoading: false, diffLoading: false,
+    inspectA: null, inspectB: null, preflight: null, compatibility: null,
 
     // Journal
     journalEntries: [], journalSearch: "", journalFilter: "all", journalExpanded: null,
@@ -434,31 +349,6 @@ async function runCompatibility() {
     } catch (e) { console.error(TAG, "Compatibility check failed:", e); }
 }
 
-async function runHealthScan(filename) {
-    if (!filename) return;
-    WS.healthLoading = true; WS.healthScan = null; _renderInfo();
-    try {
-        WS.healthScan = await fetchJSON(API + "/health?filename=" + encodeURIComponent(filename));
-    } catch (e) {
-        console.error(TAG, "Health scan failed:", e);
-        if (window.showToast) window.showToast(_t("workshop.toast.healthScanFailed", "Health scan failed: " + e.message, { error: e.message }), "error");
-    }
-    WS.healthLoading = false; _renderInfo();
-}
-
-async function loadCosineDiff() {
-    const { a, b } = _activeInputs();
-    if (!a || !b) { WS.cosineDiff = null; _renderInfo(); return; }
-    WS.diffLoading = true; _renderInfo();
-    try {
-        WS.cosineDiff = await fetchJSON(API + "/cosine_diff?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
-    } catch (e) {
-        console.error(TAG, "Cosine diff failed:", e);
-        if (window.showToast) window.showToast(_t("workshop.toast.cosineDiffFailed", "Cosine diff failed: " + e.message, { error: e.message }), "error");
-    }
-    WS.diffLoading = false; _renderInfo();
-}
-
 async function loadPresets(arch) {
     try {
         const data = await fetchJSON(API + "/presets?arch=" + encodeURIComponent(arch));
@@ -468,31 +358,6 @@ async function loadPresets(arch) {
             _buildBlockSlidersForRow(i);
         }
     } catch (e) { console.error(TAG, "Presets failed:", e); }
-}
-
-async function loadModelStockForRow(rowIdx) {
-    const r = WS.rows[rowIdx];
-    if (!r) return;
-    const a = _isConcreteModel(r.primary) ? r.primary : null;
-    const b = _isConcreteModel(r.secondary) ? r.secondary : null;
-    if (!a || !b) return;
-    try {
-        if (window.showToast) window.showToast(_t("workshop.toast.modelStockComputing", "Computing Model Stock auto-alpha…"), "info");
-        const data = await fetchJSON(API + "/model_stock?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
-        if (data.alphas && Object.keys(data.alphas).length) {
-            r.blockWeights = data.alphas;
-            r.useBlockWeights = true;
-            _syncRowBlockUI(rowIdx);
-            if (data.cosine_diff && rowIdx === WS.activeRow) {
-                WS.cosineDiff = { blocks: data.cosine_diff, global_similarity: data.global_similarity, architecture: WS.inspectA?.architecture };
-                _renderInfo();
-            }
-            if (window.showToast) window.showToast(_t("workshop.toast.modelStockApplied", "Model Stock alphas applied to Row " + (rowIdx + 1), { row: rowIdx + 1 }), "success");
-        }
-    } catch (e) {
-        console.error(TAG, "Model Stock failed:", e);
-        if (window.showToast) window.showToast(_t("workshop.toast.modelStockFailed", "Model Stock failed: " + e.message, { error: e.message }), "error");
-    }
 }
 
 // ========================================================================
@@ -674,34 +539,6 @@ function _buildRecipeChain() {
     return steps;
 }
 
-function _canTestMerge() {
-    // Test merge: exactly one row, two concrete-file models, a satisfied
-    // tertiary slot if the method needs one, no LoRAs, and no VAE bake
-    // (neither global nor per-row override).
-    if (WS.rows.length !== 1) return false;
-    const r = WS.rows[0];
-    if (!_isConcreteModel(r.primary) || !_isConcreteModel(r.secondary)) return false;
-    if (r.primary === r.secondary) return false;
-    const info = METHOD_INFO[r.method] || {};
-    if (info.needsC && (!_isConcreteModel(r.tertiary) || r.tertiary === r.primary || r.tertiary === r.secondary)) return false;
-    if (WS.recipeLoras.filter(l => l.filename).length > 0) return false;
-    if (WS.recipeVae) return false;
-    if (WS.rows.some(row => row.bakeVae && row.vae)) return false;
-    if (WS.merging || WS.testMerging) return false;
-    return true;
-}
-
-function _getTestMergeTooltip() {
-    if (WS.rows.length !== 1) return "Test merge unavailable with more than one row — use Begin Merge instead";
-    const r = WS.rows[0];
-    if (!_isConcreteModel(r.primary) || !_isConcreteModel(r.secondary)) return "Test merge requires two concrete files (no row references)";
-    const info = METHOD_INFO[r.method] || {};
-    if (info.needsC && !_isConcreteModel(r.tertiary)) return "Add Difference needs Tertiary (Model C) for test merge";
-    if (WS.recipeLoras.filter(l => l.filename).length > 0) return "Test merge unavailable with LoRAs — use Begin Merge instead";
-    if (WS.recipeVae || WS.rows.some(row => row.bakeVae && row.vae)) return "Test merge unavailable with VAE bake — use Begin Merge instead";
-    return "Hot-swap UNet weights — no disk write, instant iteration";
-}
-
 function _buildMergeBody() {
     // Body for the in-memory single-step merge endpoint.
     const r = WS.rows[0];
@@ -784,38 +621,7 @@ async function startMerge() {
     }
 }
 
-async function testMerge() {
-    if (!_canTestMerge()) return;
-    const body = _buildMergeBody();
-    try {
-        WS.testMerging = true; _els.testMergeBtn.disabled = true; _els.testMergeBtn.textContent = _t("workshop.action.merging", "Merging…");
-        if (window.showToast) window.showToast(_t("workshop.toast.computingMerge", "Computing in-memory merge…"), "info");
-        const res = await fetchJSON(API + "/merge_memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        WS.memoryMergeActive = true; _renderMemoryStatus(res);
-        if (res.validation?.passed) { if (window.showToast) window.showToast(_t("workshop.toast.testMergeApplied", "Test merge applied in " + res.total_time + "s — generate to preview!", { time: res.total_time }), "success"); }
-        else { if (window.showToast) window.showToast(_t("workshop.toast.testMergeWarnings", "Test merge applied but validation had warnings"), "warning"); }
-        if (res.non_unet_warning && window.showToast) window.showToast(res.non_unet_warning, "info");
-    } catch (e) { WS.memoryMergeActive = false; if (window.showToast) window.showToast(_t("workshop.toast.testMergeFailed", "Test merge failed: " + e.message, { error: e.message }), "error"); }
-    finally { WS.testMerging = false; _els.testMergeBtn.textContent = _t("workshop.action.testMerge", "Test Merge"); _updateActionButtons(); }
-}
-
-async function revertMerge() {
-    try {
-        _els.revertBtn.disabled = true; _els.revertBtn.textContent = _t("workshop.action.reverting", "Reverting…");
-        const res = await fetchJSON(API + "/revert", { method: "POST" });
-        WS.memoryMergeActive = false; _els.memoryStatus.style.display = "none"; _updateActionButtons();
-        if (window.showToast) window.showToast(_t("workshop.toast.reverted", "Reverted in " + res.elapsed + "s", { elapsed: res.elapsed }), "success");
-    } catch (e) { if (window.showToast) window.showToast(_t("workshop.toast.revertFailed", "Revert failed: " + e.message, { error: e.message }), "error"); }
-    finally { _els.revertBtn.disabled = false; _els.revertBtn.textContent = _t("workshop.action.revert", "Revert"); }
-}
-
 async function cancelMerge() { try { await fetchJSON(API + "/cancel", { method: "POST" }); } catch (e) { console.error(TAG, "Cancel failed:", e); } }
-
-function _renderMemoryStatus(res) {
-    _els.memoryStatus.style.display = "";
-    _els.memoryInfo.textContent = res ? res.keys_loaded + " keys swapped in " + res.total_time + "s" : "";
-    _updateActionButtons();
-}
 
 // ========================================================================
 // RECIPE — LORA LIST (global)
@@ -1083,7 +889,6 @@ async function _importJournalRecipe(entry) {
     WS.outputDtype = restored.outputDtype || "auto";
     WS.saveIntermediates = !!restored.saveIntermediates;
     WS.compatibility = null;
-    WS.healthScan = null;
 
     // Sync the global control DOM that lives outside _renderRows().
     if (_els.outputName) _els.outputName.value = WS.outputName;
@@ -1174,6 +979,14 @@ function _resolveVaeOrNull(filename, missing) {
     return null;
 }
 
+// A method cut from Workshop restores as Weighted Sum, and is counted with
+// the missing references so the import toast says something changed.
+function _knownMethod(method, missing) {
+    if (METHOD_INFO[method]) return method;
+    missing.count++;
+    return "weighted_sum";
+}
+
 function _restoreFromBoardSnapshot(board) {
     const missing = { count: 0 };
     const rows = (board.rows || []).map(snap => {
@@ -1181,7 +994,7 @@ function _restoreFromBoardSnapshot(board) {
         row.primary   = _resolveModelOrNull(snap.primary, missing);
         row.secondary = _resolveModelOrNull(snap.secondary, missing);
         row.tertiary  = _resolveModelOrNull(snap.tertiary, missing);
-        if (snap.method) row.method = snap.method;
+        if (snap.method) row.method = _knownMethod(snap.method, missing);
         if (typeof snap.alpha === "number") row.alpha = snap.alpha;
         if (typeof snap.density === "number") row.density = snap.density;
         if (typeof snap.dropRate === "number") row.dropRate = snap.dropRate;
@@ -1213,7 +1026,7 @@ function _restoreFromSingleMerge(recipe) {
     row.primary   = _resolveModelOrNull(recipe.model_a, missing);
     row.secondary = _resolveModelOrNull(recipe.model_b, missing);
     if (recipe.model_c) row.tertiary = _resolveModelOrNull(recipe.model_c, missing);
-    if (recipe.method) row.method = recipe.method;
+    if (recipe.method) row.method = _knownMethod(recipe.method, missing);
     if (typeof recipe.alpha === "number") row.alpha = recipe.alpha;
     if (typeof recipe.density === "number") row.density = recipe.density;
     if (typeof recipe.drop_rate === "number") row.dropRate = recipe.drop_rate;
@@ -1299,7 +1112,7 @@ function _restoreFromChainSteps(steps) {
             row.primary   = _resolveModelOrNull(s.model_a, missing);
             row.secondary = _resolveModelOrNull(s.model_b, missing);
             if (s.model_c) row.tertiary = _resolveModelOrNull(s.model_c, missing);
-            if (s.method) row.method = s.method;
+            if (s.method) row.method = _knownMethod(s.method, missing);
             if (typeof s.alpha === "number") row.alpha = s.alpha;
             if (typeof s.density === "number") row.density = s.density;
             if (typeof s.drop_rate === "number") row.dropRate = s.drop_rate;
@@ -1838,11 +1651,8 @@ function _buildUI(container) {
     // ── Output ──
     + '<div class="ws-output-section"><div class="ws-param"><label data-i18n="workshop.outputFilename">' + _t("workshop.outputFilename", "Output Filename") + '</label><input type="text" id="wsOutputName" class="param-val ws-output-input" data-i18n-placeholder="workshop.outputFilename.placeholder" placeholder="' + _t("workshop.outputFilename.placeholder", "auto-generated if empty") + '" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label" data-i18n-title="workshop.reducedPrecision.tooltip" title="' + _t("workshop.reducedPrecision.tooltip", "Auto saves Anima/Cosmos as BF16 and other models as FP16. Merge math always runs in FP32.") + '"><input type="checkbox" id="wsFp16" checked><span data-i18n="workshop.reducedPrecision">' + _t("workshop.reducedPrecision", "Reduced precision") + '</span></label><label class="ws-output-dtype-label" data-i18n-title="workshop.outputDtype.tooltip" title="' + _t("workshop.outputDtype.tooltip", "Auto saves Anima/Cosmos as BF16 and other models as FP16. Merge math always runs in FP32.") + '"><span data-i18n="workshop.outputDtype">' + _t("workshop.outputDtype", "Output dtype") + '</span><select id="wsOutputDtype" class="param-val ws-output-dtype-select"><option value="auto">' + _t("workshop.outputDtype.auto", "Auto") + '</option><option value="fp16">FP16</option><option value="bf16">BF16</option><option value="fp32">FP32</option></select></label><label class="ws-checkbox-label" data-i18n-title="workshop.keepIntermediates.tooltip" title="' + _t("workshop.keepIntermediates.tooltip", "Keep each row's output as its own .safetensors file (useful for multi-row boards)") + '"><input type="checkbox" id="wsSaveIntermediates"><span data-i18n="workshop.keepIntermediates">' + _t("workshop.keepIntermediates", "Keep intermediates") + '</span></label></div></div>'
 
-    // Memory status
-    + '<div id="wsMemoryStatus" class="ws-memory-status" style="display:none;"><span class="ws-memory-badge" data-i18n="workshop.testMergeActive">' + _t("workshop.testMergeActive", "Test merge active") + '</span><span id="wsMemoryInfo" class="ws-memory-info"></span><button id="wsRevertBtn" class="ws-revert-btn" data-i18n="workshop.action.revert">' + _t("workshop.action.revert", "Revert") + '</button></div>'
-
     // Actions
-    + '<div class="ws-action-row"><button id="wsTestMergeBtn" class="ws-test-merge-btn" disabled data-i18n="workshop.action.testMerge" data-i18n-title="workshop.testMergeBtn.tooltip" title="' + _t("workshop.testMergeBtn.tooltip", "Hot-swap UNet weights — no disk write, instant iteration") + '">' + _t("workshop.action.testMerge", "Test Merge") + '</button><button id="wsMergeBtn" class="ws-merge-btn" disabled data-i18n="workshop.action.beginMerge">' + _t("workshop.action.beginMerge", "Begin Merge") + '</button><button id="wsCancelBtn" class="ws-cancel-btn" style="display:none;" data-i18n="workshop.action.cancel">' + _t("workshop.action.cancel", "Cancel") + '</button></div>'
+    + '<div class="ws-action-row"><button id="wsMergeBtn" class="ws-merge-btn" disabled data-i18n="workshop.action.beginMerge">' + _t("workshop.action.beginMerge", "Begin Merge") + '</button><button id="wsCancelBtn" class="ws-cancel-btn" style="display:none;" data-i18n="workshop.action.cancel">' + _t("workshop.action.cancel", "Cancel") + '</button></div>'
 
     // Progress
     + '<div id="wsProgressSection" class="ws-progress-section" style="display:none;"><div class="ws-progress-bar-bg"><div id="wsProgressFill" class="ws-progress-bar-fill"></div></div><div class="ws-progress-info"><span id="wsProgressText">0%</span><span id="wsProgressKeys"></span><span id="wsProgressTime"></span></div><div id="wsProgressStatus" class="ws-progress-status"></div></div>'
@@ -1888,8 +1698,6 @@ function _buildUI(container) {
         infoContent: container.querySelector("#wsInfoContent"),
         inspector: container.querySelector("#wsInspector"), inspectorToggle: container.querySelector("#wsInspectorToggle"),
         inspectorBody: container.querySelector("#wsInspectorBody"),
-        testMergeBtn: container.querySelector("#wsTestMergeBtn"), revertBtn: container.querySelector("#wsRevertBtn"),
-        memoryStatus: container.querySelector("#wsMemoryStatus"), memoryInfo: container.querySelector("#wsMemoryInfo"),
         loraList: container.querySelector("#wsLoraList"),
         loraAdd: container.querySelector("#wsLoraAdd"),
         recipeVae: container.querySelector("#wsRecipeVae"),
@@ -1977,10 +1785,9 @@ function _rowHtml(rowIdx) {
     //   (Tertiary lives on line 1 so it never forces line 2.)
     const expanded = !!row.expanded;
     const showTertiary = !!info.needsC;
-    const showParams = info.params.length > 0;
     const showBlockToggle = !!info.blockWeights && (expanded || row.useBlockWeights);
     const showVaeOnLine2 = !!row.bakeVae;
-    const line2Visible = showParams || showBlockToggle || showVaeOnLine2 || expanded;
+    const line2Visible = showBlockToggle || showVaeOnLine2 || expanded;
     // ⚙ is always visible — every row can opt into VAE / blocks / expand
     const expandBtnVisible = true;
 
@@ -2018,18 +1825,11 @@ function _rowHtml(rowIdx) {
 
     // ── Line 2: conditional — params + block-weights toggle row ──
     html += '<div class="ws-row-line ws-row-line2"' + (line2Visible ? '' : ' style="display:none;"') + '>';
-    // Param sliders
-    html += _paramCellHtml(rowIdx, "density", row.density, info.params.includes("density"), "Density");
-    html += _paramCellHtml(rowIdx, "drop_rate", row.dropRate, info.params.includes("drop_rate"), "Drop");
-    html += _paramCellHtml(rowIdx, "cosine_shift", row.cosineShift, info.params.includes("cosine_shift"), "Shift");
-    html += _paramCellHtml(rowIdx, "eta", row.eta, info.params.includes("eta"), "η");
-    // Block weights toggle + preset/auto/diff
+    // Block weights toggle + preset
     if (info.blockWeights) {
         html += '<div class="ws-row-blocks-toggle"' + (showBlockToggle ? '' : ' style="display:none;"') + '>'
             + '<label class="ws-checkbox-label ws-row-blocks-label"><input type="checkbox" class="ws-row-block-toggle" data-row="' + rowIdx + '"' + (row.useBlockWeights ? ' checked' : '') + '><span>Blocks</span></label>'
             + '<select class="param-select ws-row-preset" data-row="' + rowIdx + '" disabled><option value="">— Preset —</option></select>'
-            + '<button class="ws-small-btn ws-row-auto" data-row="' + rowIdx + '" disabled title="Auto-alpha via Model Stock">Auto</button>'
-            + '<button class="ws-small-btn ws-row-diff" data-row="' + rowIdx + '" disabled title="Compute cosine similarity">Diff</button>'
             + '</div>';
     }
     // Per-row VAE bake (off by default — global VAE handles the final
@@ -2060,17 +1860,6 @@ function _rowHtml(rowIdx) {
 
     html += '</div>';
     return html;
-}
-
-function _paramCellHtml(rowIdx, paramKey, value, visible, shortLabel) {
-    const def = PARAM_DEFS[paramKey];
-    if (!def) return "";
-    return '<div class="ws-row-param-cell" data-row="' + rowIdx + '" data-param="' + paramKey + '"' + (visible ? '' : ' style="display:none;"')
-        + ' title="' + _esc(def.label) + '">'
-        + '<span class="ws-row-param-label">' + _esc(shortLabel) + '</span>'
-        + '<input type="range" min="' + def.min + '" max="' + def.max + '" step="' + def.step + '" value="' + value + '" class="ws-slider ws-row-param-slider" data-row="' + rowIdx + '" data-param="' + paramKey + '">'
-        + '<input type="number" min="' + def.min + '" max="' + def.max + '" step="' + def.step + '" value="' + Number(value).toFixed(2) + '" class="param-val ws-row-param-val" data-row="' + rowIdx + '" data-param="' + paramKey + '">'
-        + '</div>';
 }
 
 function _populatePresetSelectForRow(rowIdx) {
@@ -2140,7 +1929,7 @@ function _bindRowEvents(rowIdx) {
         _highlightRefSource(_refTargetIdxFromValue(row.primary));
         _setActiveRow(rowIdx);
         if (rowIdx === WS.activeRow) {
-            WS.compatibility = null; WS.healthScan = null;
+            WS.compatibility = null;
             inspectModel(_isConcreteModel(row.primary) ? row.primary : null, "A");
             runPreflight(); runCompatibility();
         }
@@ -2153,12 +1942,11 @@ function _bindRowEvents(rowIdx) {
         _highlightRefSource(_refTargetIdxFromValue(row.secondary));
         _setActiveRow(rowIdx);
         if (rowIdx === WS.activeRow) {
-            WS.compatibility = null; WS.healthScan = null;
+            WS.compatibility = null;
             inspectModel(_isConcreteModel(row.secondary) ? row.secondary : null, "B");
             runPreflight(); runCompatibility();
         }
         _updateActionButtons();
-        _updateRowAutoDiffButtons(rowIdx);
         _recomputeFinalRowOutputName();
     });
 
@@ -2214,24 +2002,6 @@ function _bindRowEvents(rowIdx) {
         _renderChainContrib();
     });
 
-    // Method-specific param sliders
-    rowEl.querySelectorAll(".ws-row-param-slider").forEach(slider => {
-        const param = slider.dataset.param;
-        const valEl = rowEl.querySelector('.ws-row-param-val[data-param="' + param + '"]');
-        slider.addEventListener("input", () => {
-            const v = parseFloat(slider.value);
-            valEl.value = v.toFixed(2);
-            _setRowParam(rowIdx, param, v);
-        });
-        valEl.addEventListener("change", () => {
-            let v = parseFloat(valEl.value);
-            if (isNaN(v)) v = parseFloat(slider.value);
-            v = Math.max(parseFloat(slider.min), Math.min(parseFloat(slider.max), v));
-            slider.value = v; valEl.value = v.toFixed(2);
-            _setRowParam(rowIdx, param, v);
-        });
-    });
-
     // Expand toggle (⚙) — opts the row into the line-2 advanced row when
     // there's no other reason to show line 2.
     const expandBtn = rowEl.querySelector(".ws-row-expand");
@@ -2243,7 +2013,7 @@ function _bindRowEvents(rowIdx) {
         });
     }
 
-    // Block weights toggle / preset / auto / diff
+    // Block weights toggle / preset
     const blockToggle = rowEl.querySelector(".ws-row-block-toggle");
     if (blockToggle) {
         blockToggle.addEventListener("change", () => {
@@ -2252,7 +2022,6 @@ function _bindRowEvents(rowIdx) {
             sliders.style.display = row.useBlockWeights ? "" : "none";
             const preset = rowEl.querySelector(".ws-row-preset");
             if (preset) preset.disabled = !row.useBlockWeights;
-            _updateRowAutoDiffButtons(rowIdx);
             if (row.useBlockWeights && !row.blockWeights) _initRowBlockWeights(rowIdx, row.alpha);
             _applyRowMethodVisibility(rowIdx);
             _renderChainContrib();
@@ -2291,41 +2060,10 @@ function _bindRowEvents(rowIdx) {
         });
     }
 
-    const autoBtn = rowEl.querySelector(".ws-row-auto");
-    if (autoBtn) autoBtn.addEventListener("click", () => loadModelStockForRow(rowIdx));
-
-    const diffBtn = rowEl.querySelector(".ws-row-diff");
-    if (diffBtn) diffBtn.addEventListener("click", () => {
-        _setActiveRow(rowIdx);
-        loadCosineDiff();
-    });
-
     const outNameInput = rowEl.querySelector(".ws-row-out-name");
     if (outNameInput) {
         outNameInput.addEventListener("input", () => { row.outputName = outNameInput.value.trim(); });
     }
-
-    _updateRowAutoDiffButtons(rowIdx);
-}
-
-function _setRowParam(rowIdx, param, v) {
-    const r = WS.rows[rowIdx];
-    if (param === "density") r.density = v;
-    else if (param === "drop_rate") r.dropRate = v;
-    else if (param === "cosine_shift") r.cosineShift = v;
-    else if (param === "eta") r.eta = v;
-}
-
-function _updateRowAutoDiffButtons(rowIdx) {
-    const r = WS.rows[rowIdx];
-    if (!r) return;
-    const rowEl = _els.rowList.querySelector('.ws-row[data-row="' + rowIdx + '"]');
-    if (!rowEl) return;
-    const a = _isConcreteModel(r.primary), b = _isConcreteModel(r.secondary);
-    const auto = rowEl.querySelector(".ws-row-auto");
-    const diff = rowEl.querySelector(".ws-row-diff");
-    if (auto) auto.disabled = !(a && b && r.useBlockWeights);
-    if (diff) diff.disabled = !(a && b);
 }
 
 // ========================================================================
@@ -2362,12 +2100,6 @@ function _applyRowMethodVisibility(rowIdx) {
     const tertiary = rowEl.querySelector(".ws-row-tertiary");
     if (tertiary) tertiary.style.display = info.needsC ? "" : "none";
 
-    // Method-specific param cells (line 2)
-    rowEl.querySelectorAll(".ws-row-param-cell").forEach(el => {
-        const p = el.dataset.param;
-        el.style.display = info.params.includes(p) ? "" : "none";
-    });
-
     // Block-weights toggle (line 2) — visible only when method supports
     // blocks AND (row was expanded OR block weights are already on)
     if (!info.blockWeights && r.useBlockWeights) {
@@ -2391,7 +2123,7 @@ function _applyRowMethodVisibility(rowIdx) {
     // is on line 1.
     const outNameCell = rowEl.querySelector(".ws-row-out-name-cell");
     const outNameVisible = outNameCell && outNameCell.style.display !== "none";
-    const line2Visible = info.params.length > 0 || showBlockToggle || !!r.bakeVae || !!r.expanded || outNameVisible;
+    const line2Visible = showBlockToggle || !!r.bakeVae || !!r.expanded || outNameVisible;
     const line2 = rowEl.querySelector(".ws-row-line2");
     if (line2) line2.style.display = line2Visible ? "" : "none";
 
@@ -2477,13 +2209,13 @@ function _refreshActiveRowInspector() {
     const r = _activeRow();
     if (!r) {
         WS.inspectA = null; WS.inspectB = null; WS.preflight = null;
-        WS.compatibility = null; WS.cosineDiff = null;
+        WS.compatibility = null;
         _renderInfo();
         return;
     }
     const a = _isConcreteModel(r.primary) ? r.primary : null;
     const b = _isConcreteModel(r.secondary) ? r.secondary : null;
-    WS.preflight = null; WS.compatibility = null; WS.cosineDiff = null;
+    WS.preflight = null; WS.compatibility = null;
     _renderInfo();
     inspectModel(a, "A");
     inspectModel(b, "B");
@@ -2528,8 +2260,6 @@ function _bindGlobalEvents() {
 
     _els.mergeBtn.addEventListener("click", startMerge);
     _els.cancelBtn.addEventListener("click", cancelMerge);
-    _els.testMergeBtn.addEventListener("click", testMerge);
-    _els.revertBtn.addEventListener("click", revertMerge);
 
     _els.inspectorToggle.addEventListener("click", () => {
         _els.inspector.classList.toggle("collapsed");
@@ -2670,7 +2400,6 @@ function _groupBlocks(blocks) {
 function _onActiveModelsChanged() {
     const arch = WS.inspectA?.architecture?.arch || WS.inspectB?.architecture?.arch || null;
     if (arch && arch !== WS.arch) { WS.arch = arch; loadPresets(arch); }
-    WS.cosineDiff = null;
     _renderInfo();
     _renderActiveArchBadges();
 }
@@ -2940,15 +2669,8 @@ function _updateActionButtons() {
     //   - a full merge row, or
     //   - a bake (LoRA / global VAE) plus at least one primary checkpoint.
     const hasOperation = hasMergeRow || (hasBakes && hasAnyPrimary);
-    const saveReady = hasOperation && !validationError && !WS.merging && !WS.testMerging;
+    const saveReady = hasOperation && !validationError && !WS.merging;
     if (_els.mergeBtn) _els.mergeBtn.disabled = !saveReady;
-
-    if (_els.testMergeBtn) {
-        _els.testMergeBtn.disabled = !_canTestMerge();
-        _els.testMergeBtn.title = _getTestMergeTooltip();
-    }
-
-    for (let i = 0; i < WS.rows.length; i++) _updateRowAutoDiffButtons(i);
 
     if (_els.mergeBtn) {
         const chainSteps = _buildRecipeChain();
@@ -3029,23 +2751,7 @@ function _renderInfo() {
 
     if (WS.preflight) parts.push(_renderPreflight(WS.preflight));
 
-    if (WS.diffLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.blockDivergence", "Block Divergence") + '</div><div class="ws-diff-loading">' + _t("workshop.label.computingDiff", "Computing diff…") + '</div></div>');
-    else if (WS.cosineDiff) parts.push(_renderCosineDiff(WS.cosineDiff));
-
-    if (WS.healthLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.healthScan", "Health Scan") + '</div><div class="ws-diff-loading">' + _t("workshop.label.scanningTensors", "Scanning tensors…") + '</div></div>');
-    else if (WS.healthScan) parts.push(_renderHealth(WS.healthScan));
-
-    if ((WS.inspectA || WS.inspectB) && !WS.healthLoading && !WS.healthScan) {
-        parts.push('<div class="ws-info-block"><button class="ws-small-btn" id="wsHealthScanBtn" style="width:100%;">Scan Health</button></div>');
-    }
-
     _els.infoContent.innerHTML = parts.length ? parts.join("") : '<div class="ws-info-placeholder">' + _t("workshop.inspector.placeholder", "Select models to inspect") + '</div>';
-    const hBtn = _els.infoContent.querySelector("#wsHealthScanBtn");
-    if (hBtn) hBtn.addEventListener("click", () => {
-        const { a, b } = _activeInputs();
-        runHealthScan(a || b);
-    });
-
     _renderActiveArchBadges();
 }
 
@@ -3099,46 +2805,6 @@ function _renderPreflight(pf) {
         + (pf.warning ? '<div class="ws-ram-warning">⚠ ' + _esc(pf.warning) + '</div>' : '') + '</div>';
 }
 
-function _renderCosineDiff(diff) {
-    const blocks = diff.blocks || {}; const entries = Object.entries(blocks);
-    if (!entries.length) return "";
-    const specialBlocks = new Set(["BASE", "VAE", "OTHER"]);
-    const unetEntries = entries.filter(([name]) => !specialBlocks.has(name));
-    const specialEntries = entries.filter(([name]) => specialBlocks.has(name));
-    const unetDivs = unetEntries.map(([, v]) => (1 - v.similarity) * 100);
-    const minDiv = unetDivs.length ? Math.min(...unetDivs) : 0;
-    const maxDiv = unetDivs.length ? Math.max(...unetDivs) : 1;
-
-    function buildRows(rowEntries, rMin, rMax) {
-        let html = "";
-        for (const [name, info] of rowEntries) {
-            const divPct = (1 - info.similarity) * 100;
-            const color = _divColor(divPct, rMin, rMax);
-            const barPct = rMax - rMin > 1e-9 ? ((divPct - rMin) / (rMax - rMin) * 100).toFixed(0) : "50";
-            const tip = _getBlockTooltip(name);
-            html += '<div class="ws-diff-row"><span class="ws-diff-name ws-has-tip"' + (tip ? ' data-tip="' + _esc(tip) + '"' : '') + '>' + name + '</span>'
-                + '<div class="ws-diff-bar-bg"><div class="ws-diff-bar" style="width:' + Math.max(3, barPct) + '%;background:' + color + ';"></div></div>'
-                + '<span class="ws-diff-val">' + divPct.toFixed(2) + '%</span></div>';
-        }
-        return html;
-    }
-
-    let unetHtml = buildRows(unetEntries, minDiv, maxDiv);
-    let specialHtml = "";
-    if (specialEntries.length) {
-        const sDivs = specialEntries.map(([, v]) => (1 - v.similarity) * 100);
-        specialHtml = '<div class="ws-diff-separator">Non-UNet</div>' + buildRows(specialEntries, Math.min(...sDivs), Math.max(...sDivs));
-    }
-    const nanWarn = diff.nan_keys ? '<div class="ws-diff-nan-warn">⚠ ' + diff.nan_keys + ' keys skipped (NaN weights — likely unused CLIP layers)</div>' : "";
-    const globalDiv = ((1 - (diff.global_similarity || 0)) * 100).toFixed(2);
-
-    return '<div class="ws-info-block ws-diff-block">'
-        + '<div class="ws-info-label">' + _t("workshop.label.blockDivergence", "Block Divergence") + ' <span class="ws-diff-global">(global: ' + globalDiv + '% different)</span></div>'
-        + '<div class="ws-diff-legend"><span style="color:var(--green);">◼ Similar</span><span style="color:var(--amber);">◼ Moderate</span><span style="color:var(--red);">◼ Divergent</span></div>'
-        + '<div class="ws-diff-hint">Higher % = more different between the models. These are the blocks worth adjusting.</div>'
-        + nanWarn + unetHtml + specialHtml + '</div>';
-}
-
 function _heatColor(t) {
     t = Math.max(0, Math.min(1, t));
     const style = getComputedStyle(document.documentElement);
@@ -3150,11 +2816,6 @@ function _heatColor(t) {
     const g = parseHex(green), a = parseHex(amber), r = parseHex(red);
     const c = t < 0.4 ? lerp(g, a, t / 0.4) : lerp(a, r, (t - 0.4) / 0.6);
     return "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
-}
-
-function _divColor(div, min, max) {
-    const range = max - min || 1;
-    return _heatColor((div - min) / range);
 }
 
 function _renderCompatibility(compat) {
@@ -3177,53 +2838,6 @@ function _renderCompatibility(compat) {
     return html + '</div>';
 }
 
-function _renderHealth(scan) {
-    const icons = { healthy: "✔", minor: "⚠", warning: "⚠", critical: "❌" };
-    const colors = { healthy: "var(--green)", minor: "var(--text-3)", warning: "var(--amber)", critical: "var(--red)" };
-    const labels = {
-        healthy:  _t("workshop.health.healthy",  "Healthy"),
-        minor:    _t("workshop.health.minor",    "Minor Issues"),
-        warning:  _t("workshop.health.warning",  "Warning"),
-        critical: _t("workshop.health.critical", "Critical"),
-    };
-    const v = scan.verdict;
-    let html = '<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.healthScan", "Health Scan") + ' <span style="color:' + colors[v] + ';font-weight:600;font-size:10px;text-transform:none;letter-spacing:0;">' + icons[v] + ' ' + labels[v] + '</span></div>';
-    html += '<div class="ws-info-row"><span>' + _t("workshop.label.totalKeys", "Total keys") + '</span><span>' + scan.total_keys.toLocaleString() + '</span></div>';
-    if (scan.total_nan > 0 && scan.nan_clip_only) {
-        html += '<div class="ws-info-row" style="color:var(--text-3);"><span>' + _t("workshop.health.nanKeysClip", "NaN keys (CLIP)") + '</span><span>' + scan.total_nan + '</span></div>';
-        html += '<div style="color:var(--text-4);font-size:9px;padding:2px 0;font-style:italic;">' + _t("workshop.health.knownArtifact", "Known artifact — unused CLIP encoder layers. Not a merge issue.") + '</div>';
-    } else if (scan.total_nan > 0) {
-        html += '<div class="ws-info-row" style="color:var(--red);"><span>' + _t("workshop.health.nanInfKeys", "NaN/Inf keys") + '</span><span>' + scan.total_nan + '</span></div>';
-    }
-    if (scan.total_zero > 0) html += '<div class="ws-info-row" style="color:var(--amber);"><span>' + _t("workshop.health.allZero", "All-zero keys") + '</span><span>' + scan.total_zero + '</span></div>';
-    if (scan.total_collapsed > 0) html += '<div class="ws-info-row" style="color:var(--amber);"><span>' + _t("workshop.health.collapsed", "Collapsed variance") + '</span><span>' + scan.total_collapsed + '</span></div>';
-    if (scan.verdict === "healthy" && scan.total_nan === 0) {
-        html += '<div style="color:var(--green);font-size:10px;padding:4px 0;">' + _t("workshop.health.allClean", "No issues detected — all tensors look clean.") + '</div>';
-    } else if (scan.verdict === "healthy" && scan.nan_clip_only) {
-        html += '<div style="color:var(--green);font-size:10px;padding:4px 0;">' + _t("workshop.health.healthyClipArtifacts", "Model is healthy. NaN keys are expected CLIP artifacts.") + '</div>';
-    }
-    const problemBlocks = Object.entries(scan.blocks || {}).filter(([name, s]) => {
-        if (scan.nan_clip_only && (name === "BASE" || name === "CLIP" || name === "OTHER") && s.nan_keys > 0 && s.zero_keys === 0 && s.collapsed_keys === 0) return false;
-        return s.nan_keys > 0 || s.zero_keys > 0 || s.collapsed_keys > 0;
-    });
-    if (problemBlocks.length) {
-        html += '<div style="margin-top:8px;border-top:1px solid var(--border-subtle);padding-top:8px;">';
-        for (const [block, stats] of problemBlocks) {
-            const issues = [];
-            if (stats.nan_keys) issues.push('<span style="color:var(--red);">' + stats.nan_keys + ' NaN</span>');
-            if (stats.zero_keys) issues.push('<span style="color:var(--amber);">' + stats.zero_keys + ' zero</span>');
-            if (stats.collapsed_keys) issues.push('<span style="color:var(--amber);">' + stats.collapsed_keys + ' collapsed</span>');
-            html += '<div class="ws-info-row"><span>' + block + '</span><span>' + issues.join(', ') + '</span></div>';
-        }
-        html += '</div>';
-    }
-    return html + '</div>';
-}
-
-// ========================================================================
-// UTIL
-// ========================================================================
-
 function _esc(s) { if (!s) return ""; const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
 // ========================================================================
@@ -3233,15 +2847,9 @@ function _esc(s) { if (!s) return ""; const d = document.createElement("div"); d
 if (window.StudioModules) {
     StudioModules.register("workshop", {
         label: "Workshop", icon: "⚒",
-        // No Workshop service exists in the standalone: 25 of the 35 routes
-        // this file calls have no handler. The tab drew merge recipes, model
-        // pickers and a journal over 404s, and its ↻ Refresh reported success
-        // over one.
-        //
-        // Nothing here is shared with another surface -- workshop.css loads
-        // inside init(), and this file exports nothing to `window` that any
-        // other file reads -- so gating the tab costs nothing that works today.
-        // (`StudioSearchableSelect` is consumed here, not provided.)
+        // W1: Studio serves `/studio/workshop/*` (`workshop_service.py`) when
+        // the host has model roots; a host without them answers 404 and the
+        // tab stays hidden.
         async probe() {
             try {
                 const r = await fetch(API + "/models");
@@ -3265,11 +2873,6 @@ if (window.StudioModules) {
         },
         activate(container, services) {
             loadModels(); loadLoras(); loadVaes();
-            fetchJSON(API + "/memory_status").then(status => {
-                WS.memoryMergeActive = status.active;
-                if (status.active) { _els.memoryStatus.style.display = ""; _els.memoryInfo.textContent = _t("workshop.status.inMemoryMerge", "In-memory merge active"); }
-                else { _els.memoryStatus.style.display = "none"; }
-            }).catch(() => {});
         },
         deactivate() {},
     });

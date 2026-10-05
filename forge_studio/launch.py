@@ -332,6 +332,7 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
     from forge_studio import GenerationRequest
     from forge_studio.composition import build_standalone
     from forge_studio.presentation import StudioPresentation, _StudioHTTPServer
+    from forge_studio.updater import UpdateService
 
     load_configuration = None
     if config["backend"] == "headless":
@@ -608,6 +609,9 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
             defaults=defaults,
             state_root=config["studio_state_root"],
             result_root=config["result_root"],
+            # U1. Settings > Check for Updates runs the documented
+            # `git pull --ff-only` on this checkout.
+            updater=UpdateService(APP_ROOT),
         )
         actual_port = int(server.server_address[1])
         # The machine-readable ready line. Emitted exactly once, only AFTER

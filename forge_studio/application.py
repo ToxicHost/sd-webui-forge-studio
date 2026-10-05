@@ -380,6 +380,23 @@ class StudioApplication:
             self._results.forget(asset.handle)
         return winner
 
+    def register_saved_file(self, path: Path, *, media_type: str) -> ResultAsset | None:
+        """P3. A handle for a file Studio SAVED into its result root.
+
+        Save and Canvas Export write there, and the page opens the result by
+        handle -- the Extension opened `/file=<absolute path>`, which Standalone
+        does not serve. None when there is no registry, or the file is outside
+        the owned root (a folder linked in the Gallery): the save still
+        happened, there is just nothing to open.
+        """
+
+        if self._results is None:
+            return None
+        try:
+            return self._results.register(Path(path), media_type=media_type)
+        except StudioError:
+            return None
+
     def read_result_asset(self, handle: str) -> ResultPayload:
         if self._results is None:
             raise StudioError(

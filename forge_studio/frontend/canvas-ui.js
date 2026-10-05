@@ -1086,8 +1086,11 @@ function bindCanvas() {
 
         // Shift-drag brush resize — horizontal drag adjusts size
         // Excludes shape (shift = constrain proportions) and selection-adjacent tools
+        // The mask brush is a tool of its own here (the Extension painted masks
+        // with "brush"), and it was left off this list, so Shift-drag painted
+        // mask instead of resizing. It keeps its size in S.brushSize like the rest.
         if (e.shiftKey && !e.ctrlKey && !e.altKey &&
-            ["brush", "eraser", "smudge", "blur", "dodge", "clone", "liquify", "pixelate"].includes(S.tool)) {
+            ["mask", "brush", "eraser", "smudge", "blur", "dodge", "clone", "liquify", "pixelate"].includes(S.tool)) {
             _brushResizing = { startX: e.clientX, startY: e.clientY, startSize: S.brushSize };
             _capture(cv, e.pointerId);
             S.canvas.style.cursor = "ew-resize";
@@ -4230,9 +4233,17 @@ async function _ctxSaveCanvas(fmt, applyWm) {
             metadata: metadata,
             filename: docName,
         });
-        if (result.ok && result.path) {
-            // Open as /file= URL — browser shows image with native Save Image As on right-click
-            window.open(`${window.API.base}/file=${result.path}`, "_blank");
+        if (result.ok) {
+            // Open what was saved -- the browser shows it with native Save
+            // Image As on right-click. P3: Standalone answers with an opaque
+            // `url` (no filesystem path crosses the wire); the Extension
+            // answered with `path` for its `/file=` route. A save into a
+            // folder outside Studio's results has neither, and is still a
+            // save: requiring `path` here turned every Standalone export into
+            // "Saved locally (server unavailable)" plus a second download.
+            const openUrl = result.url ? `${window.API.base}${result.url}`
+                : (result.path ? `${window.API.base}/file=${result.path}` : null);
+            if (openUrl) window.open(openUrl, "_blank");
             if (window.showToast) window.showToast(`Saved ${fmt.toUpperCase()} → ${result.filename}`, "success");
         } else {
             throw new Error(result.error || "Save failed");

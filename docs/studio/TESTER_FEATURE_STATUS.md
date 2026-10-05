@@ -1,6 +1,6 @@
 # Studio Standalone — feature status for testers
 
-Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30. This describes the current Standalone source and the
+Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30; Workshop, saving and in-app updates added 2026-10-05. This describes the current Standalone source and the
 verification performed for this candidate, not the inherited Neo README.
 
 **Available** means there is an implemented Standalone path. **Contract-tested**
@@ -25,8 +25,11 @@ generation-model paths were accessed.
 | Gallery | Implemented with limitations | Service contract tests passed; fresh browser behavior still needs tester feedback. Image similarity/metadata are not universal format guarantees. |
 | Preferences | Available with persistence limits | Server persistence tests passed. An ephemeral port changes browser origin, resetting browser-local theme/tool/layout state; use a stable port when needed. |
 | Wildcards / Lexicon | Available | Editor and preference tests passed. Configured local folders are required for user content. |
-| LoRAs / embeddings | Implemented; not certified in this pass | Catalogue/bridge source exists. Model-family and combination-specific behavior still needs testing. |
-| Develop | Partial / not certified in this pass | Browser editing code exists. The saved-presets endpoint returns 404; float sidecar workflows are not certified. |
+| LoRAs / embeddings | Implemented; not certified in this pass | Catalogue/bridge source exists. Model-family and combination-specific behavior still needs testing. The LoRA and Checkpoint browsers (previews, activation text, Civitai lookup) were added 2026-10-05 with route tests. |
+| Develop | Partial / not certified in this pass | Browser editing code exists and saved presets work (2026-10-05). Float (High Precision) sources are not available. |
+| Workshop | Available for testing (2026-10-05) | Weighted Sum, Add Difference and SLERP merges, block weights, LoRA and VAE baking, multi-step chains, History, and a basic Inspector. The arithmetic was tested against the reference formulas on test models, and a real merge on real checkpoints. LoRA baking is proven on test LoRAs only. Results go to the first checkpoint folder; files are never overwritten. |
+| Saving and export | Available (2026-10-05) | Save, Save to Gallery, Canvas Export (with watermark stamping) and Export EXR (Standard) write files; route tests passed. |
+| Check for Updates | Available for Git installations (2026-10-05) | Fast-forward update of the tracked branch, then a restart. It refuses copies with edited or own-committed files. Tested against real Git repositories, including a shallow clone. |
 | Support report | Available | Script is supplied; report is created locally for inspection before sharing. |
 
 ## Unavailable, incomplete or outside this candidate
@@ -35,18 +38,21 @@ generation-model paths were accessed.
 |---|---|
 | ControlNet | Unavailable in the Standalone generation path. The adapter returns only None for model/preprocessor catalogues. Retained Neo code does not make this a working Studio feature. |
 | Live Painting generation | Unavailable. Live status explicitly reports available: false. Ordinary Canvas painting is separate and available. |
-| Workshop | Unavailable backend. Its UI requests /studio/workshop routes that have no service in the current Standalone router. |
 | Regional / attention-couple generation | Unavailable in the supported generation request. Saving/editing regional document state does not prove regional inference. |
-| High Precision float output | Not available as a supported workflow. A Develop panel does not prove genuine float generation capture. |
+| High Precision float output | Not available. Export EXR (Standard) converts the 8-bit image; no float capture is offered. |
 | Separate Inpaint Sketch mode | Intentionally superseded by Canvas painting/masks; not an outstanding promised mode. |
 | Batch Count / Batch Size | Not provided as true batched generation. Submit separate jobs to use the queue. |
-| Automatic updates | Unavailable. Git installations support manual `git pull --ff-only`; see [GIT_INSTALL.md](GIT_INSTALL.md). ZIP updates use a separate candidate folder and backups. |
+| Automatic updates | Not automatic. Git installations update from Settings > About > Check for Updates or with `git pull --ff-only`; see [GIT_INSTALL.md](GIT_INSTALL.md). ZIP updates use a separate candidate folder and backups. |
 | Multi-user / public network service | Outside the Windows local-use candidate. |
 | Linux/NVIDIA Docker tester | Experimental [setup supplied](../../packaging/docker/README.md); config and native adapter checks only. Image build, GPU passthrough and container generation await the Linux tester. |
 | macOS, Linux, Docker, AMD/Intel GPU certification | Not established by this review. Some platform/source support exists, but is not a tested release promise. |
 
 ## Verification scope
 
+- 2026-10-05 update: the full development suite ran 6,139 tests. 11 failed, all
+  in development-guide text checks that also failed before this update; none
+  are in the runtime. Workshop, saving, Check for Updates and the Gallery
+  additions have their own route and arithmetic tests.
 - Git delivery: 49 focused checks passed, one Windows symlink test skipped.
   Fresh venv setup from cached dependencies/assets, `git pull --ff-only`, offline
   reuse, settings preservation and `pip check` passed. The non-mock backend

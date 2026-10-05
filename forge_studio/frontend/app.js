@@ -2931,11 +2931,23 @@ async function doGenerate(overrides = {}) {
     // enough: metadata is on by default, so the server's default already
     // matches an owner who left the toggle lit, and the group has to travel
     // the moment the toggle is dark.
-    if (format !== "jpeg" && format !== "webp" && embedMetadata) return null;
+    // P11. The legacy "generation" watermark mode stamps the written file;
+    // the default "export" mode leaves generated files clean.
+    const watermark = (State.watermarkEnable && State.watermarkName
+      && (State.watermarkApplyMode || "export") === "generation") ? {
+        name: State.watermarkName,
+        position: State.watermarkPosition || "bottom-right",
+        opacity: State.watermarkOpacity ?? 1.0,
+        scale: State.watermarkScale ?? 0.15,
+        margin: (State.watermarkMargin ?? 16) | 0,
+        rotation: State.watermarkRotation ?? 0,
+      } : null;
+    if (format !== "jpeg" && format !== "webp" && embedMetadata && !watermark) return null;
     const group = { format };
     // Sent only when it is FALSE. True is the server default, so sending it
     // would put a field on every request that says exactly nothing.
     if (!embedMetadata) group.embed_metadata = false;
+    if (watermark) group.watermark = watermark;
     const lossless = format === "webp"
       && !!document.getElementById("toggleWebpLossless")?.classList.contains("on");
     if (lossless) {

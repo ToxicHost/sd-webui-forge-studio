@@ -273,6 +273,9 @@ class HeadlessSessionLoader(StudioSessionLoader):
         self._payload_opener = payload_opener
         self._engine_builder = engine_builder
         self._identity_installer = identity_installer
+        #: MI1. The checkpoint's name as Neo writes it, set from the references
+        #: each load resolves; None until a load has resolved one.
+        self._checkpoint_label: str | None = None
         self._startup_globals = startup_globals
         self._bookkeeping = bookkeeping
         self._port_factory = port_factory
@@ -413,6 +416,9 @@ class HeadlessSessionLoader(StudioSessionLoader):
             # 3. The payload boundary. Exactly three roles, in a fixed order.
             check_cancelled("payloads")
             references = self._references(profile)
+            # MI1. Only the file name travels on; the reference stays private.
+            from .model_identity import checkpoint_label
+            self._checkpoint_label = checkpoint_label(references.get("checkpoint"))
             opener = self._payload_opener or self._default_payload_opener
             self.payload_opened = True
             opened = self._guard(
@@ -725,11 +731,16 @@ class HeadlessSessionLoader(StudioSessionLoader):
 
         return build_forge_engine(**kwargs)
 
-    @staticmethod
-    def _default_identity_installer(engine: Any):
-        from .model_identity import attach_model_identity
+    def _default_identity_installer(self, engine: Any):
+        """MI1: with the checkpoint's own name, which is what `create_infotext`
+        writes as `Model:`. It was always the placeholder, so every image's
+        metadata named `studio-tier0-session` instead of the checkpoint."""
 
-        return attach_model_identity(engine).to_dict()
+        from .model_identity import DEFAULT_RUNTIME_LABEL, attach_model_identity
+
+        return attach_model_identity(
+            engine, runtime_label=self._checkpoint_label or DEFAULT_RUNTIME_LABEL
+        ).to_dict()
 
     @staticmethod
     def _default_bookkeeping(engine: Any):

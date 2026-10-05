@@ -27,6 +27,13 @@ Use Ctrl+C in the console to stop Studio. Cancel a running job first where
 possible. Back up settings/artwork before updating and review saved absolute paths
 if you move an installation. Arbitrary-version downgrades are not certified.
 
+## Network
+
+Studio serves its pages to this computer only. It goes online only when you
+press a button that says so: Civitai lookup in the Checkpoint and LoRA browsers
+(civitai.com), and Settings > About > Check for Updates (Git, to the repository
+you cloned). Nothing updates automatically. Setup downloads dependencies.
+
 ## Problem reports
 
 From the clone directory:

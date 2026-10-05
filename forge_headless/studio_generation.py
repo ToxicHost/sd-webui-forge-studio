@@ -501,6 +501,23 @@ def _translated_soft(settings: Any) -> Any:
     )
 
 
+def _watermark_options(settings: Any) -> Any:
+    """P11. The generation-time watermark, in Studio's names, or None."""
+
+    if settings is None:
+        return None
+    from .generation_request import WatermarkOptions
+
+    return WatermarkOptions(
+        name=str(getattr(settings, "name", "") or ""),
+        position=str(getattr(settings, "position", "bottom-right") or "bottom-right"),
+        opacity=float(getattr(settings, "opacity", 1.0)),
+        scale=float(getattr(settings, "scale", 0.15)),
+        margin=int(getattr(settings, "margin", 16)),
+        rotation=float(getattr(settings, "rotation", 0.0)),
+    )
+
+
 def translate_request(
     request: GenerationRequest,
     *,
@@ -599,6 +616,8 @@ def translate_request(
             # a smaller scale, so this field has its own guard.
             embed_metadata=bool(
                 getattr(_output_settings, "embed_metadata", True)),
+            watermark=_watermark_options(
+                getattr(_output_settings, "watermark", None)),
         )
 
     headless = FirstImageRequest(

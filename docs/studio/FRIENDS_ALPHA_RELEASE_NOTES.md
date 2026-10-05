@@ -3,6 +3,42 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Workshop, saving and in-app updates — 2026-10-05
+
+Update once by hand with `git pull --ff-only`, then close Studio and run
+Start-Studio.bat again. From then on, Settings > About > Check for Updates can do
+this for you. Only the Studio interface and its local server change; the
+generation engine, launcher, installer, requirements and models are unchanged.
+
+- **Workshop is available.** Merge two checkpoints with Weighted Sum, Add
+  Difference or SLERP, optionally per block (with presets); bake LoRAs or a VAE
+  into a checkpoint; chain several steps on one board; and look back through
+  merges in History. The Inspector shows model info, whether two models can be
+  merged, and a memory estimate. Results are saved into your first checkpoint
+  folder and appear in the model lists straight away; an existing file is never
+  overwritten. Merging needs free system RAM of roughly the larger model's size
+  plus 2 GB. Experimental merge methods and Test Merge are not included.
+- **Check for Updates works** for Git installations. It lists what is new and
+  updates with one click (fast-forward only), then asks you to restart. It
+  refuses, and says why, if Studio's own files have been edited.
+- **Saving works:** Save, Save to Gallery and Canvas Export now write files, and
+  Export EXR (Standard) is available from the output menu.
+- **Model browsers:** the Checkpoint and LoRA browsers show previews, LoRA activation
+  text and preferred weight, and can look a model up on Civitai.
+- **Lexicon:** duplicate and move wildcard files, and search inside them.
+- **Develop:** saved presets work.
+- **Gallery and session strip:** opening an output in the Gallery finds it by
+  content, and the session strip shows thumbnails.
+- **Watermarks:** Settings > Watermark lists your watermark images (with an Open
+  folder button) and stamps them on Export. The older "stamp every generated
+  image" mode works too.
+- **Generation metadata** now names the real checkpoint file.
+- **Mask brush:** Shift+drag resizes it, as with the other brushes.
+
+Workshop and the new routes have automated tests; a real merge was also checked
+on real checkpoints. LoRA baking is proven on test files only, so please report
+any LoRA that bakes wrongly. Keep backups of models you care about.
+
 ## Canvas painting update — 2026-09-30
 
 Update with `git pull --ff-only`, then restart Studio. Only the Studio interface

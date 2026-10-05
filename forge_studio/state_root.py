@@ -62,6 +62,7 @@ STATE_LAYOUT = (
     "layouts/",
     "presets/develop/",
     "watermarks/",
+    "workshop/",
     "gallery/",
 )
 

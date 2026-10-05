@@ -456,6 +456,25 @@ class AspectRoll(Contract):
 
 
 @dataclass(frozen=True)
+class WatermarkSettings(Contract):
+    """P11. The legacy "generation" watermark mode: stamp the generated file.
+
+    The page sends this only when Settings > Watermark is on AND its mode is
+    "generation" (`app.js` `_outputGroup`); the default "export" mode stamps at
+    Save/Export instead and never travels here. The Extension's request fields
+    (`studio_api.py:1130-1140`), Studio's names. `name` is a bare file in the
+    state root's `watermarks/` -- resolved by the writer, never a path.
+    """
+
+    name: str
+    position: str = "bottom-right"
+    opacity: float = 1.0
+    scale: float = 0.15
+    margin: int = 16
+    rotation: float = 0.0
+
+
+@dataclass(frozen=True)
 class OutputSettings(Contract):
     """How the finished picture is encoded on its way to disk.
 
@@ -499,6 +518,8 @@ class OutputSettings(Contract):
     #: group existed". It means the defaults, and the default writes a
     #: `parameters` chunk. See `_validated_output`.
     embed_metadata: bool = True
+    #: P11. Generation-time watermark, or None (the default "export" mode).
+    watermark: WatermarkSettings | None = None
 
 
 @dataclass(frozen=True)
