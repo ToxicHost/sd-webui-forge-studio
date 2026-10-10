@@ -367,6 +367,13 @@ function _isIdentity(p) {
 // ========================================================================
 // MATH HELPERS
 // ========================================================================
+// A number box's live "input" fires mid-typing, and a lone "-" (or "", or
+// "1e") reads as value "". Number("") is 0, and writing that back put a 0
+// in the box, so a negative could not be typed. Live updates wait for a
+// complete number; the box's "change" (Enter, leaving it) still commits.
+function _numberIsPartial(el) {
+    return el.value === "" || !!(el.validity && el.validity.badInput);
+}
 function _clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 function _clampU8(v) { v = (v + 0.5) | 0; return v < 0 ? 0 : (v > 255 ? 255 : v); }
 function _smoothstep(edge0, edge1, x) {
@@ -615,6 +622,8 @@ var _CAL_PRIMARIES_XY = [
 ];
 // D65 white point in xy.
 var _CAL_WHITE_XY = [0.3127, 0.3290];
+// Lowest y a pushed primary may reach; at y <= 0 its XYZ is undefined.
+var _CAL_MIN_Y = 0.01;
 
 // Slider ±100 → ±20° rotation, matching darktable's stock soft range
 // for `red_hue` / `green_hue` / `blue_hue` in dt_iop_primaries_params_t
@@ -693,6 +702,15 @@ function _rotatePrimaryInXY(primaryXY, whiteXY, allPrimariesXY, rotationRad, pur
     var theta = Math.atan2(dy, dx) + rotationRad;
     var edgeDist = _findDistanceToEdge(theta, whiteXY, allPrimariesXY);
     var rNew = edgeDist * purity;
+    // Keep y above zero. Blue sits at y = 0.06, so purity past ~1.17 put it
+    // below y = 0, _xyToXYZ answered [0,0,0], the matrix went singular, and
+    // _buildCalibrationMatrix fell back to identity: Blue Saturation above
+    // about +33 did nothing at all. Stop the ray just above y = 0 instead.
+    var sinT = Math.sin(theta);
+    if (sinT < 0) {
+        var rMax = (whiteXY[1] - _CAL_MIN_Y) / -sinT;
+        if (rNew > rMax) rNew = rMax;
+    }
     return [
         whiteXY[0] + rNew * Math.cos(theta),
         whiteXY[1] + rNew * Math.sin(theta),
@@ -922,6 +940,9 @@ function _getLumBlur(rLin, gLin, bLin, w, h, sig) {
     return cache;
 }
 
+// +100 Shadows lifts the darkest regions by this many stops.
+var SHADOW_LIFT_STOPS = 3;
+
 function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt) {
     var lumBlur = blurCache.lumBlur;
     var lw = blurCache.lw;
@@ -935,12 +956,25 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
     // Effect: a dark pixel (v=0.2) moves much further than a bright pixel
     // (v=0.9) under the same +Shadows slider, output never overshoots, and
     // chroma drops naturally as pixels are pushed toward the extremes.
+    // The mask is read BILINEARLY from the quarter-res blur. Nearest-cell
+    // reads (`(y>>2)*lw + (x>>2)`) were fine while the mask only nudged a
+    // pixel, but a +Shadows lift multiplies by up to 8x and the 4x4 cells
+    // showed as visible steps across a shadow's edge.
+    var lh = blurCache.lh;
     for (var y = 0; y < h; y++) {
-        var ly = (y >> 2) * lw;
+        var fy = (y + 0.5) / 4 - 0.5;
+        if (fy < 0) fy = 0; else if (fy > lh - 1) fy = lh - 1;
+        var y0 = fy | 0, y1 = y0 + 1 < lh ? y0 + 1 : y0, wy = fy - y0;
+        var r0 = y0 * lw, r1 = y1 * lw;
         var rowF = y * w;
         for (var x = 0; x < w; x++) {
             var i = rowF + x;
-            var Yl = lumBlur[ly + (x >> 2)];
+            var fx = (x + 0.5) / 4 - 0.5;
+            if (fx < 0) fx = 0; else if (fx > lw - 1) fx = lw - 1;
+            var x0 = fx | 0, x1 = x0 + 1 < lw ? x0 + 1 : x0, wx = fx - x0;
+            var top = lumBlur[r0 + x0] + (lumBlur[r0 + x1] - lumBlur[r0 + x0]) * wx;
+            var bot = lumBlur[r1 + x0] + (lumBlur[r1 + x1] - lumBlur[r1 + x0]) * wx;
+            var Yl = top + (bot - top) * wy;
             // Build masks against perceptual (sRGB-encoded) luminance, NOT
             // linear. A pixel at sRGB 0.7 sits at linear ~0.45, so a linear
             // smoothstep(0.5, 1.0, Y) returns ~0 for almost everything and
@@ -949,7 +983,19 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
             // still runs in linear for HDR correctness.
             var Yp = _lin2u8(Yl) / 255;
             var R = rLin[i], G = gLin[i], B = bLin[i];
-            if (sh !== 0) {
+            if (sh > 0) {
+                // +Shadows is an exposure lift, up to SHADOW_LIFT_STOPS where
+                // the region is darkest. It used to push toward 1.0 like the
+                // other three directions, which for a dark pixel is a jump
+                // across the whole range: +50 took sRGB 10 to grey 187 and
+                // +100 to white, with the colour stripped. A gain keeps the
+                // channel ratios, so a warm shadow stays warm.
+                var smL = 1 - _smoothstep(0, 0.5, Yp);
+                if (smL > 0) {
+                    var gain = Math.pow(2, SHADOW_LIFT_STOPS * sh * smL);
+                    R *= gain; G *= gain; B *= gain;
+                }
+            } else if (sh < 0) {
                 var sm = 1 - _smoothstep(0, 0.5, Yp);
                 var dv = sh * sm;                    // signed
                 if (dv !== 0) {
@@ -986,6 +1032,50 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
             bLin[i] = B;
         }
     }
+}
+
+// ========================================================================
+// BLACKS — black point in perceptual luminance, colour kept
+//
+// +Blacks lifts pure black to BLACKS_RANGE (perceptual) and eases the rest
+// up proportionally; -Blacks clips the bottom BLACKS_RANGE to black and
+// stretches the remainder. Applied as a luminance ratio, so every channel
+// scales together and a coloured shadow keeps its hue. Built once per slider
+// value as a 4096-entry linear-Y -> linear-Y LUT.
+// ========================================================================
+var BLACKS_RANGE = 0.12;            // ±100 moves the black point ~sRGB 31
+var _blacksLutCache = { value: null, lut: null };
+
+function _srgbEncode(y) { return y <= 0.0031308 ? 12.92 * y : 1.055 * Math.pow(y, 1 / 2.4) - 0.055; }
+function _srgbDecode(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+
+function _blacksLut(blacks) {
+    if (!blacks) return null;
+    if (_blacksLutCache.value === blacks) return _blacksLutCache.lut;
+    var b = blacks / 100;
+    var lut = new Float32Array(4096);
+    for (var i = 0; i < 4096; i++) {
+        var lp = _srgbEncode(i / 4095);
+        var out;
+        if (b > 0) {
+            var bp = b * BLACKS_RANGE;
+            out = bp + lp * (1 - bp);
+        } else {
+            var c = -b * BLACKS_RANGE;
+            out = lp <= c ? 0 : (lp - c) / (1 - c);
+        }
+        lut[i] = _srgbDecode(out);
+    }
+    _blacksLutCache = { value: blacks, lut: lut };
+    return lut;
+}
+
+function _lutAt(lut, y) {
+    var pos = y * 4095;
+    var i = pos | 0;
+    if (i >= 4095) return lut[4095];
+    var f = pos - i;
+    return lut[i] + (lut[i + 1] - lut[i]) * f;
 }
 
 // ========================================================================
@@ -1086,8 +1176,14 @@ function _applyDevelopFull(ctx, w, h, p) {
     var calibWht = (p.calibWhiteLin == null) ? 1 : p.calibWhiteLin;
     if (calibBlk < 0) calibBlk = 0; else if (calibBlk > 1) calibBlk = 1;
     if (calibWht < 0) calibWht = 0; else if (calibWht > 1) calibWht = 1;
-    var blackPoint = calibBlk - (p.blacks  || 0) / 500;
+    // The Blacks SLIDER is no longer part of this linear remap. A linear
+    // black point of ±0.2 is sRGB ~124: Blacks -50 took a warm 100/75/50 to
+    // 49/0/0 and +100 lifted near-black to grey 114. It now moves the black
+    // point in perceptual luminance and keeps each pixel's colour; see
+    // _blacksLut below. The eyedropper calibration stays a true linear remap.
+    var blackPoint = calibBlk;
     var whitePoint = calibWht - (p.whites  || 0) / 500;
+    var blacksLut = _blacksLut(p.blacks | 0);
     var range = whitePoint - blackPoint;
     if (Math.abs(range) < 1e-4) range = 1e-4;
     var invRange = 1 / range;
@@ -1115,6 +1211,18 @@ function _applyDevelopFull(ctx, w, h, p) {
             r = (r - blackPoint) * invRange;
             g = (g - blackPoint) * invRange;
             b = (b - blackPoint) * invRange;
+        }
+        if (blacksLut) {
+            var yb = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            if (yb < 1) {
+                var yb2 = _lutAt(blacksLut, yb < 0 ? 0 : yb);
+                if (yb > 1e-6) {
+                    var kb = yb2 / yb;
+                    r *= kb; g *= kb; b *= kb;
+                } else {
+                    r = g = b = yb2;           // pure black has no colour to keep
+                }
+            }
         }
         // clamp + re-encode via 4096-entry LUT (no Math.pow in the hot loop)
         d[m]     = _lin2u8(r);
@@ -1681,13 +1789,18 @@ function _separableMinFilter(buf, w, h, radius) {
     var tmp = new Float32Array(buf.length);
 
     // Horizontal pass: for each row, sliding-window min over k pixels.
+    //
+    // The output for column x - radius covers [x - 2*radius, x]. The drop
+    // test used to be `< x - radius`, which kept only [x - radius, x]: the
+    // right half of the window, so a dark sample spread left by `radius`
+    // and right by nothing, and Dehaze's map sat shifted against the image.
     var deqIdx = new Int32Array(w);
     for (var y = 0; y < h; y++) {
         var row = y * w;
         var head = 0, tail = 0;
         for (var x = 0; x < w; x++) {
             // Drop indices outside the window
-            while (head < tail && deqIdx[head] < x - radius) head++;
+            while (head < tail && deqIdx[head] < x - 2 * radius) head++;
             // Drop indices whose value is >= incoming (they can never be the min while incoming is in window)
             var v = buf[row + x];
             while (head < tail && buf[row + deqIdx[tail - 1]] >= v) tail--;
@@ -1697,7 +1810,7 @@ function _separableMinFilter(buf, w, h, radius) {
             if (outX >= 0) tmp[row + outX] = buf[row + deqIdx[head]];
         }
         // Trailing tail (last `radius` columns)
-        for (var xt = w - radius; xt < w; xt++) {
+        for (var xt = Math.max(0, w - radius); xt < w; xt++) {
             while (head < tail && deqIdx[head] < xt - radius) head++;
             tmp[row + xt] = buf[row + deqIdx[head]];
         }
@@ -1708,14 +1821,14 @@ function _separableMinFilter(buf, w, h, radius) {
     for (var x2 = 0; x2 < w; x2++) {
         var headV = 0, tailV = 0;
         for (var y2 = 0; y2 < h; y2++) {
-            while (headV < tailV && deqIdxV[headV] < y2 - radius) headV++;
+            while (headV < tailV && deqIdxV[headV] < y2 - 2 * radius) headV++;
             var v2 = tmp[y2 * w + x2];
             while (headV < tailV && tmp[deqIdxV[tailV - 1] * w + x2] >= v2) tailV--;
             deqIdxV[tailV++] = y2;
             var outY = y2 - radius;
             if (outY >= 0) buf[outY * w + x2] = tmp[deqIdxV[headV] * w + x2];
         }
-        for (var yt = h - radius; yt < h; yt++) {
+        for (var yt = Math.max(0, h - radius); yt < h; yt++) {
             while (headV < tailV && deqIdxV[headV] < yt - radius) headV++;
             buf[yt * w + x2] = tmp[deqIdxV[headV] * w + x2];
         }
@@ -1723,6 +1836,14 @@ function _separableMinFilter(buf, w, h, radius) {
 }
 
 // Box blur via two passes of the moving-average. Cheap guided-filter approx.
+//
+// Edges clamp: the running update below adds src[w-1] past the right edge
+// and drops src[0] before the left one, so the first window is `radius`
+// copies of src[0] plus src[0..radius]. It used to add src[0..radius-1]
+// TWICE on top of that -- 3r+1 samples divided by 2r+1 -- and the surplus was
+// never dropped, so the whole row came out too high. In Dehaze that inflated
+// the transmission everywhere: the effect weakened, and where t neared 1 it
+// went past it and ADDED haze (a dark square went 30 -> 52 at +80).
 function _boxBlur1D(src, dst, w, h, radius, axis) {
     var inv = 1 / (radius * 2 + 1);
     if (axis === "h") {
@@ -1730,8 +1851,8 @@ function _boxBlur1D(src, dst, w, h, radius, axis) {
             var row = y * w;
             // Initialize the running sum with the first window
             var sum = 0;
-            for (var i = 0; i < radius; i++) sum += src[row + i] * 2;       // mirror left edge
-            for (var i2 = 0; i2 <= radius; i2++) sum += src[row + i2];
+            for (var i = 0; i < radius; i++) sum += src[row];
+            for (var i2 = 0; i2 <= radius; i2++) sum += src[row + (i2 < w ? i2 : w - 1)];
             for (var x = 0; x < w; x++) {
                 dst[row + x] = sum * inv;
                 var addX = x + radius + 1;
@@ -1743,8 +1864,8 @@ function _boxBlur1D(src, dst, w, h, radius, axis) {
     } else {
         for (var x2 = 0; x2 < w; x2++) {
             var sum2 = 0;
-            for (var j = 0; j < radius; j++) sum2 += src[j * w + x2] * 2;
-            for (var j2 = 0; j2 <= radius; j2++) sum2 += src[j2 * w + x2];
+            for (var j = 0; j < radius; j++) sum2 += src[x2];
+            for (var j2 = 0; j2 <= radius; j2++) sum2 += src[(j2 < h ? j2 : h - 1) * w + x2];
             for (var y2 = 0; y2 < h; y2++) {
                 dst[y2 * w + x2] = sum2 * inv;
                 var addY = y2 + radius + 1;
@@ -1762,7 +1883,30 @@ function _boxBlur(buf, w, h, radius) {
     _boxBlur1D(tmp, buf, w, h, radius, "v");
 }
 
+// Guided filter: smooth `p` in place while following the edges of `guide`.
+// Six box blurs; `eps` sets how strongly an edge in the guide is kept.
+function _guidedFilter(guide, p, w, h, radius, eps) {
+    var n = w * h;
+    var mI = new Float32Array(guide), mP = new Float32Array(p);
+    var mII = new Float32Array(n), mIP = new Float32Array(n);
+    for (var i = 0; i < n; i++) { mII[i] = guide[i] * guide[i]; mIP[i] = guide[i] * p[i]; }
+    _boxBlur(mI, w, h, radius); _boxBlur(mP, w, h, radius);
+    _boxBlur(mII, w, h, radius); _boxBlur(mIP, w, h, radius);
+    var a = new Float32Array(n), b = new Float32Array(n);
+    for (var j = 0; j < n; j++) {
+        var varI = mII[j] - mI[j] * mI[j];
+        var cov = mIP[j] - mI[j] * mP[j];
+        a[j] = cov / (varI + eps);
+        b[j] = mP[j] - a[j] * mI[j];
+    }
+    _boxBlur(a, w, h, radius); _boxBlur(b, w, h, radius);
+    for (var k = 0; k < n; k++) p[k] = a[k] * guide[k] + b[k];
+}
+
 function _dehazeIsIdentity(p) { return (p.dehaze | 0) === 0; }
+
+// -100 Dehaze blends this far toward the haze colour, leaving the image readable.
+var DEHAZE_MAX_HAZE = 0.6;
 
 function _applyDehaze(d, n, w, h, p) {
     if ((p._version | 0) < 2) return;
@@ -1772,7 +1916,6 @@ function _applyDehaze(d, n, w, h, p) {
     // Window size: 15 px at 1024x, scale roughly with min dim.
     var winRadius = Math.max(3, Math.round(Math.min(w, h) * 0.0075));
     if (winRadius > 25) winRadius = 25;
-    var blurRadius = Math.max(1, winRadius >> 1);
 
     // ===== Dark channel =====
     var dark = new Float32Array(n);
@@ -1789,11 +1932,22 @@ function _applyDehaze(d, n, w, h, p) {
     // a single near-white outlier (sun glint, specular highlight, signature
     // pixel on AI-generated images) used to skew A toward 255 and crush the
     // recovery. Averaging stabilizes A across content types.
-    var topN = Math.max(10, Math.floor(n * 0.001));
-    var idxArr = new Uint32Array(n);
-    for (var ii = 0; ii < n; ii++) idxArr[ii] = ii;
-    var idxList = Array.from(idxArr);
+    // Found by a 1024-bin histogram, not by sorting every pixel: the full
+    // sort was most of Dehaze's time on a large canvas. Only the pixels in
+    // the bins above the threshold are sorted, which picks the same set.
+    var topN = Math.min(n, Math.max(10, Math.floor(n * 0.001)));
+    var BINS = 1024;
+    var hist = new Uint32Array(BINS);
+    for (var hi = 0; hi < n; hi++) {
+        var bin = (dark[hi] * (BINS - 1)) | 0;
+        hist[bin < 0 ? 0 : (bin >= BINS ? BINS - 1 : bin)]++;
+    }
+    var cutoff = BINS - 1, seen = 0;
+    for (; cutoff > 0; cutoff--) { seen += hist[cutoff]; if (seen >= topN) break; }
+    var idxList = [];
+    for (var ii = 0; ii < n; ii++) { if ((dark[ii] * (BINS - 1)) >= cutoff) idxList.push(ii); }
     idxList.sort(function (a, b) { return dark[b] - dark[a]; });
+    if (idxList.length < topN) topN = idxList.length;
     var Ar = 0, Ag = 0, Ab = 0;
     for (var t = 0; t < topN; t++) {
         var pi = idxList[t];
@@ -1832,7 +1986,16 @@ function _applyDehaze(d, n, w, h, p) {
             if (tv < 0.2) tv = 0.2;
             t1[i3] = tv;
         }
-        _boxBlur(t1, w, h, blurRadius);
+        // Refine t to the image's edges with a guided filter (He, Sun & Tang,
+        // TPAMI 2013 -- the refinement the Dark Channel paper uses). A plain
+        // box blur leaves t as blocky as the min-filter window, which showed
+        // as light rims round every dark object once Dehaze worked.
+        var guide = new Float32Array(n);
+        for (var gi = 0, gm = 0; gi < n; gi++, gm += 4) {
+            guide[gi] = (0.299 * d[gm] + 0.587 * d[gm + 1] + 0.114 * d[gm + 2]) / 255;
+        }
+        _guidedFilter(guide, t1, w, h, winRadius * 2, 1e-3);
+        for (var gc = 0; gc < n; gc++) { if (t1[gc] < 0.2) t1[gc] = 0.2; else if (t1[gc] > 1) t1[gc] = 1; }
 
         // Recover: J_c = (I_c - A_c)/t + A_c
         for (var i4 = 0, m4 = 0; i4 < n; i4++, m4 += 4) {
@@ -1843,7 +2006,9 @@ function _applyDehaze(d, n, w, h, p) {
         }
     } else {
         // ===== Negative dehaze: blend toward atmospheric light (add haze) =====
-        var omegaN = -dehaze;
+        // Capped at DEHAZE_MAX_HAZE: a full blend at -100 replaced the whole
+        // image with one flat haze colour.
+        var omegaN = -dehaze * DEHAZE_MAX_HAZE;
         var ao = 1 - omegaN;
         for (var i5 = 0, m5 = 0; i5 < n; i5++, m5 += 4) {
             d[m5]     = _clampU8(d[m5]     * ao + Ar * omegaN);
@@ -2105,11 +2270,20 @@ function _unsharpMaskLuma(d, w, h, radius, amount, midToneWeighted, threshold, u
 }
 
 // ========================================================================
-// VIGNETTE — radial multiplicative falloff.
+// VIGNETTE — radial falloff from a clear centre.
 //
-// factor = 1 + (amount/1) * r²,  r = normalized distance from center.
-// amount < 0 darkens edges, amount > 0 lightens.
+// r² is normalised so the CORNERS are 1 (it used to be 2 there: -50 drove
+// the corner factor to 0, pure black, and +50 tripled it into clipping).
+// The effect starts at VIGNETTE_START and eases in with a smoothstep.
+//   amount < 0: multiply by 1 - |amount| * VIGNETTE_DARKEN * falloff
+//               (all channels together, so hue is kept)
+//   amount > 0: blend toward white by amount * VIGNETTE_LIGHTEN * falloff
+//               (never clips; a multiply would)
 // ========================================================================
+var VIGNETTE_START = 0.25;
+var VIGNETTE_DARKEN = 0.85;
+var VIGNETTE_LIGHTEN = 0.6;
+
 function _applyVignette(d, w, h, amount) {
     var cx = w / 2, cy = h / 2;
     var invCx = 1 / cx, invCy = 1 / cy;
@@ -2119,13 +2293,20 @@ function _applyVignette(d, w, h, amount) {
         var row = y * w * 4;
         for (var x = 0; x < w; x++) {
             var dx = (x - cx) * invCx;
-            var r2 = dx * dx + dy2;
-            var factor = 1 + amount * r2;
-            if (factor < 0) factor = 0;
+            var falloff = _smoothstep(VIGNETTE_START, 1, (dx * dx + dy2) * 0.5);
+            if (falloff <= 0) continue;
             var p = row + x * 4;
-            d[p]     = _clampU8(d[p]     * factor);
-            d[p + 1] = _clampU8(d[p + 1] * factor);
-            d[p + 2] = _clampU8(d[p + 2] * factor);
+            if (amount < 0) {
+                var factor = 1 + amount * VIGNETTE_DARKEN * falloff;
+                d[p]     = _clampU8(d[p]     * factor);
+                d[p + 1] = _clampU8(d[p + 1] * factor);
+                d[p + 2] = _clampU8(d[p + 2] * factor);
+            } else {
+                var k = amount * VIGNETTE_LIGHTEN * falloff;
+                d[p]     = _clampU8(d[p]     + (255 - d[p])     * k);
+                d[p + 1] = _clampU8(d[p + 1] + (255 - d[p + 1]) * k);
+                d[p + 2] = _clampU8(d[p + 2] + (255 - d[p + 2]) * k);
+            }
         }
     }
 }
@@ -3069,7 +3250,7 @@ function _buildHSLSection(body) {
                 rangeEl.addEventListener("input",  function () { commit(rangeEl.value, true); });
                 rangeEl.addEventListener("change", function () { commit(rangeEl.value, false); });
                 numEl.addEventListener("change",   function () { commit(numEl.value, false); });
-                numEl.addEventListener("input",    function () { commit(numEl.value, true); });
+                numEl.addEventListener("input",    function () { if (!_numberIsPartial(numEl)) commit(numEl.value, true); });
                 lbl.addEventListener("dblclick", function () { commit(0, false); });
             })(mode, bandIdx, range, num);
             wrap.appendChild(row);
@@ -3437,7 +3618,7 @@ function _buildSliderRow(field) {
     range.addEventListener("input",  function () { commit(range.value, true); });
     range.addEventListener("change", function () { commit(range.value, false); });
     num.addEventListener("change",   function () { commit(num.value, false); });
-    num.addEventListener("input",    function () { commit(num.value, true); });
+    num.addEventListener("input",    function () { if (!_numberIsPartial(num)) commit(num.value, true); });
 
     function reset() { commit(field.def, false); }
     lbl.addEventListener("dblclick", reset);

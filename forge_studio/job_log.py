@@ -223,16 +223,19 @@ class JobLog:
         """
 
         for outcome in outcomes or ():
-            logger.info(_safe(
-                "AUTODETAIL " + _pairs((
-                    ("job", job_id),
-                    ("slot", getattr(outcome, "index", "?")),
-                    ("detector", getattr(outcome, "detector", "")),
-                    ("candidates", getattr(outcome, "candidates", 0)),
-                    ("regions", getattr(outcome, "regions", 0)),
-                    ("detailed", getattr(outcome, "detailed", False)),
-                ))
-            ))
+            pairs = [
+                ("job", job_id),
+                ("slot", getattr(outcome, "index", "?")),
+                ("detector", getattr(outcome, "detector", "")),
+                ("candidates", getattr(outcome, "candidates", 0)),
+                ("regions", getattr(outcome, "regions", 0)),
+                ("detailed", getattr(outcome, "detailed", False)),
+            ]
+            # AD1: faces an inpaint's mask does not reach, left alone. Only
+            # when there were some, so every other line reads as before.
+            if getattr(outcome, "outside_mask", 0):
+                pairs.append(("outside_mask", outcome.outside_mask))
+            logger.info(_safe("AUTODETAIL " + _pairs(tuple(pairs))))
 
     def stage(self, job_id: str, *, stage: str) -> None:
         """A transition that already existed as a state and a label.

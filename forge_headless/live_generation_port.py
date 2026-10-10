@@ -425,6 +425,92 @@ def _clip_to_mask(result: Any, source_image: Any, mask: Any,
         return result
 
 
+def _inpaint_region_filter(request: Any, size: tuple[int, int]) -> Any:
+    """For an inpaint, which Auto Detail regions are worth a pass. Or None.
+
+    After Auto Detail, `_clip_inpaint` puts back every pixel outside the
+    owner's mask. A face entirely outside it is therefore detailed for
+    nothing: the pass runs, and the clip discards it. This answers, per
+    region, whether any of the owner's mask lies near enough to keep some
+    of the result (tester request, 2026-10-10).
+
+    MEASURED, not "touches anywhere". A region is detailed when at least
+    REGION_MASK_OVERLAP of the SMALLER of the two -- the region (a box from a
+    bbox detector, an outline from a -seg one) or the owner's mask -- lies in
+    the other. Overlap over the smaller area is the larger of "share of the
+    face the mask covers" and "share of the mask on the face", so at one half
+    it reads: the mask covers at least half of this face, or at least half
+    of the mask is on it. That is the owner's rule -- a character they are
+    clearly not inpainting is not detailed:
+
+      * two faces cheek to cheek, mask drawn over face A: A overlaps ~100%;
+        B gets only the spill, even a sloppy third of B's cheek, and is
+        skipped. The first version widened the box by ~40 px and kept B on
+        one pixel;
+      * a small mask on B's eye: the whole mask is inside B, so it is 100%
+        of the smaller area, and B is detailed.
+
+    A bbox detector's rectangle is judged by the OVAL inside it: its corners
+    are background, and a mask there barely brushing the face is not a mask
+    on the face.
+
+    None -- no filtering -- when the job is not an inpaint, when the mask is
+    inverted (the clip does not model inversion, so neither does this), and
+    when anything here cannot be worked out. When in doubt, detail.
+    """
+
+    source = getattr(request, "source", None)
+    mask = getattr(source, "mask", None)
+    if mask is None or not getattr(source, "mask_present", False):
+        return None
+    options = getattr(request, "inpaint", None)
+    if bool(getattr(options, "invert", False)):
+        return None
+    try:
+        from PIL import Image, ImageChops, ImageDraw
+
+        owner = mask.convert("L").resize(size)
+        owner = owner.point(lambda value: 255 if value > 0 else 0)
+        owner_area = owner.histogram()[255]
+    except Exception:  # noqa: BLE001 - no filter is always safe
+        return None
+    if owner_area == 0:
+        return None
+
+    def keep(region: Any, slot: Any) -> bool:
+        try:
+            box = region.getbbox()
+            if box is None:
+                return True
+            face = region.convert("L").crop(box).point(lambda value: 255 if value > 0 else 0)
+            face_area = face.histogram()[255]
+            if face_area == 0:
+                return True
+            # A bbox detector's region is a filled RECTANGLE, and its corners
+            # are background -- hair, sky, the dark beside a cheek. A mask in
+            # a corner was counted as "on the face" (owner, 2026-10-10: a mask
+            # that barely brushed a face still had it detailed). Judge a
+            # rectangle by the oval inside it, which is where a face is; the
+            # detail pass itself still uses the full rectangle.
+            box_w, box_h = box[2] - box[0], box[3] - box[1]
+            if face_area >= 0.97 * box_w * box_h:
+                face = Image.new("L", (box_w, box_h), 0)
+                ImageDraw.Draw(face).ellipse((0, 0, box_w - 1, box_h - 1), fill=255)
+                face_area = face.histogram()[255] or 1
+            both = ImageChops.darker(face, owner.crop(box)).histogram()[255]
+            return both >= REGION_MASK_OVERLAP * min(face_area, owner_area)
+        except Exception:  # noqa: BLE001 - when unsure, detail it
+            return True
+
+    return keep
+
+
+#: An inpaint's Auto Detail details a region when at least this share of the
+#: smaller of (region, owner's mask) overlaps the other. See
+#: `_inpaint_region_filter`.
+REGION_MASK_OVERLAP = 0.5
+
+
 def _upscale_for_hires(image, name: str, width: int, height: int):
     """Neo own upscaler registry, or LANCZOS when it has no such entry.
 
@@ -1302,6 +1388,7 @@ class StudioLiveGenerationPort:
             ),
             on_slot_start=on_slot_start,
             cancelled=cancelled,
+            keep_region=_inpaint_region_filter(request, images[0].size),
         )
         # In place, so `_publish` reads the detailed image without knowing a
         # detector ever ran.

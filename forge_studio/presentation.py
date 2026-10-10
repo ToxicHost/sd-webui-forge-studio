@@ -3448,6 +3448,17 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             if path.startswith("/studio/workshop/"):
                 self._workshop_route("GET", path)
                 return
+            # G1. Settings > GPU: the cards, the saved choice, what is in use.
+            if path == "/studio/gpus":
+                from forge_headless.gpu_select import describe
+
+                store = getattr(self.server.source_adapter, "_preferences", None)
+                try:
+                    selected = store.read().get("gpu_device") if store is not None else None
+                except Exception:  # noqa: BLE001 - an unreadable store is "auto"
+                    selected = None
+                self._send_json(HTTPStatus.OK, describe(selected))
+                return
             # U1. Check for Updates. Without an updater the adapter answers.
             updater = getattr(self.server, "updater", None)
             if updater is not None and path in ("/studio/api/check-update",

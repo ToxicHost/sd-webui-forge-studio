@@ -3,6 +3,38 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Develop fixes, smarter Auto Detail, GPU choice — 2026-10-10
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Only the Studio interface and
+its local server change; the generation engine, launcher, installer,
+requirements and models are unchanged.
+
+- **Develop (the edit tab) — fixed:**
+  - Shadows lifts dark areas and keeps their colour (it used to wash them out to
+    grey or white).
+  - Blacks moves the black point gently and keeps colour (it used to crush or
+    wash out the whole image).
+  - Dehaze now removes haze (positive values used to add it), with no light
+    rims around objects; -100 no longer replaces the picture with one colour.
+  - Vignette darkens or lightens the corners softly instead of turning them
+    black or white.
+  - Calibration > Blue Saturation works above +33.
+  - A minus sign can be typed in the number boxes (it used to turn into 0).
+  Images you already edited in Develop will look different with these fixes.
+- **Auto Detail while inpainting** skips faces your mask is not on. A face is
+  detailed when the mask covers at least half of it, or at least half of the
+  mask is on it — so masking one of two characters details only that one, and
+  a small mask on an eye still details that face. Skipped faces show as
+  `outside_mask=` in the console, and the job is faster.
+- **Settings > Performance & VRAM > GPU** (only on machines with two or more
+  graphics cards): choose which card Studio runs on. Takes effect at the next
+  start.
+
+The Develop fixes were measured with automated checks and a visual comparison;
+the Auto Detail change was confirmed on a real inpaint. The GPU choice has only
+been tested in code — please report how it behaves on a two-card machine.
+
 ## Workshop, saving and in-app updates — 2026-10-05
 
 Update once by hand with `git pull --ff-only`, then close Studio and run

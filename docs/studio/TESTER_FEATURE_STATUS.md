@@ -1,6 +1,6 @@
 # Studio Standalone — feature status for testers
 
-Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30; Workshop, saving and in-app updates added 2026-10-05. This describes the current Standalone source and the
+Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30; Workshop, saving and in-app updates added 2026-10-05; Develop fixes, inpaint-aware Auto Detail and a GPU choice added 2026-10-10. This describes the current Standalone source and the
 verification performed for this candidate, not the inherited Neo README.
 
 **Available** means there is an implemented Standalone path. **Contract-tested**
@@ -18,7 +18,7 @@ generation-model paths were accessed.
 | Basic image generation | Implemented; GPU retest required | Request/lifecycle tests passed. No new model-family, VRAM, quality or performance certification. |
 | Img2Img and Inpaint | Implemented; GPU/browser retest required | Source image, mask and translation contracts tested. These do not prove every Canvas interaction or final pixel result. |
 | Hires | Implemented; GPU retest required | Hires and Img2Img/Hires contracts passed. Requires a suitable upscaler/model and enough memory. |
-| Auto Detail | Implemented; GPU retest required | Detector/slot contracts passed. Five pinned detectors included and ultralytics declared. A detector finding no target can leave the image unchanged. |
+| Auto Detail | Implemented; GPU retest required | Detector/slot contracts passed. Five pinned detectors included and ultralytics declared. A detector finding no target can leave the image unchanged. While inpainting, faces the mask is not on are skipped (2026-10-10; confirmed on a real inpaint). |
 | Queue and cancellation | Available | Queue/lifecycle contracts passed. Cancellation is bounded by safe execution points, not necessarily immediate. |
 | Canvas brushes, layers and masks | Available for testing | Brush Engine V2 is the default painting engine (2026-09-30): automated brush checks passed and every preset was reviewed with a mouse. Aliased/Pixel Perfect brushes, touch input and mask/region painting use the previous engine. No tablet certification. |
 | Canvas recovery | Implemented | Recovery-store tests passed. Undo history is not restored. Keep separate artwork backups. |
@@ -26,9 +26,10 @@ generation-model paths were accessed.
 | Preferences | Available with persistence limits | Server persistence tests passed. An ephemeral port changes browser origin, resetting browser-local theme/tool/layout state; use a stable port when needed. |
 | Wildcards / Lexicon | Available | Editor and preference tests passed. Configured local folders are required for user content. |
 | LoRAs / embeddings | Implemented; not certified in this pass | Catalogue/bridge source exists. Model-family and combination-specific behavior still needs testing. The LoRA and Checkpoint browsers (previews, activation text, Civitai lookup) were added 2026-10-05 with route tests. |
-| Develop | Partial / not certified in this pass | Browser editing code exists and saved presets work (2026-10-05). Float (High Precision) sources are not available. |
+| Develop | Available for testing | Saved presets work (2026-10-05). Shadows, Blacks, Dehaze, Vignette, Blue Saturation and negative number entry fixed and measured with automated checks (2026-10-10). Float (High Precision) sources are not available. |
 | Workshop | Available for testing (2026-10-05) | Weighted Sum, Add Difference and SLERP merges, block weights, LoRA and VAE baking, multi-step chains, History, and a basic Inspector. The arithmetic was tested against the reference formulas on test models, and a real merge on real checkpoints. LoRA baking is proven on test LoRAs only. Results go to the first checkpoint folder; files are never overwritten. |
 | Saving and export | Available (2026-10-05) | Save, Save to Gallery, Canvas Export (with watermark stamping) and Export EXR (Standard) write files; route tests passed. |
+| GPU choice | Available on machines with two or more GPUs (2026-10-10) | Settings > Performance & VRAM > GPU; applied at the next start. Tested in code only; no two-card hardware check yet. |
 | Check for Updates | Available for Git installations (2026-10-05) | Fast-forward update of the tracked branch, then a restart. It refuses copies with edited or own-committed files. Tested against real Git repositories, including a shallow clone. |
 | Support report | Available | Script is supplied; report is created locally for inspection before sharing. |
 
@@ -49,6 +50,10 @@ generation-model paths were accessed.
 
 ## Verification scope
 
+- 2026-10-10 update: the full development suite ran 6,178 tests. The 11
+  failures are the same development-guide text checks as before; none are in the
+  runtime. Develop's tones are measured by running the real Develop code; the
+  inpaint Auto Detail skip was confirmed on a real inpaint.
 - 2026-10-05 update: the full development suite ran 6,139 tests. 11 failed, all
   in development-guide text checks that also failed before this update; none
   are in the runtime. Workshop, saving, Check for Updates and the Gallery

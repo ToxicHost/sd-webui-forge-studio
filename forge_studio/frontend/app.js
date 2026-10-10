@@ -7315,6 +7315,60 @@ function bindUI() {
     window.Prefs?.set("gpu_tile_compositing", on);
   });
 
+  // ===== GPU (G1) =====
+  // Shown only when there is a choice to make. The pick is saved as a
+  // preference and applied by the launcher at the NEXT start: a running
+  // engine cannot move its models to another card.
+  (async () => {
+    const row = document.getElementById("gpuDeviceRow");
+    const select = document.getElementById("settingGpuDevice");
+    const status = document.getElementById("gpuDeviceStatus");
+    if (!row || !select) return;
+    let info;
+    try {
+      const r = await fetch(API.base + "/studio/gpus");
+      if (!r.ok) return;
+      info = await r.json();
+    } catch (_) { return; }
+    const gpus = Array.isArray(info.gpus) ? info.gpus : [];
+    if (gpus.length < 2) return;
+    const label = (g) => g.index + ": " + g.name + (g.memory_gb ? " (" + g.memory_gb + " GB)" : "");
+    select.innerHTML = "";
+    const auto = document.createElement("option");
+    auto.value = "auto";
+    auto.textContent = _i18n("settings.vram.gpuDevice.auto", "Automatic");
+    select.appendChild(auto);
+    for (const g of gpus) {
+      const opt = document.createElement("option");
+      opt.value = String(g.index);
+      opt.textContent = label(g);
+      select.appendChild(opt);
+    }
+    select.value = info.selected || "auto";
+    const renderStatus = (restart) => {
+      if (!status) return;
+      if (info.source === "environment") {
+        status.textContent = _i18n("settings.vram.gpuDevice.environment",
+          "CUDA_VISIBLE_DEVICES is set where Studio was started, so this choice is not applied.");
+      } else if (restart) {
+        status.textContent = _i18n("settings.vram.gpuDevice.restart",
+          "Restart Studio to switch to this GPU.");
+      } else if (info.in_use) {
+        status.textContent = _i18n("settings.vram.gpuDevice.inUse", "In use: {name}",
+          { name: label(info.in_use) });
+      } else {
+        status.textContent = "";
+      }
+    };
+    renderStatus(!!info.restart_required);
+    row.hidden = false;
+    select.addEventListener("change", () => {
+      window.Prefs?.set("gpu_device", select.value);
+      renderStatus(true);
+      showToast(_i18n("settings.vram.gpuDevice.saved", "GPU saved. Restart Studio to use it."), "info");
+    });
+  })();
+
   // ===== WORKFLOW DEFAULTS =====
   // Param IDs to save/restore, organized by category for UX-016.
   // type: "val" = .value, "check" = .classList.contains("checked"), "checkbox" = .checked, "on"/"active"/"open" = classList

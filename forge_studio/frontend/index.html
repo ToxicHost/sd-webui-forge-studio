@@ -1989,6 +1989,17 @@
                   <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.vram.title">VRAM</span></span>
                 </div>
                 <div class="settings-card-body">
+                  <!-- G1. Shown only when the machine has more than one GPU. -->
+                  <div class="settings-item" id="gpuDeviceRow" data-setting-key="settingGpuDevice" data-setting-search="gpu graphics card device select multi second nvidia cuda" hidden>
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.vram.gpuDevice">GPU</span>
+                      <p class="settings-item-description" data-i18n="settings.vram.gpuDevice.description">Which graphics card Studio uses. Takes effect the next time Studio starts.</p>
+                      <p class="settings-item-description" id="gpuDeviceStatus"></p>
+                    </div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingGpuDevice" aria-label="GPU" data-i18n-aria-label="settings.vram.gpuDevice"></select>
+                    </div>
+                  </div>
                   <div class="settings-item settings-item-actions" data-setting-key="unloadModelBtn" data-setting-search="unload model vram free memory gpu">
                     <div class="settings-item-control settings-item-control-wide">
                       <button class="defaults-btn settings-btn-block" id="unloadModelBtn" data-i18n="settings.vram.unloadModel">Unload Model from VRAM</button>

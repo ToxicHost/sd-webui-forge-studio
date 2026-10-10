@@ -125,15 +125,22 @@ class SlotOutcome:
     candidates: int
     regions: int
     detailed: bool
+    #: Regions left alone because an inpaint would have discarded the pass:
+    #: none of the owner's mask lies near them. Recorded only when non-zero,
+    #: so a job without that filter keeps its metadata exactly as before.
+    outside_mask: int = 0
 
     def describe(self) -> dict[str, Any]:
-        return {
+        described = {
             "slot": self.index,
             "detector": self.detector,
             "candidates": self.candidates,
             "regions": self.regions,
             "detailed": self.detailed,
         }
+        if self.outside_mask:
+            described["outside_mask"] = self.outside_mask
+        return described
 
 
 def _never_cancelled() -> bool:
@@ -148,12 +155,19 @@ def run_auto_detail(
     detail: Callable[[Any, Any, SlotSpec], Any],
     on_slot_start: Callable[[SlotSpec], None] | None = None,
     cancelled: Callable[[], bool] = _never_cancelled,
+    keep_region: Callable[[Any, SlotSpec], bool] | None = None,
 ) -> tuple[list[Any], tuple[SlotOutcome, ...]]:
     """Run the enabled slots over `images`, in order. Returns the new images.
 
     The images are replaced, not accumulated: slot 2 details what slot 1
     produced. That is what makes the three slots a pipeline rather than three
     independent edits of the same frame.
+
+    `keep_region(mask, slot)`, when given, is asked about each region before
+    its pass; False skips it. The inpaint path uses it to leave faces the
+    owner's mask does not reach, whose detail the outside-mask clip would
+    throw away (tester request, 2026-10-10). Every pass uses the same seed,
+    so skipping one region does not change any other.
     """
 
     from .detector_adapter import (
@@ -186,6 +200,7 @@ def run_auto_detail(
 
         candidates = 0
         regions = 0
+        outside = 0
         detailed = False
         for position, image in enumerate(current):
             found = detect(
@@ -202,6 +217,10 @@ def run_auto_detail(
             masks = mask_preprocess(
                 list(found.masks), kernel=slot.dilate_erode
             )
+            if keep_region is not None:
+                kept = [mask for mask in masks if keep_region(mask, slot)]
+                outside += len(masks) - len(kept)
+                masks = kept
             regions += len(masks)
             for mask in masks:
                 _check_cancelled(cancelled)
@@ -216,6 +235,7 @@ def run_auto_detail(
                 candidates=candidates,
                 regions=regions,
                 detailed=detailed,
+                outside_mask=outside,
             )
         )
 

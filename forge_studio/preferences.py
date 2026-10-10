@@ -98,6 +98,7 @@ PREFERENCE_KEYS = frozenset({
     "education",
     "gal_send_prompt_version",
     "gallery_folder",
+    "gpu_device",
     "gpu_tile_compositing",
     "layout_preset",
     "panel_ui",
@@ -137,6 +138,8 @@ PREFERENCE_SHAPES: dict[str, Any] = {
     "education": dict,
     "gal_send_prompt_version": ("resolved", "raw"),
     "gallery_folder": str,
+    # G1. "auto" or a card index, applied at the next start.
+    "gpu_device": str,
     "gpu_tile_compositing": bool,
     "layout_preset": str,
     "panel_ui": dict,
@@ -450,6 +453,19 @@ class PreferenceStore(_Document):
 
     FILENAME = PREFERENCES_FILENAME
     ALLOWED_KEYS = PREFERENCE_KEYS
+
+
+def read_preference(state_root: str | Path | None, key: str, default: Any = None) -> Any:
+    """One preference, read before the server's store exists. Never raises.
+
+    For the launcher's start-up steps (G1, the GPU choice, which must be
+    applied before the engine boots and long before the store is built).
+    """
+
+    try:
+        return PreferenceStore(state_root).read().get(key, default)
+    except Exception:  # noqa: BLE001 - an unreadable document reads as unset
+        return default
 
 
 class DefaultsStore(_Document):

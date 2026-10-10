@@ -413,6 +413,26 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
     # standing one up for it would be a second initialisation path.
     if config["backend"] == "headless":
         from forge_headless.backend_bootstrap import READY, bootstrap_backend
+        from forge_headless.gpu_select import apply_choice
+
+        # G1. The GPU chosen in Settings, made the only visible card BEFORE
+        # the bootstrap's first torch import -- after it, CUDA has already
+        # picked. Read through `read_preference` because the store the server
+        # uses is built further down.
+        try:
+            from forge_studio.preferences import read_preference
+
+            gpu = apply_choice(read_preference(config["studio_state_root"], "gpu_device"))
+            if gpu["source"] == "settings":
+                logger.info("GPU: using card %s, chosen in Settings.", gpu["applied"])
+            elif gpu["source"] == "environment":
+                logger.info("GPU: CUDA_VISIBLE_DEVICES=%s is set, so the Settings "
+                            "choice is not applied.", gpu["applied"])
+            elif gpu["source"] == "too_late":
+                logger.warning("GPU: the Settings choice could not be applied; the "
+                               "engine had already started.")
+        except Exception:  # noqa: BLE001 - a bad preference never stops a start
+            logger.warning("GPU: the Settings choice could not be read; using the default card.")
 
         # `runtime` is whatever the launcher was given, which for an owner
         # who has not touched Start-Studio.bat is nothing at all. Studio then

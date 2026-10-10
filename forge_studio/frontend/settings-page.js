@@ -104,6 +104,7 @@
     toggleAutoUnload: { category: "performance-vram", section: "vram" },
     autoUnloadMinutesRow: { category: "performance-vram", section: "vram" },
     autoUnloadMinutes: { category: "performance-vram", section: "vram" },
+    settingGpuDevice: { category: "performance-vram", section: "vram" },
     toggleGpuTileComposite: { category: "performance-vram", section: "vram" },
     keyboardShortcutsSettings: { category: "keyboard-shortcuts", section: "keyboard-shortcuts" },
     shortcutSettingsRows: { category: "keyboard-shortcuts", section: "keyboard-shortcuts" },
