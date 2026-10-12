@@ -47,6 +47,14 @@ class GenerationOutcome:
     gpu_tile_composite_requested: bool = False
     upscale_composite_effective: str = ""
     upscale_composite_reason: str = ""
+    #: Anima's emphasis mode (EM1): what the job asked for ("studio" / "neo"),
+    #: what ran, and why they differ (a fallback: prompt editing, AND, a
+    #: separate Hires prompt). All "" on a model that is not Anima, where the
+    #: mode does not exist. The image's own infotext records the same fact as
+    #: "Emphasis: Studio" (or "Original") whenever the prompt has weights.
+    anima_emphasis_requested: str = ""
+    anima_emphasis_effective: str = ""
+    anima_emphasis_reason: str = ""
     #: What the Auto Detail slots actually did, as `SlotOutcome` values.
     #:
     #: Carried on the OUTCOME rather than read back off the port, because the

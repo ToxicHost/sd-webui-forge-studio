@@ -259,6 +259,9 @@ _GENERATION_FIELDS = (
     # names no Clip Skip and the engine keeps whatever the option already says,
     # so a client that predates this field is byte-identical to before.
     "clip_skip",
+    # Anima's emphasis mode (EM1): "studio" or "neo". Absent means the
+    # owner's default, "studio"; ignored on every model that is not Anima.
+    "anima_emphasis",
     # The Hires second pass, as ONE nested group. P0.7's arrival is additive:
     # a sibling key inside `generation`, so nothing about the base request was
     # re-cut to make room for it.
@@ -549,6 +552,7 @@ def _validated_request_payload(payload: Any) -> dict[str, Any]:
         # would cost the owner the image they actually asked for.
         "preview_enabled": _preview_flag(payload.get("preview_enabled")),
         "clip_skip": _validated_clip_skip(payload.get("clip_skip")),
+        "anima_emphasis": _validated_anima_emphasis(payload.get("anima_emphasis")),
         "hires": _validated_hires(payload.get("hires")),
         "output": _validated_output(payload.get("output")),
         "auto_detail": _validated_auto_detail(payload.get("auto_detail")),
@@ -843,6 +847,29 @@ def _validated_clip_skip(value: Any) -> int | None:
     if not 1 <= value <= 12:
         raise PresentationError("clip_skip must be between 1 and 12.")
     return int(value)
+
+
+#: Anima's emphasis modes (EM1). Spelled here rather than imported:
+#: `forge_headless.anima_emphasis.REQUEST_VALUES` holds the same pair, and a
+#: test keeps them equal, but this module must not import the backend side.
+ANIMA_EMPHASIS_VALUES = ("studio", "neo")
+
+
+def _validated_anima_emphasis(value: Any) -> str | None:
+    """Anima's emphasis mode, or None for the owner's default ("studio").
+
+    "neo" is Neo-compatible: Neo's own path, bit-exact, which the page names
+    when it reuses an image whose weighted prompt was not made in Studio
+    mode. Anything else is refused by name rather than read as the default,
+    because a misspelt "neo" would otherwise reproduce the wrong image.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in ANIMA_EMPHASIS_VALUES:
+        raise PresentationError(
+            "anima_emphasis must be one of: " + ", ".join(ANIMA_EMPHASIS_VALUES) + ".")
+    return value
 
 
 def _validated_inpaint(value: Any) -> Any:

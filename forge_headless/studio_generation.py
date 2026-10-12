@@ -315,6 +315,9 @@ STUDIO_REQUEST_FIELDS = (
     # per-job option scope; whether it changes the image is then Neo's
     # conditioning, which reads the option this scope overrides.
     "clip_skip",
+    # Anima's emphasis mode (EM1). Carried the same way: the port turns an
+    # effective "studio" into a scoped `emphasis` override.
+    "anima_emphasis",
 )
 
 #: Headless fields Studio's request cannot express. They take the headless
@@ -681,6 +684,9 @@ def translate_request(
         # about Clip Skip, and coercing it to a number here would silently
         # start overriding an engine option on every job that never asked.
         clip_skip=getattr(request, "clip_skip", None),
+        # None crosses as None: the port applies the owner's default there,
+        # where it knows whether the model is Anima at all.
+        anima_emphasis=getattr(request, "anima_emphasis", None),
     )
     return RequestTranslation(
         headless_request=headless,
@@ -1270,6 +1276,17 @@ class HeadlessGenerationSession:
                     outcome.upscale_composite_effective),
                 "upscale_composite_reason": str(
                     outcome.upscale_composite_reason),
+                # Anima's emphasis mode (EM1), the same requested/effective
+                # pair. All "" when the model is not Anima. A requested
+                # "studio" with an effective "neo" is a fallback the page owes
+                # the owner a notice about, and `anima_emphasis_reason` says
+                # which one.
+                "anima_emphasis_requested": str(
+                    getattr(outcome, "anima_emphasis_requested", "")),
+                "anima_emphasis_effective": str(
+                    getattr(outcome, "anima_emphasis_effective", "")),
+                "anima_emphasis_reason": str(
+                    getattr(outcome, "anima_emphasis_reason", "")),
                 # The RESOLVED Hires recipe, present only when a second pass
                 # actually ran. Absent means the result is a single-pass image,
                 # which is a different claim from "Hires ran with defaults" and

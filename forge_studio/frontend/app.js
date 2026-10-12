@@ -167,7 +167,96 @@ function _applyInfotextToUI(infotext) {
     _set("paramHiresScale", p.hiresUpscale);
   }
 
+  // Which weights the reused picture was made with (EM1). Every reuse of
+  // parameters lands here, so this is where the owner's rule lives.
+  AnimaEmphasis.fromReusedInfotext(p);
+
   console.log("[Studio] Applied infotext params:", Object.keys(p).join(", "));
+}
+
+
+// ═══════════════════════════════════════════
+// ANIMA EMPHASIS MODE (EM1)
+// ═══════════════════════════════════════════
+//
+// On Anima, Studio runs weights its own way by default ("Studio": the prompt
+// read as one piece, BREAK dropped, and weights that change how strongly a
+// word attends). "Neo-compatible" is Neo's own behaviour, bit-exact: the only
+// way to reproduce a weighted image made elsewhere, or made in Studio before
+// this mode existed. The owner's decisions, 2026-10-11; research in
+// Evidence/anima-weights-2026-10-11, source review EM1-anima-emphasis.md.
+//
+// The page names "neo" in exactly one case, the owner's rule: REUSING a
+// picture whose prompt has weights or BREAK and whose metadata does not say
+// "Emphasis: Studio" (Neo, Forge and A1111 write "Original", or nothing at
+// all for their default). A chip says so, and one click returns to Studio.
+// An unweighted prompt makes the same picture in both modes, so it never
+// switches anything.
+const AnimaEmphasis = {
+  // null = the owner's default ("studio"); "neo" = Neo-compatible.
+  mode: null,
+
+  isAnima() { return (window.State?._currentModelArch || "") === "cosmos"; },
+
+  // Weights or BREAK, read as Neo's `uses_emphasis` does plus BREAK: an
+  // unescaped bracket, or BREAK as a word. Generous on purpose -- a false
+  // "weighted" only ever chooses the mode that reproduces the old picture.
+  usesWeightsOrBreak(text) {
+    const t = String(text || "");
+    return /(^|[^\\])[([]/.test(t) || /\bBREAK\b/.test(t);
+  },
+
+  fromReusedInfotext(parsed) {
+    if (!parsed) return;
+    const weighted = this.usesWeightsOrBreak(parsed.prompt)
+      || this.usesWeightsOrBreak(parsed.negativePrompt);
+    this.set(weighted && parsed.emphasis !== "Studio" ? "neo" : null);
+  },
+
+  set(mode) {
+    this.mode = mode === "neo" ? "neo" : null;
+    this.render();
+    _refreshTokenCountSoon();
+  },
+
+  // Sent only when it says something: absent is the owner's default, so a
+  // fresh page sends exactly what it sent before this existed.
+  requestField() { return this.mode ? { anima_emphasis: this.mode } : {}; },
+
+  render() {
+    const chip = document.getElementById("animaEmphasisChip");
+    if (!chip) return;
+    chip.hidden = this.mode !== "neo";
+    if (chip.hidden) { chip.textContent = ""; return; }
+    chip.textContent = "";
+    const label = document.createElement("span");
+    label.textContent = _i18n("anima.emphasis.neoChip", "Neo-compatible weights");
+    label.title = _i18n("anima.emphasis.neoChipTitle",
+      "Anima: this reused picture was made without Studio weights, so its weights run the old way to reproduce it. Unweighted prompts are the same either way.");
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "anima-emphasis-back";
+    back.textContent = _i18n("anima.emphasis.useStudio", "Use Studio weights");
+    back.addEventListener("click", () => this.set(null));
+    chip.append(label, back);
+  },
+
+  // A finished Anima job whose Studio weights fell back says why (the owner's
+  // decision 3: prompt editing, AND, or a separate Hires prompt).
+  noticeFrom(metadata) {
+    if (!metadata || metadata.anima_emphasis_requested !== "studio") return;
+    if (metadata.anima_emphasis_effective !== "neo" || !metadata.anima_emphasis_reason) return;
+    showToast(_i18n("anima.emphasis.fellBack", "Anima weights ran Neo-compatible for this image: {reason}.",
+      { reason: metadata.anima_emphasis_reason }), "info");
+  },
+};
+window.AnimaEmphasis = AnimaEmphasis;
+
+// The token bar depends on the model's architecture and the weights mode as
+// well as the prompt (EM1's BREAK note), so those changes re-run it too.
+// Hoisted, and safe before `TokenCounter` exists further down this file.
+function _refreshTokenCountSoon() {
+  try { TokenCounter.scheduleTokenCount(); } catch (_) { /* not yet defined */ }
 }
 
 
@@ -2086,7 +2175,7 @@ async function populateDropdowns() {
           preferredTE: savedTE,
           previousArch: previousArchForRestore,
         });
-        State._currentModelArch = check.arch || "unknown";
+        State._currentModelArch = check.arch || "unknown"; _refreshTokenCountSoon();
         _applyArchRules(State._currentModelArch);
         delete teSelect.dataset.pendingValue;
         _syncSearchable(teSelect);
@@ -3070,6 +3159,10 @@ async function doGenerate(overrides = {}) {
         // clamped to the engine's 1..12 rather than trusted, because a scrub
         // control writes whatever it was dragged to.
         ...(_clipSkipValue() !== null ? { clip_skip: _clipSkipValue() } : {}),
+        // Anima's emphasis mode (EM1). Absent unless a reused picture named
+        // "neo": the server applies the owner's default ("studio") on Anima
+        // and ignores the field on every other model.
+        ...AnimaEmphasis.requestField(),
         width: parseInt(document.getElementById("paramWidth")?.value) || 768,
         height: parseInt(document.getElementById("paramHeight")?.value) || 768,
         // WP1. The operation and its inputs, from the ONE collection above.
@@ -6101,7 +6194,7 @@ function bindUI() {
       previousArch,
       check,
     });
-    State._currentModelArch = check.arch || "unknown";
+    State._currentModelArch = check.arch || "unknown"; _refreshTokenCountSoon();
     _applyArchRules(State._currentModelArch);
 
     const textEncoder = teSelect?.value || "None";
@@ -6376,7 +6469,7 @@ function bindUI() {
           preferredTE: current,
           previousArch: State._currentModelArch || null,
         });
-        State._currentModelArch = check.arch || "unknown";
+        State._currentModelArch = check.arch || "unknown"; _refreshTokenCountSoon();
         _applyArchRules(State._currentModelArch);
       } else if (teSelect && _optionExists(teSelect, current)) {
         teSelect.value = current;
@@ -11033,6 +11126,17 @@ const TokenCounter = {
     if (!prompt.trim()) {
       el.textContent = "";
       el.className = "token-count";
+      return;
+    }
+
+    // Anima has one 512-slot sequence, not CLIP's 75-token chunks, so a BREAK
+    // count would describe something that does not happen (EM1). In Studio
+    // weights BREAK is dropped outright; Neo-compatible keeps Neo's tokens.
+    if (window.AnimaEmphasis && AnimaEmphasis.isAnima() && /\bBREAK\b/.test(prompt)) {
+      el.textContent = AnimaEmphasis.mode === "neo"
+        ? _i18n("anima.emphasis.breakNeo", "BREAK is not a separator on Anima")
+        : _i18n("anima.emphasis.breakStudio", "BREAK has no effect on Anima");
+      el.className = "token-count note";
       return;
     }
 

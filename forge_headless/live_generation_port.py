@@ -974,20 +974,86 @@ class StudioLiveGenerationPort:
         if clip_skip is not None:
             overrides["CLIP_stop_at_last_layers"] = int(clip_skip)
 
+        # ANIMA'S EMPHASIS MODE (EM1; the owner's decision, 2026-10-11), and
+        # it travels the same way for the same reason. `opts.emphasis` is read
+        # per call by the Anima engine (`anima_engine.py:81`), by the
+        # cond-cache key (`processing.py:440`) and for the recorded
+        # "Emphasis" name (`:83`), so one scoped override makes all three
+        # agree. "Neo-compatible" -- requested, a fallback, or a model that is
+        # not Anima -- sets NOTHING, which is Neo's own path untouched.
+        emphasis_requested, emphasis_effective, emphasis_reason = (
+            self._anima_emphasis_decision(request))
+        if emphasis_effective == "studio":
+            from .anima_emphasis import STUDIO
+
+            overrides["emphasis"] = STUDIO
+
         with job_scope(**overrides):
             outcome = self._generate_in_scope(request, progress)
             decision = recorded()
 
-        if not decision or not is_dataclass(outcome):
+        if not is_dataclass(outcome):
             return outcome
-        return replace(
-            outcome,
-            gpu_tile_composite_requested=bool(
-                decision.get("gpu_tile_composite_requested", False)),
-            upscale_composite_effective=str(
-                decision.get("upscale_composite_effective", "")),
-            upscale_composite_reason=str(
-                decision.get("upscale_composite_reason", "")),
+        updates: dict[str, object] = {}
+        if decision:
+            updates.update(
+                gpu_tile_composite_requested=bool(
+                    decision.get("gpu_tile_composite_requested", False)),
+                upscale_composite_effective=str(
+                    decision.get("upscale_composite_effective", "")),
+                upscale_composite_reason=str(
+                    decision.get("upscale_composite_reason", "")),
+            )
+        if emphasis_requested:
+            updates.update(
+                anima_emphasis_requested=emphasis_requested,
+                anima_emphasis_effective=emphasis_effective,
+                anima_emphasis_reason=emphasis_reason,
+            )
+        return replace(outcome, **updates) if updates else outcome
+
+    def _anima_emphasis_decision(self, request: object) -> tuple[str, str, str]:
+        """`(requested, effective, reason)`, all "" when the model is not Anima.
+
+        The fallback (decision 3) looks at every prompt this job will
+        condition on: the main pair, the Hires pair when Hires runs, and each
+        Auto Detail slot's pair when Auto Detail runs (an empty slot prompt
+        means the main one, `_detail_pass`). The rules are
+        `anima_emphasis.decide`, tested without an engine.
+        """
+
+        from . import anima_emphasis
+
+        engine = self._engine
+        is_anima = engine is not None and hasattr(engine, "text_processing_engine_anima")
+        if not is_anima:
+            return "", "", ""
+        from modules import prompt_parser
+
+        positive = str(getattr(request, "positive_prompt", "") or "")
+        negative = str(getattr(request, "negative_prompt", "") or "")
+        prompts: list[tuple[str, str, bool]] = [
+            ("prompt", positive, True), ("negative prompt", negative, False)]
+        if getattr(request, "enable_adetailer", False):
+            for slot in tuple(getattr(request, "ad_slots", ()) or ()):
+                label = f"Auto Detail {int(getattr(slot, 'index', 0) or 0)}"
+                prompts.append((f"{label} prompt",
+                                str(getattr(slot, "prompt", "") or ""), True))
+                prompts.append((f"{label} negative prompt",
+                                str(getattr(slot, "negative_prompt", "") or ""), False))
+        hires = None
+        if getattr(request, "enable_hr", False):
+            hires = (str(getattr(request, "hr_prompt", "") or ""), positive,
+                     str(getattr(request, "hr_negative_prompt", "") or ""), negative)
+        state = anima_emphasis.status()
+        return anima_emphasis.decide(
+            getattr(request, "anima_emphasis", None),
+            is_anima=True, prompts=prompts, hires=hires,
+            steps=int(getattr(request, "steps", 20) or 20),
+            schedules=prompt_parser.get_learned_conditioning_prompt_schedules,
+            multicond=prompt_parser.get_multicond_prompt_list,
+            adapter_available=anima_emphasis.available(),
+            adapter_reason=str(state.get("reason", "")),
         )
 
     def _generate_in_scope(self, request: object, progress: object) -> object:

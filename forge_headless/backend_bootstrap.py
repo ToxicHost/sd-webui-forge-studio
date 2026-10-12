@@ -287,6 +287,16 @@ def bootstrap_backend(
 
         plugins = load_compute_plugins(root)
 
+        # Anima's "Studio" emphasis mode (EM1): registers the option and wraps
+        # three Neo callables, each of which calls the original unchanged
+        # unless a job's scope says "Studio". After the samplers, because one
+        # wrapped callable is `Sampler.launch_sampling`; after the options,
+        # because `anima_engine` binds `opts` at import. Never raises: a
+        # failure leaves Neo untouched and Studio mode unavailable.
+        from .anima_emphasis import install as _install_anima_emphasis
+
+        _install_anima_emphasis()
+
         from .neo_registries import read_registries
 
         registries = read_registries()

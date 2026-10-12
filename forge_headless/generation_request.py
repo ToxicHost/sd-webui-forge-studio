@@ -356,6 +356,12 @@ class FirstImageRequest:
     #: infotext from `p`, so setting `p.clip_skip` would move the metadata
     #: without moving the image.
     clip_skip: int | None = None
+    #: Anima's emphasis mode (EM1): "studio", "neo", or None for the owner's
+    #: default ("studio"). Consumed by `live_generation_port.generate`, which
+    #: turns an effective "studio" into `job_scope(emphasis="Studio")`; any
+    #: other outcome sets nothing, which is Neo's own path. Ignored on every
+    #: model that is not Anima.
+    anima_emphasis: str | None = None
     output_count: int = 1
     #: The Hires second pass, in NEO's spelling. Studio's own vocabulary lives
     #: in `HiresSettings`; the translation happens once, at the boundary, so

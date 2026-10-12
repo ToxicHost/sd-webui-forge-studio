@@ -534,6 +534,9 @@
     }
     S.sessionEntries.unshift(entry);
     S.selectedOutputIdx = 0;
+    // Anima's Studio weights fell back to Neo-compatible for this job (EM1):
+    // the owner's decision says the page tells them, and why.
+    if (window.AnimaEmphasis) window.AnimaEmphasis.noticeFrom(result.metadata);
     if (typeof window.renderOutputGallery === "function") {
       window.renderOutputGallery();
     } else if (window.SessionStrip && window.SessionStrip.render) {

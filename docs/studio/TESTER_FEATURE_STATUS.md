@@ -29,6 +29,7 @@ generation-model paths were accessed.
 | Develop | Available for testing | Saved presets work (2026-10-05). Shadows, Blacks, Dehaze, Vignette, Blue Saturation and negative number entry fixed and measured with automated checks (2026-10-10). Float (High Precision) sources are not available. |
 | Workshop | Available for testing (2026-10-05) | Weighted Sum, Add Difference and SLERP merges, block weights, LoRA and VAE baking, multi-step chains, History, and a basic Inspector. The arithmetic was tested against the reference formulas on test models, and a real merge on real checkpoints. LoRA baking is proven on test LoRAs only. Results go to the first checkpoint folder; files are never overwritten. |
 | Saving and export | Available (2026-10-05) | Save, Save to Gallery, Canvas Export (with watermark stamping) and Export EXR (Standard) write files; route tests passed. |
+| Anima prompt weights | Available for testing (2026-10-12) | Studio weights are the default on Anima; reused weighted images made before this update or elsewhere switch to Neo-compatible (the previous behaviour). Checked on a real GPU for text-to-image: prompts without weights unchanged, Neo-compatible byte-identical to the previous version, weighted prompts matching the research images. Weights in Hires, Img2Img/Inpaint and Auto Detail passes are covered by tests, not yet by a GPU check. |
 | GPU choice | Available on machines with two or more GPUs (2026-10-10) | Settings > Performance & VRAM > GPU; applied at the next start. Tested in code only; no two-card hardware check yet. |
 | Check for Updates | Available for Git installations (2026-10-05) | Fast-forward update of the tracked branch, then a restart. It refuses copies with edited or own-committed files. Tested against real Git repositories, including a shallow clone. |
 | Support report | Available | Script is supplied; report is created locally for inspection before sharing. |
@@ -50,6 +51,11 @@ generation-model paths were accessed.
 
 ## Verification scope
 
+- 2026-10-12 update: the full development suite ran 6,240 tests. The 11
+  failures are the same development-guide text checks as before; none are in the
+  runtime. Anima weights have 62 tests of their own, and 23 real Anima images
+  were generated on a GPU for this update (the results are in the Anima prompt
+  weights row above).
 - 2026-10-10 update: the full development suite ran 6,178 tests. The 11
   failures are the same development-guide text checks as before; none are in the
   runtime. Develop's tones are measured by running the real Develop code; the
@@ -74,5 +80,6 @@ generation-model paths were accessed.
   lifecycle and capability gating.
 - The [historical preparation review](https://github.com/ToxicHost/sd-webui-forge-studio/blob/7543faf5cf11cabbb8648afecdbe2c1bf76cb4b4/docs/studio/RELEASE_PREPARATION_REVIEW.md) records the earlier fixture/archive checks.
 
-No fresh real-GPU image was generated in this preparation. Historical release
-notes are not evidence that this exact candidate passed those live scenarios.
+Apart from the 2026-10-12 Anima weights check, no fresh real-GPU image was
+generated in these preparations. Historical release notes are not evidence that
+this exact candidate passed those live scenarios.

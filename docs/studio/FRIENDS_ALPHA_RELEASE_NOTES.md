@@ -3,6 +3,39 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Prompt weights on Anima — 2026-10-12
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Only the Studio interface and
+its local server change; the generation engine, launcher, installer,
+requirements and models are unchanged.
+
+- **Prompt weights now work on Anima models.** `(word:1.3)` makes a word count
+  more and `(word:0.5)` less, and a weight now changes how strongly the word is
+  used, not only how much of it is mixed in.
+  - Brackets on their own no longer change the picture: `(word:1.0001)` gives
+    almost exactly the image without brackets.
+  - 1.6 often brings a missing object into the picture while keeping the scene;
+    2.0 often reshapes the scene.
+  - `(word:0)` silences a word, but it cannot remove something the rest of the
+    prompt implies ("in a white dress" still draws a woman). Use the negative
+    prompt or delete the word instead.
+  - BREAK has no effect on Anima, which has no 75-token chunks to separate. The
+    bar under the prompt says so.
+- **Your earlier Anima images still reproduce.** Reusing the parameters of an
+  Anima image whose prompt has weights or BREAK, made before this update or in
+  another program, switches its weights to "Neo-compatible" (the previous
+  behaviour). A note under the prompt shows it, and "Use Studio weights"
+  switches back. A prompt without weights gives the same image either way.
+- A prompt that uses prompt editing (`[a:b:N]`), `AND`, or a separate Hires
+  prompt runs the previous behaviour for that image, and Studio tells you why.
+- SDXL and the other model families are unchanged.
+
+Checked on a real GPU: eight prompts without weights gave byte-identical images
+to before, Neo-compatible gave byte-identical images to the previous version on
+weighted and BREAK prompts, and weighted prompts matched the research images,
+with no measurable speed cost.
+
 ## Develop fixes, smarter Auto Detail, GPU choice — 2026-10-10
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

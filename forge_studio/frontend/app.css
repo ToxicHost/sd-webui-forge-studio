@@ -999,6 +999,18 @@ body {
 }
 .token-count.warn { color: var(--amber); }
 .token-count.over { color: var(--red); }
+.token-count.note { color: var(--text-3); font-family: inherit; }
+/* Anima: a reused picture switched its weights to Neo-compatible (EM1). */
+.anima-emphasis-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-right: auto;
+  font-size: 10px; color: var(--amber);
+}
+.anima-emphasis-chip[hidden] { display: none; }
+.anima-emphasis-back {
+  font: inherit; color: var(--text-3); background: none; border: 0; padding: 0;
+  text-decoration: underline; cursor: pointer;
+}
+.anima-emphasis-back:hover { color: var(--text-1); }
 
 .gen-btn {
   width: 100%; height: 36px;

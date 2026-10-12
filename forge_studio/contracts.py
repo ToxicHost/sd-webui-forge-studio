@@ -306,6 +306,12 @@ class GenerationRequest(Contract):
     #: Clip Skip leaves the option alone, and is byte-identical to one made
     #: before this field existed.
     clip_skip: int | None = None
+    #: Anima's emphasis mode (EM1; the owner's decision, 2026-10-11):
+    #: "studio" (the default when None) or "neo" ("Neo-compatible": Neo's own
+    #: path, bit-exact, for reproducing images made elsewhere). Ignored on
+    #: every model that is not Anima. The page names "neo" when it reuses an
+    #: image whose weighted or BREAK prompt was not made in Studio mode.
+    anima_emphasis: str | None = None
     #: The owner's GPU tile compositing preference, snapshotted by the SERVER
     #: at assembly. Not a browser field: a page loaded an hour ago holds an
     #: hour-old preference, and several pages can be open at once, so the
