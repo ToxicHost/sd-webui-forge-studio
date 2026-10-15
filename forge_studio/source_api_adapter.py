@@ -598,6 +598,15 @@ class SourceFrontendAdapter:
             registry = self._model_roots
             if registry is None:
                 return []
+            # Rescanned on every listing, as the Extension walks its folders on
+            # every `/studio/loras` (`studio_api.py:4848`). The cold-engine
+            # answer below reads the catalogue's CACHED scan, so the browser's
+            # Refresh re-fetched this route and got the folder as it was at
+            # startup: a LoRA the owner had just added never appeared.
+            try:
+                registry.refresh("lora")
+            except Exception:  # noqa: BLE001 - a UI list is never fatal
+                pass
             try:
                 names = [entry.to_dict() for entry in available_loras(registry)]
             except Exception:  # noqa: BLE001 - a UI list is never fatal
@@ -1459,11 +1468,17 @@ class SourceFrontendAdapter:
                     append=bool(payload.get("append")))
                 return _empty_generation_response(settings={"bytes": written})
             if action == "recovery_commit":
+                # `reuse` carries unchanged layers forward from the snapshot
+                # named by `base`, so a stroke uploads the layer it touched
+                # rather than the whole document. `commit_id` is what the page
+                # names as `base` next time.
                 sealed = self._recovery.commit(
-                    document_id, payload.get("manifest"))
+                    document_id, payload.get("manifest"),
+                    reuse=payload.get("reuse"), base=payload.get("base"))
                 return _empty_generation_response(settings={
                     "recovery_saved": True,
                     "updated_at": sealed.get("updated_at"),
+                    "commit_id": sealed.get("commit_id"),
                     "blobs": sealed.get("blobs") or []})
             if action == "recovery_discard":
                 # ONLY an explicit discard or close reaches here. An ordinary
@@ -1853,15 +1868,26 @@ def _recovery_status(error: Exception) -> int:
     """A recovery refusal, mapped to something the page can act on."""
 
     from .canvas_recovery import (
+        DiscardedDocument,
         MalformedRecovery,
         RecoveryNotWritten,
+        StaleRecoveryBase,
         UnknownDocument,
     )
 
     if isinstance(error, UnknownDocument):
         return 404
+    if isinstance(error, DiscardedDocument):
+        # Gone: the owner closed it, and a capture that was on its way when
+        # they did may not bring it back. The page that closed it does
+        # nothing more; any other page is told its write failed.
+        return 410
     if isinstance(error, MalformedRecovery):
         return 400
+    if isinstance(error, StaleRecoveryBase):
+        # The stored snapshot moved on. Like a stale session write: the page
+        # is told so, and answers by sending the whole document.
+        return 409
     if isinstance(error, RecoveryNotWritten):
         # The disk refused. Not the caller's fault and not something a retry
         # of the same bytes fixes, so it is a server error and says so.

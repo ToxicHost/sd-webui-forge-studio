@@ -80,6 +80,8 @@ class LoadConfiguration:
                       the timeout and the VRAM ceiling
     payload_opener    optional, for a caller that owns its own opener
     progress_sink     optional; the load-phase progress object
+    sidecar_root      optional; where the port leaves captured attention
+                      (HM1). None: nothing is captured
     ```
 
     No authorization prose is stored here. This object holds the *mechanism*
@@ -93,11 +95,13 @@ class LoadConfiguration:
         authorization: object = None,
         payload_opener: object = None,
         progress_sink: object = None,
+        sidecar_root: Path | str | None = None,
     ) -> None:
         self.repository_root = Path(repository_root)
         self.authorization = authorization
         self._payload_opener = payload_opener
         self.progress_sink = progress_sink
+        self.sidecar_root = Path(sidecar_root) if sidecar_root else None
 
     def payload_opener(self) -> object | None:
         """The caller's own opener, or `None` to build the controlled default."""

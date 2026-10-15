@@ -768,7 +768,7 @@ class HeadlessSessionLoader(StudioSessionLoader):
         return _PublishedBookkeeping(state, published, restore_published_engine)
 
     def _default_port_factory(self, *, profile: Any, engine: Any, result_root: Any):
-        self._configuration("port_built")
+        configuration = self._configuration("port_built")
         from .live_generation_port import StudioLiveGenerationPort
 
         del profile
@@ -776,6 +776,9 @@ class HeadlessSessionLoader(StudioSessionLoader):
             engine=engine,
             bridge=self._startup_bridge,
             result_root=result_root,
+            # HM1: where captured attention is left for presentation. None
+            # (a configuration that names none) captures nothing.
+            sidecar_root=getattr(configuration, "sidecar_root", None),
         )
 
     @staticmethod

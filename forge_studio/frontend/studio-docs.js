@@ -63,6 +63,16 @@ function _loadGenPanel(gen) {
 // DOCUMENT SNAPSHOT FORMAT
 // ========================================================================
 
+// THE ACTIVE DOCUMENT'S PIXELS LIVE ON ITS CANVASES, ONCE. OB2.
+//
+// A document being put away -- a tab switch, a new tab -- is snapshotted into
+// `ImageData` by `_saveDoc`, because its canvases are about to be reused.
+// `_loadDoc` releases that snapshot once the canvases hold it again, and
+// crash recovery reads the active tab through `docForRecovery` WITHOUT a
+// readback. It used to call `_saveDoc` after every action, which read back
+// every layer, mask and region on the main thread and then kept the copy, so
+// the document the owner was painting sat in memory twice.
+
 function _saveDoc(idx) {
   var S = window.StudioCore.state;
   if (S.drawing) window.StudioCore.abortStroke();
@@ -74,12 +84,32 @@ function _saveDoc(idx) {
   var doc = _docs[idx];
   if (!doc) return;
 
-  // Generation panel
-  doc.genPanel = _saveGenPanel();
+  _saveDocState(doc);
+  _describePixels(doc, _snapshotPixels);
+}
 
-  // Layer pixel data
-  doc.W = S.W;
-  doc.H = S.H;
+// A canvas as `_saveDoc` keeps it: a copy that outlives the canvas.
+function _snapshotPixels(ctx) {
+  var S = window.StudioCore.state;
+  return { imageData: ctx.getImageData(0, 0, S.W, S.H) };
+}
+
+// A canvas as recovery reads it: the canvas itself, encoded where it stands.
+function _livePixels(ctx) {
+  return { imageData: null, ctx: ctx };
+}
+
+function _noPixels() {
+  return { imageData: null };
+}
+
+function _withoutPixels(entry) {
+  return Object.assign({}, entry, { imageData: null });
+}
+
+// The layer, mask and region lists. `pixels` decides what each one carries.
+function _describePixels(doc, pixels) {
+  var S = window.StudioCore.state;
   doc.layers = S.layers.map(function (L) {
     if (L.type === "adjustment") {
       return {
@@ -91,13 +121,37 @@ function _saveDoc(idx) {
         imageData: null
       };
     }
-    return {
+    return Object.assign({
       id: L.id, name: L.name, type: L.type,
       visible: L.visible, opacity: L.opacity,
-      blendMode: L.blendMode, locked: L.locked,
-      imageData: L.ctx.getImageData(0, 0, S.W, S.H)
-    };
+      blendMode: L.blendMode, locked: L.locked
+    }, pixels(L.ctx));
   });
+
+  var mask = pixels(S.mask.ctx);
+  doc.maskData = mask.imageData;
+  if (mask.ctx) doc.maskCtx = mask.ctx;
+
+  doc.regions = S.regions.map(function (r) {
+    return Object.assign({
+      id: r.id, color: r.color,
+      prompt: r.prompt || "", negPrompt: r.negPrompt || "",
+      weight: r.weight, denoise: r.denoise
+    }, pixels(r.ctx));
+  });
+}
+
+// Everything a document is EXCEPT its pixels. Writing nothing to `layers`,
+// `maskData` or `regions` is the point: on a tab being switched away from,
+// those hold the snapshot `_saveDoc` has just taken.
+function _saveDocState(doc) {
+  var S = window.StudioCore.state;
+
+  // Generation panel
+  doc.genPanel = _saveGenPanel();
+
+  doc.W = S.W;
+  doc.H = S.H;
   doc.activeLayerIdx = S.activeLayerIdx;
   doc.nextLayerId = S.nextLayerId;
 
@@ -107,19 +161,10 @@ function _saveDoc(idx) {
   doc.paper = Object.assign({ texture: "none", scale: 1, depth: 0 }, S.paper || {});
 
   // Mask
-  doc.maskData = S.mask.ctx.getImageData(0, 0, S.W, S.H);
   doc.maskVisible = S.mask.visible;
   doc.maskOpacity = S.mask.opacity;
 
   // Regions
-  doc.regions = S.regions.map(function (r) {
-    return {
-      id: r.id, color: r.color,
-      prompt: r.prompt || "", negPrompt: r.negPrompt || "",
-      weight: r.weight, denoise: r.denoise,
-      imageData: r.ctx.getImageData(0, 0, S.W, S.H)
-    };
-  });
   doc.activeRegionId = S.activeRegionId;
   doc.regionMode = S.regionMode;
   doc._nextRegionId = S._nextRegionId;
@@ -236,6 +281,15 @@ function _loadDoc(idx) {
   S.activeRegionId = doc.activeRegionId;
   S.regionMode = doc.regionMode || false;
   S._nextRegionId = doc._nextRegionId || 1;
+
+  // The canvases hold the pixels now, so the snapshot is let go: kept, it
+  // would double the memory of the document the owner is working in for as
+  // long as it stays open. Nothing reads it back -- every path that leaves
+  // this tab snapshots it again first. New entries rather than nulled ones,
+  // in case a caller still holds the old.
+  doc.layers = doc.layers.map(_withoutPixels);
+  doc.maskData = null;
+  doc.regions = doc.regions.map(_withoutPixels);
 
   // BE10. Paper. Defaulted rather than left alone for documents that predate
   // the field: leaving `S.paper` untouched would hand the previous tab's
@@ -462,14 +516,21 @@ function closeDoc(idx) {
 
   _docs.splice(idx, 1);
 
-  // Adjust active index
-  if (_activeIdx >= _docs.length) _activeIdx = _docs.length - 1;
-  else if (_activeIdx > idx) _activeIdx--;
-  else if (_activeIdx === idx) {
+  // CLOSING THE ACTIVE TAB IS DECIDED FIRST. OB2b.
+  //
+  // It can also be the LAST tab, and this used to test
+  // `_activeIdx >= _docs.length` first, which caught that case, moved the
+  // index and loaded nothing. The strip named the neighbour while the
+  // canvases still held the closed document and its id: recovery captured it
+  // again under that id, stamped the id on the neighbour's tab, and the next
+  // switch saved the closed document's pixels over the neighbour's. Any other
+  // close only moves the index, and the decrement also covers an earlier tab
+  // closed while the active one is last.
+  if (_activeIdx === idx) {
     _activeIdx = Math.min(idx, _docs.length - 1);
     _loadDoc(_activeIdx);
     _refreshUI();
-  }
+  } else if (_activeIdx > idx) _activeIdx--;
 
   if (closingId && window.StudioRecovery) window.StudioRecovery.discard(closingId);
 
@@ -666,8 +727,10 @@ function _initWithRecovery() {
     var initial = _createBlankDoc("Untitled");
     _docs.push(initial);
     _activeIdx = 0;
-    // Immediately snapshot current state into doc 0
-    _saveDoc(0);
+    // Describe the current canvas as doc 0. Its pixels stay on the canvases:
+    // it is the ACTIVE document, and a switch away snapshots it then.
+    _saveDocState(initial);
+    _describePixels(initial, _noPixels);
   }
 
   _buildStrip();
@@ -687,13 +750,28 @@ function _initWithRecovery() {
 // PUBLIC API
 // ========================================================================
 
-// The document crash recovery captures. Refreshes the active tab's snapshot
-// first, because the live canvas -- not the doc object -- is where the owner
-// has been painting.
-function docForRecovery(idx) {
-  if (idx === undefined) idx = _activeIdx;
-  if (idx === _activeIdx) _saveDoc(_activeIdx);
-  return _docs[idx];
+// The document crash recovery captures: the active one when `doc` is omitted.
+//
+// An inactive tab is its stored snapshot. The ACTIVE tab is described from its
+// live canvases -- each layer, region and the mask carry their context, not a
+// copy -- so recovery can encode only the ones that changed, straight from
+// the canvas, and nothing is read back or kept. The tab's own state is still
+// refreshed, because closing it reads `_canvasDirty` and `documentId` from
+// here; its pixel fields are not touched.
+//
+// Null for a document that has been closed, so a late capture can never
+// resurrect it, and null mid-gesture: a stroke in progress is not a document
+// state.
+function docForRecovery(doc) {
+  if (doc === undefined) doc = _docs[_activeIdx];
+  var idx = _docs.indexOf(doc);
+  if (idx < 0) return null;
+  if (idx !== _activeIdx) return doc;
+  if (window.StudioCore.state.drawing) return null;
+  _saveDocState(doc);
+  var live = Object.assign({}, doc);
+  _describePixels(live, _livePixels);
+  return live;
 }
 
 window.StudioDocs = {

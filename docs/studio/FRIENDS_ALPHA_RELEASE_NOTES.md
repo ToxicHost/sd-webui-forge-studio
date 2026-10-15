@@ -3,6 +3,50 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Word heatmaps, crash recovery, fixes — 2026-10-15
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Only Studio's own interface
+and local server change; the generation engine files, launcher, installer,
+requirements and models are unchanged.
+
+- **Word heatmaps in the Gallery.** Every Anima or SDXL picture made from now
+  on records where each word of its prompt landed. Open the picture in the
+  Gallery: a **Words** section sits above Metadata.
+  - Click a word to lay its heat map over the picture; click it again to
+    clear it. Zoom and pan carry the overlay along.
+  - The bar beside each word is its strength compared with the picture's
+    typical word. Regions and adjectives read short by nature.
+  - **Text used here** (Anima only) shows where the picture drew on the
+    prompt at all.
+  - Pictures made before this update have no Words section.
+- **Settings > Heatmap data:** turn recording off (for big batches), see how
+  much space it uses, move its folder (type the full path, then Move here),
+  clean up leftovers, or open the folder. Recording costs about 0.3 seconds
+  and 250-300 KB per picture. A picture's data is deleted when the Gallery
+  trash is emptied.
+- **The first start after this update upgrades the Gallery database.** Studio
+  backs it up first, as `gallery.v1.<time>.bak` in the gallery folder.
+- **Fixes:**
+  - Copy image works on a picture you just generated (it failed with "Failed
+    to fetch"). Copying text works when Studio is opened by a network address;
+    copying an image there needs Studio opened at 127.0.0.1 or localhost, and
+    Studio now says so.
+  - Refresh in the LoRA and wildcard browsers shows files added since Studio
+    started, and a new wildcard works in the next generation without a
+    restart.
+  - Dragging an image onto the canvas keeps your seed; its prompt and other
+    settings are still used.
+  - With Remember Last Session on, Studio reopens with your last session's
+    model instead of an older choice, and the session no longer stops saving
+    without telling you.
+  - Crash recovery saves only what changed and uses less memory on large
+    documents. Closing the last tab no longer risks the tab that takes its
+    place, and a tab closed while it was being saved stays closed.
+
+Checked on a real GPU for Anima: ten pictures byte-identical with heatmap
+recording on and off, and the maps matched the research capture exactly.
+
 ## Prompt weights on Anima — 2026-10-12
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

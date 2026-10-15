@@ -310,8 +310,8 @@ def delete_to_trash(store: GalleryStore, image_id: int) -> dict[str, Any]:
 
     with store.read() as connection:
         row = connection.execute(
-            "SELECT width, height, file_date, search_text FROM images "
-            "WHERE id = ?", (image_id,)
+            "SELECT width, height, file_date, search_text, content_hash "
+            "FROM images WHERE id = ?", (image_id,)
         ).fetchone()
         characters = [
             str(found["name"]) for found in connection.execute(
@@ -341,13 +341,16 @@ def delete_to_trash(store: GalleryStore, image_id: int) -> dict[str, Any]:
         cursor = connection.execute(
             "INSERT INTO trash(original_filepath, original_folder, "
             "original_filename, trash_path, width, height, file_date, "
-            "search_text, characters_json, deleted_at) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "search_text, characters_json, deleted_at, content_hash) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (str(target.path), target.folder, target.filename, trash_path,
              row["width"] if row else None, row["height"] if row else None,
              row["file_date"] if row else None,
              (row["search_text"] if row else "") or "",
-             json.dumps(characters), time.time()),
+             json.dumps(characters), time.time(),
+             # HM2: names the picture's attention sidecar when the trash
+             # is emptied. Kept until then: a restore keeps its heatmap.
+             str((row["content_hash"] if row else "") or "").strip()),
         )
         trash_id = cursor.lastrowid
         connection.execute(
@@ -490,8 +493,19 @@ def record_generation(store: GalleryStore, content_hash: str, infotext: str,
         columns.append(column)
         values.append(value)
 
-    placeholders = ", ".join("?" for _ in columns)
     with store.write() as connection:
+        # HM1. The one column this write does not own: the attention sidecar
+        # `record_attention` named. Two writers record the same picture
+        # (presentation and `source_api_adapter`), in either order, and a
+        # REPLACE would otherwise forget it.
+        kept = connection.execute(
+            "SELECT attention_path FROM image_metadata WHERE content_hash = ?",
+            (content_hash,),
+        ).fetchone()
+        if kept and kept[0]:
+            columns.append("attention_path")
+            values.append(kept[0])
+        placeholders = ", ".join("?" for _ in columns)
         connection.execute(
             f"INSERT OR REPLACE INTO image_metadata({', '.join(columns)}) "  # noqa: S608
             f"VALUES({placeholders})",
@@ -507,6 +521,24 @@ def record_generation(store: GalleryStore, content_hash: str, infotext: str,
             (content_hash, content_hash, content_hash),
         ).rowcount
     return {"ok": True, "content_hash": content_hash, "linked": bool(linked)}
+
+
+def record_attention(store: GalleryStore, content_hash: str, relative: str) -> dict[str, Any]:
+    """HM1. Name a picture's attention sidecar on its metadata row.
+
+    An UPDATE of the row `record_generation` wrote, which carries the name
+    across any later re-record of the same picture.
+    """
+
+    content_hash = (content_hash or "").strip()
+    if not content_hash or not relative:
+        raise ActionRefused("An attention sidecar needs a content hash and a name.")
+    with store.write() as connection:
+        updated = connection.execute(
+            "UPDATE image_metadata SET attention_path = ? WHERE content_hash = ?",
+            (relative, content_hash),
+        ).rowcount
+    return {"ok": bool(updated), "content_hash": content_hash}
 
 
 def _parsed_fields(infotext: str, settings: dict[str, Any]) -> dict[str, Any]:

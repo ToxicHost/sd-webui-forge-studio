@@ -829,10 +829,14 @@ class StudioLiveGenerationPort:
         engine: object,
         bridge: object | None,
         result_root: Path | str,
+        sidecar_root: Path | str | None = None,
     ) -> None:
         self._engine = engine
         self._bridge = bridge
         self._result_root = Path(result_root)
+        #: HM1. Where the main pass's attention capture is left for
+        #: presentation to adopt; None captures nothing.
+        self._sidecar_root = Path(sidecar_root) if sidecar_root else None
         # Component aliases are held only so they can be cleared deliberately.
         self._forge_objects: object | None = None
         self._vae_component: object | None = None
@@ -1011,6 +1015,31 @@ class StudioLiveGenerationPort:
                 anima_emphasis_reason=emphasis_reason,
             )
         return replace(outcome, **updates) if updates else outcome
+
+    def _leave_attention_capture(self, request: object) -> None:
+        """HM1. The main pass's attention capture, written where presentation
+        adopts it under the picture's content hash (`attention_store`).
+
+        Named by the request id because the hash does not exist yet: JPEG and
+        WebP are hashed from the re-read file. NEVER RAISES -- a picture that
+        was made must not fail over a heatmap.
+        """
+
+        try:
+            from forge_studio.attention_store import pending_path
+
+            from . import attention_capture
+
+            result = attention_capture.take()
+            if result is None or self._sidecar_root is None:
+                return
+            path = pending_path(self._sidecar_root, str(getattr(request, "request_id", "") or ""))
+            if path is not None:
+                attention_capture.write_sidecar(result, path)
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            import logging
+
+            logging.getLogger("studio.generation").warning("attention capture not written: %r", exc)
 
     def _anima_emphasis_decision(self, request: object) -> tuple[str, str, str]:
         """`(requested, effective, reason)`, all "" when the model is not Anima.
@@ -1256,6 +1285,17 @@ class StudioLiveGenerationPort:
             # configured roots are reachable, and because a Studio that never
             # generates should not pay for a directory scan.
             _arm_lora_support(request)
+            # HM1. Mark THIS processing object -- the main pass -- for the
+            # attention capture. Neo's Hires pass is flagged `is_hr_pass` on
+            # the same object and is skipped; Studio's img2img Hires and the
+            # Auto Detail passes build their own objects and are never marked.
+            capture_wanted = self._sidecar_root is not None and bool(
+                getattr(request, "attention_capture_requested", True))
+            if capture_wanted:
+                from .attention_capture import MARK, take
+
+                take()          # a failed job's leftover must never become this job's capture
+                setattr(processing, MARK, True)
             # One bracket, because `process_images_inner` runs base, the
             # upscale and Hires inside itself. The per-step rates come from
             # the progress callbacks; this is the wall clock the owner waits.
@@ -1266,6 +1306,8 @@ class StudioLiveGenerationPort:
             # timer and must not be read as one.
             telemetry.start("primary_pipeline")
             processed = process_images_inner(processing)
+            if capture_wanted:
+                self._leave_attention_capture(request)
             # THE SECOND PASS FOR AN IMAGE OPERATION, and it runs HERE --
             # before the clip below, not after it.
             #

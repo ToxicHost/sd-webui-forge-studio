@@ -321,6 +321,11 @@ class GenerationRequest(Contract):
     #: True and still composite on the CPU because the frame did not fit, and
     #: those are different facts that the result metadata reports separately.
     gpu_tile_compositing_requested: bool = True
+    #: HM2. The owner's attention-capture preference, snapshotted by the
+    #: SERVER at assembly exactly as the one above, and for the same reasons.
+    #: True (the default) keeps the main pass's word attention for heatmaps
+    #: and word masks; False captures nothing.
+    attention_capture_requested: bool = True
     #: The wildcard resolution, snapshotted by the SERVER at assembly.
     #:
     #: On the request rather than beside it because every consumer that needs

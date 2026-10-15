@@ -318,6 +318,9 @@ STUDIO_REQUEST_FIELDS = (
     # Anima's emphasis mode (EM1). Carried the same way: the port turns an
     # effective "studio" into a scoped `emphasis` override.
     "anima_emphasis",
+    # HM2. The attention-capture setting: it reaches the port, which keeps or
+    # skips the main pass's capture.
+    "attention_capture_requested",
 )
 
 #: Headless fields Studio's request cannot express. They take the headless
@@ -687,6 +690,8 @@ def translate_request(
         # None crosses as None: the port applies the owner's default there,
         # where it knows whether the model is Anima at all.
         anima_emphasis=getattr(request, "anima_emphasis", None),
+        attention_capture_requested=bool(
+            getattr(request, "attention_capture_requested", True)),
     )
     return RequestTranslation(
         headless_request=headless,

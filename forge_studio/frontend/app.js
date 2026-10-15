@@ -127,10 +127,41 @@ function _num(id, fallback) {
 }
 
 /**
+ * Copy text to the system clipboard. Resolves when copied, rejects when not.
+ *
+ * `navigator.clipboard` exists only in a secure context: Studio opened at
+ * 127.0.0.1 or localhost has it, Studio opened by a network address (another
+ * machine, a container's host IP) does not, and every bare
+ * `navigator.clipboard.writeText` then threw before copying anything. (Copy
+ * failures reported by a tester on Linux and the owner, 2026-10-15.) The old
+ * `execCommand("copy")` route still works there, from a click.
+ */
+window.studioCopyText = function (text) {
+  const value = String(text == null ? "" : text);
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    return navigator.clipboard.writeText(value);
+  }
+  return new Promise((resolve, reject) => {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed"; area.style.opacity = "0"; area.style.pointerEvents = "none";
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+    area.remove();
+    if (ok) resolve(); else reject(new Error("The browser refused to copy."));
+  });
+};
+
+/**
  * Apply parsed A1111 infotext parameters to UI fields.
  * Best-effort: sets whatever fields match, skips the rest.
+ * `opts.keepSeed` leaves the Seed field alone (an image dropped onto the
+ * canvas: the owner, 2026-10-15, "it shouldn't pull the seed").
  */
-function _applyInfotextToUI(infotext) {
+function _applyInfotextToUI(infotext, opts = {}) {
   if (!window.PngMetadata) return;
   const p = PngMetadata.parseInfotext(infotext);
   if (!p || !p.prompt) return;
@@ -153,7 +184,7 @@ function _applyInfotextToUI(infotext) {
   _set("paramCFG", p.cfgScale);
   _set("paramWidth", p.width);
   _set("paramHeight", p.height);
-  if (p.seed > 0) _set("paramSeed", p.seed);
+  if (p.seed > 0 && !opts.keepSeed) _set("paramSeed", p.seed);
   if (p.clipSkip) _set("paramClipSkip", p.clipSkip);
 
   _sel("paramSampler", p.sampler);
@@ -4174,7 +4205,7 @@ async function _importLocalImageFile(file, opts) {
   // Apply metadata to UI fields if present
   const meta = await metaPromise;
   if (meta.parameters) {
-    _applyInfotextToUI(meta.parameters);
+    _applyInfotextToUI(meta.parameters, { keepSeed: !!opts.keepSeed });
     showToast(`${opts.verb} ${newW}×${newH} (params imported)`, "success");
   } else {
     showToast(`${opts.verb} ${newW}×${newH}`, "success");
@@ -5549,7 +5580,7 @@ function bindUI() {
         if (action === "canvas" && imgSrc) {
           displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: _ctxEntry.floatStats || null });
         } else if (action === "seed" && seed) {
-          navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
+          window.studioCopyText(seed).then(() => showToast(`Seed ${seed} copied`, "success"), () => showToast("Copy failed", "error"));
         } else if (action === "save-exr") {
           await _exportEXR(idx, false);
         } else if (action === "save-as") {
@@ -5673,7 +5704,7 @@ function bindUI() {
         return;
       }
       if (file.type.startsWith("image/")) {
-        _importLocalImageFile(file, { undoLabel: "Drop image", layerName: "Dropped", verb: "Dropped" });
+        _importLocalImageFile(file, { undoLabel: "Drop image", layerName: "Dropped", verb: "Dropped", keepSeed: true });
       }
     });
   }
@@ -7408,6 +7439,111 @@ function bindUI() {
     window.Prefs?.set("gpu_tile_compositing", on);
   });
 
+  // ===== HEATMAP DATA (HM2) =====
+  // The capture toggle is a server-snapshotted preference, exactly as the one
+  // above. The folder is NOT a preference: it changes only together with the
+  // files, through the server's move (copy, verify, then name the new folder),
+  // so the page shows what /studio/attention/store reports and posts intent.
+  const _attnToggle = document.getElementById("toggleAttentionCapture");
+  if (window.Prefs?.get("attention_capture", true) !== false) {
+    _attnToggle?.classList.add("on");
+  }
+  _attnToggle?.addEventListener("click", () => {
+    const on = _attnToggle?.classList.contains("on") ?? false;
+    window.Prefs?.set("attention_capture", on);
+    _refreshAttentionStore();
+  });
+  const _attnFolderInput = document.getElementById("settingAttentionFolder");
+  const _attnReadout = document.getElementById("attentionStoreReadout");
+  let _attnStatus = null;
+  function _attnBytes(n) {
+    const v = Number(n || 0);
+    if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(1) + " GB";
+    if (v >= 1024 ** 2) return (v / 1024 ** 2).toFixed(1) + " MB";
+    if (v >= 1024) return Math.round(v / 1024) + " KB";
+    return v + " B";
+  }
+  async function _attnPost(body) {
+    const r = await fetch(API.base + "/studio/attention/store", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    let data = {};
+    try { data = await r.json(); } catch (_) {}
+    return data;
+  }
+  async function _refreshAttentionStore() {
+    if (!_attnReadout) return;
+    try {
+      const r = await fetch(API.base + "/studio/attention/store");
+      _attnStatus = r.ok ? await r.json() : null;
+    } catch (_) { _attnStatus = null; }
+    const s = _attnStatus;
+    if (!s || !s.available) {
+      _attnReadout.textContent = _i18n("settings.heatmap.unavailable", "Heatmap data is not kept on this host.");
+      return;
+    }
+    if (_attnFolderInput && document.activeElement !== _attnFolderInput) _attnFolderInput.value = s.folder || "";
+    const where = s.is_default
+      ? _i18n("settings.heatmap.where.default", "Studio's own data folder")
+      : _i18n("settings.heatmap.where.custom", "Your folder");
+    const files = Number(s.files || 0);
+    let text = where + " · " + (files === 1
+      ? _i18n("settings.heatmap.one", "1 image")
+      : _i18n("settings.heatmap.many", "{n} images", { n: files.toLocaleString() })) + " · " + _attnBytes(s.bytes);
+    if (s.refused) text += " · " + s.refused;
+    else if (Number(s.orphan_files || 0) > 0) {
+      text += " · " + _i18n("settings.heatmap.orphans", "{n} left over from deleted pictures ({size})",
+        { n: Number(s.orphan_files).toLocaleString(), size: _attnBytes(s.orphan_bytes) });
+    }
+    if (s.capture === false) text = _i18n("settings.heatmap.off", "Capture is off.") + " " + text;
+    _attnReadout.textContent = text;
+  }
+  document.getElementById("attentionFolderClean")?.addEventListener("click", async () => {
+    await _refreshAttentionStore();
+    const s = _attnStatus;
+    if (!s?.available) return;
+    if (s.refused) { showToast(s.refused, "info"); return; }
+    const n = Number(s.orphan_files || 0);
+    if (!n) { showToast(_i18n("settings.heatmap.nothing", "Nothing to clean up."), "info"); return; }
+    if (!window.confirm(_i18n("settings.heatmap.confirmClean",
+      "Delete {n} heatmap files ({size}) whose pictures are gone?", { n, size: _attnBytes(s.orphan_bytes) }))) return;
+    const data = await _attnPost({ action: "clean" });
+    if (data.ok) {
+      showToast(_i18n("settings.heatmap.cleaned", "Removed {n} files ({size}).",
+        { n: data.removed, size: _attnBytes(data.freed_bytes) }), "success");
+    } else showToast(data.error || _i18n("settings.heatmap.cleanFailed", "Could not clean up."), "error");
+    _refreshAttentionStore();
+  });
+  document.getElementById("attentionFolderMove")?.addEventListener("click", async () => {
+    const folder = (_attnFolderInput?.value || "").trim();
+    const s = _attnStatus;
+    if (!folder || (s && folder === s.folder)) {
+      showToast(_i18n("settings.heatmap.typeFolder", "Type the full path of the folder to move to."), "info");
+      return;
+    }
+    if (!window.confirm(_i18n("settings.heatmap.confirmMove", "Move the heatmap data ({size}) to {folder}?",
+      { size: _attnBytes(s?.bytes), folder }))) return;
+    const data = await _attnPost({ action: "move", folder });
+    if (data.ok) {
+      showToast(_i18n("settings.heatmap.moved", "Moved {n} files.", { n: data.moved }), "success");
+      if (data.left_behind) {
+        showToast(_i18n("settings.heatmap.leftBehind",
+          "{n} files could not be removed from the old folder.", { n: data.left_behind }), "info");
+      }
+    } else showToast(data.error || _i18n("settings.heatmap.moveFailed", "Could not move the heatmap data."), "error");
+    _refreshAttentionStore();
+  });
+  document.getElementById("attentionFolderOpen")?.addEventListener("click", async () => {
+    const data = await _attnPost({ action: "open" });
+    if (!data.ok) {
+      showToast((data.error || _i18n("settings.heatmap.openFailed", "Could not open the folder."))
+        + (data.path ? " " + data.path : ""), "error");
+    }
+  });
+  _refreshAttentionStore();
+
   // ===== GPU (G1) =====
   // Shown only when there is a choice to make. The pick is saved as a
   // preference and applied by the launcher at the NEXT start: a running
@@ -7811,7 +7947,7 @@ function bindUI() {
   let _sessionWritesEnabled = false;
   window._studioEnableSessionWrites = function () { _sessionWritesEnabled = true; };
 
-  function _saveSession() {
+  function _saveSession(_event, _isRetry) {
     if (!_sessionWritesEnabled) return;
     const on = document.getElementById("toggleRememberSession")?.classList.contains("on") ?? false;
     if (!on) return;
@@ -7843,8 +7979,18 @@ function bindUI() {
       if (typeof rev === "number") _sessionRevision = rev;
     }).catch((e) => {
       if (String(e).includes("409")) {
-        console.warn("[Studio] Session moved on in another view; re-reading.");
-        _sessionRevision = 0;   // next load re-syncs
+        // Another write landed first -- usually this page's own: the
+        // debounced save and the tab-hidden save can be in flight together on
+        // the same revision. Take the stored revision and send the current
+        // state once more. This used to set the revision to 0, which the
+        // server refuses too, so every later write failed and the session
+        // silently stopped saving until a reload.
+        console.warn("[Studio] Session moved on; re-reading its revision.");
+        API.generate({action: "load_session"}).then((r) => {
+          const rev = r && r.settings && r.settings.session_revision;
+          if (typeof rev === "number") _sessionRevision = rev;
+          if (!_isRetry) _saveSession(null, true);
+        }).catch(() => { /* the next debounce tries again */ });
       } else {
         console.warn("[Studio] Session save failed:", e);
       }
@@ -7936,6 +8082,10 @@ function bindUI() {
         // params and silently revert the rest to factory.
         _resolvedDefaults = { ...(_resolvedDefaults || {}), ...data };
         _applyDefaults(data);
+        // Did the session actually put a checkpoint back? Read off the
+        // dropdown, so a saved model that no longer exists does not count.
+        window._studioSessionRestoredModel = !!data.paramModel
+          && document.getElementById("paramModel")?.value === String(data.paramModel);
         console.log("[Studio] Restored session:", Object.keys(data).length, "params");
         return true;
       }
@@ -10459,6 +10609,16 @@ function _initParamScrub() {
   });
 }
 
+// THE BOOT RESTORE, AS ONE SIGNAL. studio-model-controls.js (loaded after this
+// file) restores the remembered model dropdowns. It waits for this and stands
+// down when the session put a model back: the two restores used to run
+// independently, and the remembered one -- updated only by a hand pick in the
+// dropdown -- re-selected an old SDXL checkpoint over the session's Anima one
+// (the owner, 2026-10-15). Resolves with `{ sessionModel }` once Defaults and
+// the session have been applied, whatever happened.
+let _bootRestoreDone = null;
+window._studioBootRestore = new Promise((resolve) => { _bootRestoreDone = resolve; });
+
 async function init() {
   console.log("[Studio] Standalone UI initializing...");
 
@@ -10493,13 +10653,17 @@ async function init() {
   // Load saved workflow defaults (must run AFTER dropdowns are populated)
   // _applyDefaults handles canvas resize and status bar updates
   let _hadStoredConfig = false;
-  if (typeof window._studioLoadDefaults === "function") {
-    _hadStoredConfig = await window._studioLoadDefaults();
-  } else {
-    // No defaults — set initial status from input values
-    const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
-    const h = parseInt(document.getElementById("paramHeight")?.value) || 768;
-    StatusBar.setDimensions(w, h);
+  try {
+    if (typeof window._studioLoadDefaults === "function") {
+      _hadStoredConfig = await window._studioLoadDefaults();
+    } else {
+      // No defaults — set initial status from input values
+      const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
+      const h = parseInt(document.getElementById("paramHeight")?.value) || 768;
+      StatusBar.setDimensions(w, h);
+    }
+  } finally {
+    _bootRestoreDone({ sessionModel: !!window._studioSessionRestoredModel });
   }
 
   // Folder paths persist immediately via server-backed preferences

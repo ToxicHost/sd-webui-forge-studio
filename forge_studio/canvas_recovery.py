@@ -37,6 +37,27 @@ no recovery budget, no silent LRU eviction. A 4-layer 2048x2048 document is
 roughly 20-30 MB of PNG, which is nothing beside the results already on a
 working disk -- and silently dropping the owner's only copy of their work to
 respect a number nobody chose would be far worse than using the space.
+
+AN UNCHANGED LAYER IS NOT SENT AGAIN. OB2.
+
+The page captures after every completed action, and a stroke changes one
+layer. Re-sending all of them meant re-encoding, re-uploading and re-writing
+every layer of a large document per stroke. A commit may therefore name blobs
+to CARRY FORWARD from the snapshot it was built against: it says which sealed
+snapshot that is (`base`, the `commit_id` this store returned), and the store
+refuses with `StaleRecoveryBase` unless that is still the snapshot on disk. Two
+pages writing the same document would otherwise splice one page's layers into
+the other's document. A refused page sends the whole document instead.
+
+A CLOSE IS FINAL. OB2c.
+
+A capture is begin, blobs, commit -- several requests -- and the HTTP server is
+threaded, so a capture the page started before the owner closed the document
+can reach the store after the discard. `discard` removed the sealed directory
+alone, the late commit sealed its staging, and the closed document came back
+at the next launch. Only the store sees the order requests are handled in, so
+it decides: a discard removes every form the document takes on disk and every
+later write for it is refused with `DiscardedDocument`.
 """
 
 from __future__ import annotations
@@ -46,6 +67,7 @@ import logging
 import os
 import re
 import shutil
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -90,6 +112,25 @@ class RecoveryNotWritten(RecoveryError):
     """
 
 
+class StaleRecoveryBase(RecoveryError):
+    """A commit asked to carry blobs forward from a snapshot that is gone.
+
+    The stored snapshot is not the one the page checked its layers against --
+    another page wrote this document, or the page's last commit never landed.
+    Carrying a blob forward now would put that other snapshot's layer into
+    this document, so nothing is sealed; the page sends every blob instead.
+    """
+
+
+class DiscardedDocument(RecoveryError):
+    """A write for a document the owner closed.
+
+    The commit of a capture that began before the close would otherwise seal
+    the document back into recovery. Named, so the page that closed it can
+    tell "closed" from "failed" and do nothing.
+    """
+
+
 def _referenced_blobs(manifest: Mapping[str, Any]) -> set[str]:
     """Every blob name the manifest says the document is made of."""
 
@@ -123,6 +164,55 @@ def _require_referenced_blobs(manifest: Mapping[str, Any],
             f"{len(missing)} blob(s) that were never written.")
 
 
+def _checked_reuse(reuse: Any) -> list[str]:
+    """The blob names a commit carries forward, refused unless well formed."""
+
+    if reuse is None:
+        return []
+    if not isinstance(reuse, (list, tuple)):
+        raise MalformedRecovery("reuse must be a list of blob names.")
+    names: list[str] = []
+    for name in reuse:
+        if not isinstance(name, str) or not BLOB_NAME.match(name):
+            raise MalformedRecovery(f"{name!r} is not a recovery blob name.")
+        if name in names:
+            raise MalformedRecovery(f"{name} is carried forward twice.")
+        names.append(name)
+    return names
+
+
+def _require_base(sealed: Mapping[str, Any] | None, base: Any,
+                  reuse: Iterable[str], present) -> None:
+    """Carry forward only from the snapshot the page checked against."""
+
+    if (not sealed or not isinstance(base, str) or not base
+            or sealed.get("commit_id") != base):
+        raise StaleRecoveryBase(
+            "The stored recovery snapshot has moved on; send the whole "
+            "document.")
+    listed = set(sealed.get("blobs") or [])
+    for name in reuse:
+        if name not in listed or not present(name):
+            raise StaleRecoveryBase(
+                "The stored recovery snapshot no longer holds a blob this "
+                "commit carries forward; send the whole document.")
+
+
+def _carry(source: Path, target: Path) -> None:
+    """One sealed blob into the staging directory, without rewriting it.
+
+    A hard link costs nothing whatever the layer's size. A filesystem that
+    cannot link gets a copy -- slower, never wrong. No write ever lands on the
+    shared file: staging is always created empty by `begin`, and a blob that
+    was uploaded in this write is refused as a carry-forward.
+    """
+
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copyfile(source, target)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -138,6 +228,10 @@ class CanvasRecoveryStore:
         #: Memory-only when no state root is resolved, matching `_Document`.
         #: A mock host and a real host must refuse the same things.
         self._memory: dict[str, dict[str, Any]] = {}
+        #: Documents closed while this process runs. Not persisted: the close
+        #: removed everything on disk, and staging is per process, so a write
+        #: begun before a restart cannot be committed after it.
+        self._discarded: set[str] = set()
         self._lock = RLock()
 
     @property
@@ -168,6 +262,13 @@ class CanvasRecoveryStore:
                 except OSError:
                     return
                 return
+
+    def _refuse_discarded(self, document_id: str) -> None:
+        """No write for a closed document, wherever it is in its stages."""
+
+        if document_id in self._discarded:
+            raise DiscardedDocument(
+                "That document was closed; its recovery has been discarded.")
 
     def _document_dir(self, document_id: str) -> Path:
         if not isinstance(document_id, str) or not DOCUMENT_ID.match(document_id):
@@ -213,14 +314,21 @@ class CanvasRecoveryStore:
 
         with self._lock:
             if self._root is None:
-                self._memory.setdefault(
-                    document_id, {"envelope": {}, "payloads": {}})
                 if not DOCUMENT_ID.match(str(document_id)):
                     raise MalformedRecovery(
                         "A document id must be 32 hexadecimal characters.")
-                self._memory[document_id] = {"envelope": {}, "payloads": {}}
+                self._refuse_discarded(document_id)
+                # Staged BESIDE the sealed snapshot, as on disk. This used to
+                # replace the whole entry, so opening a write discarded the
+                # last good snapshot before a byte of the new one arrived.
+                entry = self._memory.setdefault(
+                    document_id, {"envelope": {}, "payloads": {}})
+                entry["staging"] = {}
                 return
             staging = self._staging_dir(document_id)
+            # A `begin` sent before the close can be handled after it. Opening
+            # staging for it would let its commit seal the document back.
+            self._refuse_discarded(document_id)
             try:
                 if staging.exists():
                     shutil.rmtree(staging, ignore_errors=True)
@@ -247,12 +355,15 @@ class CanvasRecoveryStore:
         payloads = self._checked_blobs({name: data_url})
         blob = payloads[name]
         with self._lock:
+            self._refuse_discarded(document_id)
             if self._root is None:
-                entry = self._memory.setdefault(
-                    document_id, {"envelope": {}, "payloads": {}})
-                previous = entry["payloads"].get(name, b"") if append else b""
-                entry["payloads"][name] = previous + blob
-                return len(entry["payloads"][name])
+                staged = (self._memory.get(document_id) or {}).get("staging")
+                if staged is None:
+                    raise MalformedRecovery(
+                        "No recovery write is open for that document.")
+                previous = staged.get(name, b"") if append else b""
+                staged[name] = previous + blob
+                return len(staged[name])
             staging = self._staging_dir(document_id)
             if not staging.is_dir():
                 raise MalformedRecovery(
@@ -267,7 +378,8 @@ class CanvasRecoveryStore:
                     f"A recovery blob could not be written: "
                     f"{type(error).__name__}") from error
 
-    def commit(self, document_id: str, manifest: Any) -> dict[str, Any]:
+    def commit(self, document_id: str, manifest: Any, *,
+               reuse: Any = None, base: Any = None) -> dict[str, Any]:
         """Seal the staged write and replace the previous snapshot.
 
         The swap happens only once every blob is on disk, so an interruption
@@ -275,30 +387,66 @@ class CanvasRecoveryStore:
         two of its five layers -- which would restore as a plausible-looking
         corruption of the owner's work, the worst outcome a recovery system
         can produce.
+
+        `reuse` names blobs to carry forward unchanged from the sealed
+        snapshot whose `commit_id` is `base`. The page sends only the layers
+        that changed; the rest come from the snapshot it checked them against,
+        and from no other.
         """
 
         if not isinstance(manifest, Mapping):
             raise MalformedRecovery("manifest must be a JSON object.")
+        reuse = _checked_reuse(reuse)
         with self._lock:
+            # THE RACE this refusal closes: begin -> blobs -> the owner closes
+            # the document -> this commit. Sealing here put it back.
+            self._refuse_discarded(document_id)
             if self._root is None:
-                entry = self._memory.setdefault(
-                    document_id, {"envelope": {}, "payloads": {}})
-                _require_referenced_blobs(manifest, sorted(entry["payloads"]))
+                entry = self._memory.get(document_id) or {}
+                staged = entry.get("staging")
+                if staged is None:
+                    raise MalformedRecovery(
+                        "No recovery write is open for that document.")
+                if set(reuse) & set(staged):
+                    raise MalformedRecovery(
+                        "A blob was both uploaded and carried forward.")
+                sealed = entry.get("payloads") or {}
+                if reuse:
+                    _require_base(entry.get("envelope"), base, reuse,
+                                  lambda name: name in sealed)
+                payloads = dict(staged)
+                payloads.update({name: sealed[name] for name in reuse})
+                _require_referenced_blobs(manifest, sorted(payloads))
                 envelope = self._envelope(document_id, manifest,
-                                          sorted(entry["payloads"]))
-                entry["envelope"] = envelope
+                                          sorted(payloads))
+                self._memory[document_id] = {
+                    "envelope": envelope, "payloads": payloads}
                 return envelope
 
             staging = self._staging_dir(document_id)
             if not staging.is_dir():
                 raise MalformedRecovery(
                     "No recovery write is open for that document.")
-            names = sorted(p.name for p in staging.iterdir()
-                           if p.is_file() and BLOB_NAME.match(p.name))
+            uploaded = sorted(p.name for p in staging.iterdir()
+                              if p.is_file() and BLOB_NAME.match(p.name))
+            if set(reuse) & set(uploaded):
+                raise MalformedRecovery(
+                    "A blob was both uploaded and carried forward.")
+            target = self._document_dir(document_id)
+            if reuse:
+                # A crash between the two renames left the sealed snapshot
+                # under `.old`; that is still the one the page built against.
+                self._reclaim_interrupted_swap(document_id)
+                _require_base(self._sealed_envelope(target), base, reuse,
+                              lambda name: (target / name).is_file())
+            names = sorted(set(uploaded) | set(reuse))
+            # Checked BEFORE anything is carried, so a refusal leaves staging
+            # holding only what the page uploaded.
             _require_referenced_blobs(manifest, names)
             envelope = self._envelope(document_id, manifest, names)
-            target = self._document_dir(document_id)
             try:
+                for name in reuse:
+                    _carry(target / name, staging / name)
                 (staging / MANIFEST_FILENAME).write_text(
                     json.dumps(envelope, ensure_ascii=False, indent=2),
                     encoding="utf-8")
@@ -321,6 +469,17 @@ class CanvasRecoveryStore:
         target = self._document_dir(document_id)
         return target.with_name(target.name + f".{os.getpid()}.writing")
 
+    @staticmethod
+    def _sealed_envelope(target: Path) -> dict[str, Any] | None:
+        """The snapshot on disk for one document, or None if there is none."""
+
+        try:
+            envelope = json.loads(
+                (target / MANIFEST_FILENAME).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        return envelope if isinstance(envelope, dict) else None
+
     def _envelope(self, document_id: str, manifest: Mapping[str, Any],
                   names: list[str]) -> dict[str, Any]:
         return {
@@ -328,6 +487,10 @@ class CanvasRecoveryStore:
             "schema_version": RECOVERY_SCHEMA_VERSION,
             "document_id": document_id,
             "updated_at": _utc_now(),
+            # Names THIS sealed snapshot, so a later commit can say which one
+            # it carries blobs forward from. `updated_at` cannot: two commits
+            # inside one second share it.
+            "commit_id": uuid.uuid4().hex,
             "manifest": dict(manifest),
             "blobs": list(names),
         }
@@ -346,16 +509,10 @@ class CanvasRecoveryStore:
         if not isinstance(manifest, Mapping):
             raise MalformedRecovery("manifest must be a JSON object.")
         payloads = self._checked_blobs(blobs)
-        envelope = {
-            "schema": RECOVERY_SCHEMA,
-            "schema_version": RECOVERY_SCHEMA_VERSION,
-            "document_id": document_id,
-            "updated_at": _utc_now(),
-            "manifest": dict(manifest),
-            "blobs": sorted(payloads),
-        }
+        envelope = self._envelope(document_id, manifest, sorted(payloads))
 
         with self._lock:
+            self._refuse_discarded(document_id)
             if self._root is None:
                 if not DOCUMENT_ID.match(str(document_id)):
                     raise MalformedRecovery(
@@ -397,15 +554,26 @@ class CanvasRecoveryStore:
         Only an explicit discard or close reaches here. An ordinary image
         export is not a layered project save and must not clear recovery --
         the owner still has unsaved structure the export did not capture.
+
+        FINAL. A capture of this document may be part way through its begin,
+        blobs and commit; every write for it from here on is refused, so none
+        can seal it back. On disk the staging a write left and a snapshot a
+        failed swap left under `.old` go too -- `list` reclaims the second at
+        the next launch, which would undo the close the same way.
         """
 
         with self._lock:
             if self._root is None:
                 self._memory.pop(document_id, None)
+                self._discarded.add(document_id)
                 return
             target = self._document_dir(document_id)
-            if target.exists():
-                shutil.rmtree(target, ignore_errors=True)
+            self._discarded.add(document_id)
+            leftovers = [*target.parent.glob(target.name + ".*.writing"),
+                         *target.parent.glob(target.name + ".*.old")]
+            for path in (target, *leftovers):
+                if path.exists():
+                    shutil.rmtree(path, ignore_errors=True)
 
     # -- reads ------------------------------------------------------------
 
@@ -431,7 +599,9 @@ class CanvasRecoveryStore:
 
         with self._lock:
             if self._root is None:
-                return [dict(entry["envelope"]) for entry in self._memory.values()]
+                # A write opened and never sealed is not a document yet.
+                return [dict(entry["envelope"]) for entry in self._memory.values()
+                        if entry.get("envelope")]
             if not self._root.is_dir():
                 return []
             found: list[dict[str, Any]] = []
@@ -462,7 +632,7 @@ class CanvasRecoveryStore:
             self._reclaim_interrupted_swap(document_id)
             if self._root is None:
                 entry = self._memory.get(document_id)
-                if entry is None:
+                if entry is None or not entry.get("envelope"):
                     raise UnknownDocument("No recovery exists for that document.")
                 return {
                     **entry["envelope"],
@@ -499,9 +669,11 @@ class CanvasRecoveryStore:
 
 __all__ = (
     "CanvasRecoveryStore",
+    "DiscardedDocument",
     "MalformedRecovery",
     "RecoveryError",
     "RecoveryNotWritten",
+    "StaleRecoveryBase",
     "UnknownDocument",
     "RECOVERY_SCHEMA",
     "RECOVERY_SCHEMA_VERSION",

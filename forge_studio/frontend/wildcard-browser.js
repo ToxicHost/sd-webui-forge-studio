@@ -704,7 +704,7 @@
         el.dataset.i18nTitle = "wildcard.clickToCopy";
         el.title = _t("wildcard.clickToCopy", "Click to copy");
         el.addEventListener("click", () => {
-          navigator.clipboard.writeText(line).then(() => {
+          window.studioCopyText(line).then(() => {
             el.classList.add("copied");
             setTimeout(() => el.classList.remove("copied"), 600);
           }).catch(() => {

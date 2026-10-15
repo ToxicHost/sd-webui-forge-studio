@@ -1887,6 +1887,41 @@
                 </div>
               </section>
 
+              <!-- HM2. The attention capture behind heatmaps and word masks, and
+                   the folder its files live in. The toggle is a server-snapshotted
+                   preference like GPU tile compositing; the folder, its size and
+                   the clean-up are the server's, read from /studio/attention/store. -->
+              <section class="settings-card" data-settings-section="heatmap-data">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.heatmap.title">Heatmap data</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleAttentionCapture" data-setting-search="heatmap attention word masks prompt debugger capture data">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.heatmap.capture">Keep word heatmap data</span>
+                      <p class="settings-item-description" data-i18n="settings.heatmap.capture.description">Records where each prompt word landed while an image generates, for heatmaps and word masks. Adds about half a second and a small file per image. Turn it off for big batches.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleAttentionCapture"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="settingAttentionFolder" data-setting-search="heatmap data folder location size move clean up orphans">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.heatmap.folder">Folder</span>
+                      <p class="settings-item-description" id="attentionStoreReadout"></p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="settingAttentionFolder" data-i18n-placeholder="settings.heatmap.placeholder" placeholder="A full path, or leave as shown">
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="attentionFolderMove" data-i18n="settings.heatmap.move">Move here</button>
+                      <button class="defaults-btn" id="attentionFolderClean" data-i18n="settings.heatmap.clean">Clean up</button>
+                      <button class="defaults-btn" id="attentionFolderOpen" data-i18n="settings.heatmap.open">Open folder</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
               <section class="settings-card" data-settings-section="watermark" data-collapsible="true" data-summary-source="toggleWatermark" data-auto-expand-on="toggleWatermark">
                 <button class="settings-card-head" type="button" aria-expanded="false" aria-controls="settingsCardBody-watermark">
                   <span class="settings-card-titles">

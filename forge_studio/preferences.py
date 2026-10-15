@@ -93,6 +93,10 @@ SESSION_KEYS = frozenset({
 #: so a key added to the page without being added here fails the suite instead
 #: of failing silently at runtime.
 PREFERENCE_KEYS = frozenset({
+    # HM2. The attention capture behind heatmaps and word masks: on unless
+    # the owner turns it off. (Where its files live is NOT a preference: it
+    # changes only with the files, `attention_store.write_location`.)
+    "attention_capture",
     "auto_unload",
     "component_memory",
     "education",
@@ -133,6 +137,7 @@ MAX_DOCUMENT_BYTES = 256 * 1024
 #: converters in `prefs.js` for the migrated keys, and the `Prefs.set` call
 #: sites for the rest. Enumerations are only pinned where the source pins them.
 PREFERENCE_SHAPES: dict[str, Any] = {
+    "attention_capture": bool,
     "auto_unload": dict,
     "component_memory": dict,
     "education": dict,

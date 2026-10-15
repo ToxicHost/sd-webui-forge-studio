@@ -362,6 +362,10 @@ class FirstImageRequest:
     #: other outcome sets nothing, which is Neo's own path. Ignored on every
     #: model that is not Anima.
     anima_emphasis: str | None = None
+    #: HM2. Whether the port keeps this job's main-pass attention (the
+    #: owner's setting, snapshotted server-side). Consumed by
+    #: `live_generation_port._generate_in_scope`.
+    attention_capture_requested: bool = True
     output_count: int = 1
     #: The Hires second pass, in NEO's spelling. Studio's own vocabulary lives
     #: in `HiresSettings`; the translation happens once, at the boundary, so

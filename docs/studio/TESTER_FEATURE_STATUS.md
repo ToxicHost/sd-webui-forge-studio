@@ -21,11 +21,11 @@ generation-model paths were accessed.
 | Auto Detail | Implemented; GPU retest required | Detector/slot contracts passed. Five pinned detectors included and ultralytics declared. A detector finding no target can leave the image unchanged. While inpainting, faces the mask is not on are skipped (2026-10-10; confirmed on a real inpaint). |
 | Queue and cancellation | Available | Queue/lifecycle contracts passed. Cancellation is bounded by safe execution points, not necessarily immediate. |
 | Canvas brushes, layers and masks | Available for testing | Brush Engine V2 is the default painting engine (2026-09-30): automated brush checks passed and every preset was reviewed with a mouse. Aliased/Pixel Perfect brushes, touch input and mask/region painting use the previous engine. No tablet certification. |
-| Canvas recovery | Implemented | Recovery-store tests passed. Undo history is not restored. Keep separate artwork backups. |
+| Canvas recovery | Implemented | Recovery-store tests passed. Since 2026-10-15 a capture saves only the layers, mask and regions that changed, and a restored document is byte-identical in tests; closing the last tab or closing a tab mid-save is safe. Undo history is not restored. Keep separate artwork backups. |
 | Gallery | Implemented with limitations | Service contract tests passed; fresh browser behavior still needs tester feedback. Image similarity/metadata are not universal format guarantees. |
 | Preferences | Available with persistence limits | Server persistence tests passed. An ephemeral port changes browser origin, resetting browser-local theme/tool/layout state; use a stable port when needed. |
-| Wildcards / Lexicon | Available | Editor and preference tests passed. Configured local folders are required for user content. |
-| LoRAs / embeddings | Implemented; not certified in this pass | Catalogue/bridge source exists. Model-family and combination-specific behavior still needs testing. The LoRA and Checkpoint browsers (previews, activation text, Civitai lookup) were added 2026-10-05 with route tests. |
+| Wildcards / Lexicon | Available | Editor and preference tests passed. Configured local folders are required for user content. Refresh lists newly added wildcards, and they expand without a restart (2026-10-15). |
+| LoRAs / embeddings | Implemented; not certified in this pass | Catalogue/bridge source exists. Model-family and combination-specific behavior still needs testing. The LoRA and Checkpoint browsers (previews, activation text, Civitai lookup) were added 2026-10-05 with route tests. Refresh lists newly added LoRAs (2026-10-15). |
 | Develop | Available for testing | Saved presets work (2026-10-05). Shadows, Blacks, Dehaze, Vignette, Blue Saturation and negative number entry fixed and measured with automated checks (2026-10-10). Float (High Precision) sources are not available. |
 | Workshop | Available for testing (2026-10-05) | Weighted Sum, Add Difference and SLERP merges, block weights, LoRA and VAE baking, multi-step chains, History, and a basic Inspector. The arithmetic was tested against the reference formulas on test models, and a real merge on real checkpoints. LoRA baking is proven on test LoRAs only. Results go to the first checkpoint folder; files are never overwritten. |
 | Saving and export | Available (2026-10-05) | Save, Save to Gallery, Canvas Export (with watermark stamping) and Export EXR (Standard) write files; route tests passed. |
@@ -47,10 +47,17 @@ generation-model paths were accessed.
 | Automatic updates | Not automatic. Git installations update from Settings > About > Check for Updates or with `git pull --ff-only`; see [GIT_INSTALL.md](GIT_INSTALL.md). ZIP updates use a separate candidate folder and backups. |
 | Multi-user / public network service | Outside the Windows local-use candidate. |
 | Linux/NVIDIA Docker tester | Experimental [setup supplied](../../packaging/docker/README.md); config and native adapter checks only. Image build, GPU passthrough and container generation await the Linux tester. |
+| Word heatmaps | Available for testing (2026-10-15) | Anima and SDXL pictures record each prompt word's attention; the Gallery's Words section shows it. Settings > Heatmap data turns recording off, moves or cleans up its folder. Checked on a real GPU for Anima: pictures byte-identical with recording on and off, maps matching the research capture. SDXL heatmaps are in use but have not had the same pixel check yet. |
 | macOS, Linux, Docker, AMD/Intel GPU certification | Not established by this review. Some platform/source support exists, but is not a tested release promise. |
 
 ## Verification scope
 
+- 2026-10-15 update: the full development suite ran 6,336 tests with the GPU
+  after the heatmap work; the 11 failures are the same development-guide text
+  checks as before. The later fixes were tested with the GPU hidden: beyond
+  those 11, only engine start-up tests that need a GPU failed, and the engine
+  did not change. Ten real Anima images were generated on a GPU for heatmaps
+  (see the Word heatmaps row).
 - 2026-10-12 update: the full development suite ran 6,240 tests. The 11
   failures are the same development-guide text checks as before; none are in the
   runtime. Anima weights have 62 tests of their own, and 23 real Anima images

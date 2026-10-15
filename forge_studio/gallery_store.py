@@ -68,7 +68,13 @@ from typing import Any, Iterator
 #: Bumped when the tables below change shape. Recorded in the database via
 #: `PRAGMA user_version`, which SQLite stores in the file header -- no table of
 #: our own, and readable without knowing anything else about the schema.
-SCHEMA_VERSION = 1
+#:
+#: 2 (2026-10-12, HM1): `image_metadata.attention_path`. A column added to
+#: `_ADDED_COLUMNS` reaches an existing database ONLY through a bump: `_migrate`
+#: returns early at the current version.
+#: 3 (2026-10-12, HM2): `trash.content_hash`, so emptying the trash can name
+#: each picture's attention sidecar.
+SCHEMA_VERSION = 3
 
 GALLERY_DIRECTORY = "gallery"
 DATABASE_FILENAME = "gallery.db"
@@ -128,7 +134,8 @@ _SCHEMA = (
     "width INTEGER, height INTEGER, file_date REAL, "
     "search_text TEXT DEFAULT '', "
     "characters_json TEXT DEFAULT '[]', "
-    "deleted_at REAL "
+    "deleted_at REAL, "
+    "content_hash TEXT DEFAULT '' "
     ")",
     "CREATE TABLE IF NOT EXISTS image_metadata ( "
     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -155,7 +162,8 @@ _SCHEMA = (
     "raw_infotext TEXT, "
     "created_at REAL, "
     "float_path TEXT DEFAULT '', "
-    "blend_mask_path TEXT DEFAULT '' "
+    "blend_mask_path TEXT DEFAULT '', "
+    "attention_path TEXT DEFAULT '' "
     ")",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_hash "
     "ON image_metadata(content_hash) WHERE content_hash != ''",
@@ -184,6 +192,11 @@ _ADDED_COLUMNS = (
     ("image_metadata", "studio_dynamic_prompts", "TEXT"),
     ("image_metadata", "float_path", "TEXT DEFAULT ''"),
     ("image_metadata", "blend_mask_path", "TEXT DEFAULT ''"),
+    # HM1: the attention sidecar's store-relative name (attention_store).
+    ("image_metadata", "attention_path", "TEXT DEFAULT ''"),
+    # HM2: the trashed picture's pixel identity, so emptying the trash can
+    # delete its attention sidecar (attention_housekeeping.forget).
+    ("trash", "content_hash", "TEXT DEFAULT ''"),
 )
 
 #: The columns carried across when `image_metadata` is rebuilt from the old

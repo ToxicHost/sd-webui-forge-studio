@@ -249,6 +249,10 @@ class GalleryService:
         #: with a state root, including ones that never open the Gallery, and
         #: a thread per construction is a thread per test.
         self._autosync = AutoSync(self._sync_pass, self._events.publish)
+        #: HM2. `() -> (store root, pending root)` for the attention sidecars,
+        #: set by the server, which owns the preference that moves the store.
+        #: None on a host without one: the trash then empties as before.
+        self.attention_roots: Callable[[], tuple[Path, Path]] | None = None
 
     # -- capability and store ---------------------------------------------
 
@@ -385,6 +389,66 @@ class GalleryService:
         except Exception:  # noqa: BLE001
             return False
         return True
+
+    def _empty_trash(self) -> Reply:
+        """Empty the trash, then delete each emptied picture's attention
+        sidecar (HM2). The hashes are read FIRST: the rows are gone after."""
+
+        hashes: list[str] = []
+        if self.attention_roots is not None:
+            try:
+                with self.store().read() as connection:
+                    hashes = [str(row[0] or "") for row in connection.execute(
+                        "SELECT content_hash FROM trash")]
+            except Exception:  # noqa: BLE001 - the trash still empties
+                hashes = []
+        reply = self._act(gallery_actions.empty_trash)
+        if hashes and reply.status == int(HTTPStatus.OK):
+            try:
+                from forge_studio.attention_housekeeping import forget
+
+                forget(self.store(), self.attention_roots()[0], hashes)
+            except Exception:  # noqa: BLE001 - a sidecar left behind is an orphan, not a failure
+                pass
+        return reply
+
+    def _attention_scanning(self) -> bool:
+        return bool(self._scan.running or self._hashing.running)
+
+    def attention_survey(self) -> dict[str, Any]:
+        """HM2. The sidecar store's size readout. Paths never leave here."""
+
+        from forge_studio.attention_housekeeping import survey
+
+        if self.attention_roots is None or not self.capability().available:
+            return {"ok": False, "error": "The Gallery is not available."}
+        store_root, pending_root = self.attention_roots()
+        found = survey(self.store(), store_root, pending_root, scanning=self._attention_scanning())
+        return {"ok": True, **found.to_dict()}
+
+    def attention_clean(self) -> dict[str, Any]:
+        """HM2. "Clean up": the orphans by `attention_housekeeping`'s rule."""
+
+        from forge_studio.attention_housekeeping import clean
+
+        if self.attention_roots is None or not self.capability().available:
+            return {"ok": False, "error": "The Gallery is not available."}
+        store_root, pending_root = self.attention_roots()
+        return clean(self.store(), store_root, pending_root, scanning=self._attention_scanning())
+
+    def record_attention(self, content_hash: str, relative: str) -> bool:
+        """HM1. Name a just-generated picture's attention sidecar. Never
+        raises, for the same reason as `record_generation`."""
+
+        if not content_hash or not relative:
+            return False
+        if not self.capability().available:
+            return False
+        try:
+            return bool(gallery_actions.record_attention(
+                self.store(), content_hash, relative)["ok"])
+        except Exception:  # noqa: BLE001
+            return False
 
     def linked_folder_paths(self) -> list[str]:
         """The linked folders' locations, for server-side checks only.
@@ -623,7 +687,21 @@ class GalleryService:
             return Reply(payload=found) if found else _not_found()
         if parts[2] == "metadata":
             return self._metadata(image_id)
+        if parts[2] == "attention":
+            return self._attention(image_id)
         return _not_found()
+
+    def _attention(self, image_id: int) -> Reply:
+        """HM3. The heatmap viewer's words and maps for one picture
+        (`forge_studio.attention_view`). `{"available": false}` when the
+        picture has no capture or this host keeps none."""
+
+        if self.attention_roots is None:
+            return Reply(payload={"available": False})
+        from forge_studio.attention_view import for_image
+
+        found = for_image(self.store(), self.attention_roots()[0], image_id)
+        return Reply(payload=found) if found is not None else _not_found()
 
     def _metadata(self, image_id: int) -> Reply:
         """The parameters an image was made with.
@@ -907,7 +985,7 @@ class GalleryService:
             return self._act(gallery_actions.set_ignore_word,
                              str(payload.get("word") or ""), True)
         if route == "/trash/empty":
-            return self._act(gallery_actions.empty_trash)
+            return self._empty_trash()
 
         if route == "/rescan-characters":
             return self._act(gallery_actions.rescan_characters)

@@ -222,7 +222,12 @@ class WildcardService:
         return {"path": result.get("path", "")}
 
     def listing(self) -> list[dict[str, Any]]:
-        return self.library().entries()
+        # A fresh walk on every listing, as the Extension's `list_wildcards`
+        # does (`studio_dynamic_prompts.py:449`). The browsers' Refresh buttons
+        # call this route, and a library loaded once at startup answered them
+        # with the folder as it was then: a wildcard the owner had just added
+        # never appeared. The walk is names and sizes only; lines stay lazy.
+        return self.library(reload=True).entries()
 
     def content(self, name: str) -> dict[str, Any]:
         lines = self.library().lines(name)
@@ -253,7 +258,10 @@ class WildcardService:
         from .wildcards import Expansion
 
         try:
-            return self.library().expand(prompt, seed)
+            # Re-walked per generation, as the Extension resolves per
+            # generation: a wildcard added or edited since the last listing
+            # expands now, not after a restart.
+            return self.library(reload=True).expand(prompt, seed)
         except Exception:  # noqa: BLE001
             return Expansion(text=prompt or "")
 

@@ -297,6 +297,13 @@ def bootstrap_backend(
 
         _install_anima_emphasis()
 
+        # The attention capture (HM1), AFTER the emphasis adapter: its
+        # cross-attention wrapper must sit outside that one, so it sees the
+        # same per-pass bias. Never raises; inert unless a pass is marked.
+        from .attention_capture import install as _install_attention_capture
+
+        _install_attention_capture()
+
         from .neo_registries import read_registries
 
         registries = read_registries()

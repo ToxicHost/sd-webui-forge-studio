@@ -104,6 +104,11 @@
     // never re-applied, so a slow catalogue can never overwrite a choice the
     // owner has already made.
     ownerChangedSelection: false,
+    // False until the page's own boot restore (Saved Defaults, then the
+    // session) has run; nothing is restored before then. See `mount`.
+    bootSettled: false,
+    // A remember request in flight, so the poll does not stack them.
+    remembering: false,
     settingsToken: "",
     // job_id -> true once its result has been added to the session
     // registry, so the poll never adds the same result twice.
@@ -597,6 +602,7 @@
   const RESTORE_ATTEMPTS = 8;
 
   function restorePreference() {
+    if (!state.bootSettled) return;
     if (state.preferenceApplied || state.ownerChangedSelection) return;
     const preference = state.preference;
     if (!preference) return;                    // not fetched yet
@@ -638,11 +644,13 @@
 
   async function rememberSelection() {
     if (!state.settingsToken) return;           // nothing to authorize with
+    if (state.remembering) return;
     const selection = {};
     for (const [role, id] of Object.entries(SELECTORS)) {
       const value = document.getElementById(id)?.value || "";
       if (value) selection[role] = value;
     }
+    state.remembering = true;
     try {
       await jsonFetch(API.rememberSelection, {
         method: "POST",
@@ -656,7 +664,28 @@
     } catch (_) {
       // Never surfaced and never blocking. A preference that cannot be saved
       // costs the owner one re-pick at the next launch; failing a generation
-      // over it would cost them the thing they actually asked for.
+      // over it would cost them the thing they actually asked for. Taken as
+      // the local view anyway, so the poll below does not resend it every
+      // tick; the next real change tries again.
+      state.preference = selection;
+    } finally {
+      state.remembering = false;
+    }
+  }
+
+  // Remember the dropdowns whenever they differ from what is remembered,
+  // however they changed. Only a hand pick used to be saved, so a model put
+  // back by the session, a Gallery "send to canvas" or a workflow never
+  // reached the remembered choice, and the next launch restored an older one.
+  function syncRememberedSelection() {
+    if (!state.bootSettled || !state.preferenceApplied || state.restoring) return;
+    const preference = state.preference || {};
+    for (const [role, id] of Object.entries(SELECTORS)) {
+      const value = document.getElementById(id)?.value || "";
+      if (value && value !== (preference[role] || "")) {
+        rememberSelection();
+        return;
+      }
     }
   }
 
@@ -691,6 +720,7 @@
     // asynchronously: the first tick often finds them empty. It stops as soon
     // as every remembered role has found its option, or the owner picks.
     restorePreference();
+    syncRememberedSelection();
     render();
   }
 
@@ -763,7 +793,24 @@
       });
     });
     render();
-    loadPreference().then(restorePreference);
+    // After the page's boot restore, never before or beside it. When the
+    // session put a checkpoint back, the session wins: it is the newer state
+    // and the one the owner chose to remember. The remembered selection then
+    // takes the session's values instead of overwriting them. A host without
+    // the signal (or one that never settles) restores as before.
+    const boot = window._studioBootRestore
+      ? Promise.race([window._studioBootRestore,
+                      new Promise((resolve) => setTimeout(() => resolve(null), 30000))])
+      : Promise.resolve(null);
+    Promise.all([loadPreference(), boot]).then(([, settled]) => {
+      state.bootSettled = true;
+      if (settled && settled.sessionModel) {
+        state.preferenceApplied = true;
+        rememberSelection();
+        return;
+      }
+      restorePreference();
+    });
     refresh();
     setInterval(refresh, POLL_MS);
   }

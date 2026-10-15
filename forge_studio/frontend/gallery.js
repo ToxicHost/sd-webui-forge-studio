@@ -1398,28 +1398,61 @@ async function deleteSingleFromCtx(imgId) {
 // STUDIO INTEGRATION
 // ========================================================================
 
-async function copyImageToClipboard(imgId) {
-    const img = G.images.find(i => i.id === imgId);
+// An image URL -> its Blob. A `data:` URL is decoded here rather than
+// fetched: Studio's Content-Security-Policy allows `connect-src 'self'`,
+// which governs fetch(), so fetching an unsaved Canvas output's data: URL
+// failed with "Failed to fetch" and nothing was copied.
+async function _imageBlobOf(url) {
+    if (/^data:/i.test(url)) {
+        const comma = url.indexOf(",");
+        const head = url.slice(5, comma), body = url.slice(comma + 1);
+        const bytes = /;base64/i.test(head)
+            ? Uint8Array.from(atob(body), c => c.charCodeAt(0))
+            : new TextEncoder().encode(decodeURIComponent(body));
+        return new Blob([bytes], { type: head.split(";")[0] || "application/octet-stream" });
+    }
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return resp.blob();
+}
+// The clipboard takes image/png only; anything else is redrawn as PNG.
+async function _asPng(blob) {
+    if (blob.type === "image/png") return blob;
+    const bmp = await createImageBitmap(blob);
     try {
-        const resp = await fetch(API_BASE + "/full/" + imgId);
-        const blob = await resp.blob();
-        // Clipboard API requires image/png; convert if needed
-        let pngBlob = blob;
-        if (blob.type !== "image/png") {
-            const bmp = await createImageBitmap(blob);
-            try {
-                const canvas = document.createElement("canvas");
-                canvas.width = bmp.width; canvas.height = bmp.height;
-                const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
-                ctx.drawImage(bmp, 0, 0);
-                pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
-            } finally {
-                bmp.close();
-            }
+        const canvas = document.createElement("canvas");
+        canvas.width = bmp.width; canvas.height = bmp.height;
+        canvas.getContext("2d", { colorSpace: "srgb" }).drawImage(bmp, 0, 0);
+        return await new Promise(r => canvas.toBlob(r, "image/png"));
+    } finally {
+        bmp.close();
+    }
+}
+// Copy the image at `url` to the system clipboard. The ClipboardItem is made
+// at once, inside the click, holding a PROMISE of the PNG: some browsers
+// allow the clipboard only briefly after a click, and fetching and converting
+// first could outlast that. A browser that will not take a promise gets the
+// finished PNG instead.
+async function _copyImageUrl(url, label) {
+    if (!window.isSecureContext || !navigator.clipboard || !navigator.clipboard.write
+        || typeof ClipboardItem === "undefined") {
+        toast("This browser can't copy images here. Open Studio at 127.0.0.1 or localhost, or use Download.");
+        return;
+    }
+    const png = _imageBlobOf(url).then(_asPng);
+    try {
+        try {
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+        } catch (e) {
+            if (!(e instanceof TypeError)) throw e;
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": await png })]);
         }
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
-        toast("Copied" + (img ? " " + img.filename : "") + " to clipboard", "success");
-    } catch (e) { toast("Copy failed: " + e.message); }
+        toast("Copied" + (label ? " " + label : "") + " to clipboard", "success");
+    } catch (e) { toast("Copy failed: " + ((e && e.message) || e)); }
+}
+function copyImageToClipboard(imgId) {
+    const img = G.images.find(i => i.id === imgId);
+    return _copyImageUrl(API_BASE + "/full/" + imgId, img ? img.filename : "");
 }
 async function downloadImage(imgId) {
     const img = G.images.find(i => i.id === imgId);
@@ -2021,9 +2054,11 @@ function showDetailOverlay() {
             ? '<button class="gal-detail-btn accent" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button>'
             : '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="' + _t("gallery.detail.choosePromptVersion", "Choose prompt version") + '">▾</button></span>')
         : '';
-    ov.innerHTML ='<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + (eph || img.is_video || !G.folioAvailable ? '' : _folioButtonHtml(img.id)) +'<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + sendCanvasHtml + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
+    ov.innerHTML ='<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + (eph || img.is_video || !G.folioAvailable ? '' : _folioButtonHtml(img.id)) +'<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + sendCanvasHtml + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div>' + (eph || img.is_video ? '' : '<div class="gal-words-panel" id="gal-words-panel" hidden></div>') + '<div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
     _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img), 50);
+    // HM3: the heatmap viewer, for a picture Studio kept word attention for.
+    if (!eph && !img.is_video && img.id) loadAttentionWords(img, ov);
     // Warm the neighbours so the next/prev arrow paints instantly.
     if (!eph && img.id) _preloadFull(img.id);
     _preloadAdjacent();
@@ -2075,26 +2110,7 @@ function _wireDetailEvents(ov, img) {
                 return;
             }
             if (act === "copy-image") {
-                (async () => {
-                    try {
-                        const resp = await fetch(img.b64Url);
-                        const blob = await resp.blob();
-                        let pngBlob = blob;
-                        if (blob.type !== "image/png") {
-                            const bmp = await createImageBitmap(blob);
-                            try {
-                                const canvas = document.createElement("canvas");
-                                canvas.width = bmp.width; canvas.height = bmp.height;
-                                canvas.getContext("2d", { colorSpace: "srgb" }).drawImage(bmp, 0, 0);
-                                pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
-                            } finally {
-                                bmp.close();
-                            }
-                        }
-                        await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
-                        toast("Copied to clipboard", "success");
-                    } catch (e) { toast("Copy failed: " + e.message); }
-                })();
+                _copyImageUrl(img.b64Url, "");
                 return;
             }
             if (act === "download-image") {
@@ -2158,6 +2174,132 @@ function _wireDetailEvents(ov, img) {
         }
     });
 }
+// ===== HEATMAP VIEWER v0 (HM3) =====
+// Layout A with heat colours, the owner's choice (2026-10-12): the picture's
+// words beside it, in prompt order, each with a strength bar; click a word to
+// lay its map over the picture, click it again to clear. Read-only. The maps
+// come from the attention data Studio kept when it made the picture
+// (`forge_studio/attention_view.py`); a picture without any shows no panel.
+// No "may be missing" dot in v0: without word kinds it marked about one in
+// five present words, so it waits for a detector.
+//
+// The overlay is a canvas given the picture's own box and copying its CSS
+// transform, so zoom and pan carry it along. Word text is attacker-
+// influenced (it is the prompt): textContent only.
+const _HEAT_STOPS = [[0, 0, 4], [40, 11, 84], [101, 21, 110], [159, 42, 99], [212, 72, 66], [245, 125, 21], [250, 193, 39], [252, 255, 164]];
+function _heatColour(v) {
+    const x = Math.min(0.9999, Math.max(0, v)) * (_HEAT_STOPS.length - 1), i = Math.floor(x), f = x - i;
+    const a = _HEAT_STOPS[i], b = _HEAT_STOPS[i + 1];
+    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+// What a map value (0..1) draws as: opacity growing with the value up to the
+// cap, so the picture always reads through. The server has levelled each
+// word's map by its own spread (its median is 0, its 99th percentile 1), so
+// the floor is that map's own and none is set here. The colour starts at the
+// heat table's purple, not its black, so even a faint overlay shows on a dark
+// picture. The server sends each map already upsampled and, on Anima, snapped
+// to the picture's edges (a PNG, 512 px).
+const _HEAT_FLOOR = 0.0, _HEAT_GAMMA = 1.0, _HEAT_OPACITY = 0.8, _HEAT_COLOUR_START = 0.25;
+function _heatShade(v) {
+    const t = Math.min(1, Math.max(0, (v - _HEAT_FLOOR) / (1 - _HEAT_FLOOR)));
+    const c = _heatColour(_HEAT_COLOUR_START + (1 - _HEAT_COLOUR_START) * t);
+    return [c[0], c[1], c[2], 255 * _HEAT_OPACITY * Math.pow(t, _HEAT_GAMMA)];
+}
+// A reply whose "display" is "peak" (SDXL) is drawn as viewer v0 drew it: the
+// grid over its peak, stretched here, coloured from black, alpha 235 * v^0.8.
+// The owner tested SDXL that way and kept it.
+function _heatShadePeak(v) {
+    const c = _heatColour(v);
+    return [c[0], c[1], c[2], 235 * Math.pow(v, 0.8)];
+}
+function _decodeHeatMap(b64) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("heat map"));
+        image.src = "data:image/png;base64," + b64;
+    });
+}
+function _paintHeat(canvas, map, shade) {
+    const w = Math.max(1, Math.round(canvas.clientWidth * (window.devicePixelRatio || 1)));
+    const h = Math.max(1, Math.round(canvas.clientHeight * (window.devicePixelRatio || 1)));
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d"); ctx.clearRect(0, 0, w, h);
+    if (!map) return;
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(map, 0, 0, w, h);
+    const img = ctx.getImageData(0, 0, w, h), d = img.data;
+    for (let p = 0; p < d.length; p += 4) {
+        const s = shade(d[p] / 255);
+        d[p] = s[0]; d[p + 1] = s[1]; d[p + 2] = s[2]; d[p + 3] = Math.round(s[3]);
+    }
+    ctx.putImageData(img, 0, 0);
+}
+async function loadAttentionWords(img, ov) {
+    const panel = ov.querySelector("#gal-words-panel"); if (!panel) return;
+    let data;
+    try { data = await api("/image/" + img.id + "/attention"); } catch (_) { return; }
+    // The owner may have moved on while this was loading.
+    if (!data || !data.available || !(data.words || []).length || !ov.isConnected) return;
+    const area = ov.querySelector("#gal-detail-img-area"), imgEl = ov.querySelector("#gal-detail-img");
+    if (!area || !imgEl) return;
+    const canvas = document.createElement("canvas"); canvas.className = "gal-heat-overlay"; area.appendChild(canvas);
+    const sync = () => {
+        canvas.style.left = imgEl.offsetLeft + "px"; canvas.style.top = imgEl.offsetTop + "px";
+        canvas.style.width = imgEl.offsetWidth + "px"; canvas.style.height = imgEl.offsetHeight + "px";
+        canvas.style.transform = imgEl.style.transform || "";
+    };
+    let current = null;     // the decoded map on show, or null
+    const shade = data.display === "peak" ? _heatShadePeak : _heatShade;
+    const repaint = () => { sync(); _paintHeat(canvas, current, shade); };
+    new MutationObserver(sync).observe(imgEl, { attributes: true, attributeFilter: ["style"] });
+    if (window.ResizeObserver) new ResizeObserver(repaint).observe(imgEl);
+    imgEl.addEventListener("load", repaint);
+    sync();
+
+    const title = document.createElement("div"); title.className = "gal-meta-section-title";
+    title.textContent = _t("gallery.words.title", "Words");
+    const hint = document.createElement("div"); hint.className = "gal-words-hint";
+    hint.textContent = _t("gallery.words.hint", "Click a word to see where it landed in the picture.");
+    const list = document.createElement("div"); list.className = "gal-words-list";
+    const rows = [];
+    let textUsedBtn = null;
+    const show = async (key, b64) => {
+        const same = panel.dataset.showing === key;
+        panel.dataset.showing = same ? "" : key;
+        rows.forEach(r => r.el.classList.toggle("on", !same && r.key === key));
+        if (textUsedBtn) textUsedBtn.classList.toggle("on", !same && key === "text-used");
+        if (same) { current = null; repaint(); return; }
+        let decoded = null;
+        try { decoded = await _decodeHeatMap(b64); } catch (_) { /* nothing to draw */ }
+        // A later click may have replaced this one while the map decoded.
+        if (panel.dataset.showing !== key) return;
+        current = decoded;
+        repaint();
+    };
+    data.words.forEach((w, i) => {
+        const row = document.createElement("button"); row.type = "button"; row.className = "gal-word-row";
+        const name = document.createElement("span"); name.className = "gal-word-name"; name.textContent = w.word;
+        const meter = document.createElement("span"); meter.className = "gal-word-meter";
+        const fill = document.createElement("i"); fill.style.width = Math.min(100, (Number(w.strength) || 0) / 3 * 100) + "%";
+        meter.appendChild(fill);
+        row.title = _t("gallery.words.strength", "Strength {n}× the picture's typical word", { n: (Number(w.strength) || 0).toFixed(2) });
+        row.append(name, meter);
+        row.addEventListener("click", () => show("w" + i, w.map));
+        rows.push({ el: row, key: "w" + i });
+        list.appendChild(row);
+    });
+    panel.replaceChildren(title, hint, list);
+    if (data.text_used) {
+        textUsedBtn = document.createElement("button"); textUsedBtn.type = "button"; textUsedBtn.className = "gal-detail-btn gal-words-textused";
+        textUsedBtn.textContent = _t("gallery.words.textUsed", "Text used here");
+        textUsedBtn.title = _t("gallery.words.textUsedTitle", "Where the picture drew on the prompt at all. Dark areas were left to the model.");
+        textUsedBtn.addEventListener("click", () => show("text-used", data.text_used));
+        panel.appendChild(textUsedBtn);
+    }
+    panel.hidden = false;
+}
+
 function setupDetailZoom(ov) {
     const area = ov.querySelector("#gal-detail-img-area"), imgEl = ov.querySelector("#gal-detail-img"); if (!area || !imgEl) return;
     area.addEventListener("wheel", e => { e.preventDefault(); const oldZ = G.detailZoom; G.detailZoom = Math.max(1, Math.min(12, G.detailZoom * (e.deltaY > 0 ? 0.85 : 1.15))); if (G.detailZoom <= 1) G.detailPan = { x: 0, y: 0 }; else { const r = area.getBoundingClientRect(); const mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2; const ratio = G.detailZoom / oldZ; G.detailPan.x = mx - (mx - G.detailPan.x) * ratio; G.detailPan.y = my - (my - G.detailPan.y) * ratio; } applyZ(); }, { passive: false });
@@ -2626,7 +2768,7 @@ function _onMetaPanelClick(e) {
     if (act === "copy") {
         const valueEl = btn.closest(".gal-meta-value-wrap")?.querySelector(".gal-meta-value");
         if (!valueEl) return;
-        navigator.clipboard.writeText(valueEl.textContent).then(
+        window.studioCopyText(valueEl.textContent).then(
             () => toast(_t("gallery.metadata.copied", "Copied"), "success"),
             () => toast(_t("gallery.metadata.copyFailed", "Copy failed"))
         );

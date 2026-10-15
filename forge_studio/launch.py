@@ -336,12 +336,18 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
 
     load_configuration = None
     if config["backend"] == "headless":
+        from forge_studio.attention_store import sidecar_root
+
         load_configuration = LoadConfiguration(
             repository_root=APP_ROOT,
             payload_opener=ExplicitLoadAccess(
                 timeout_seconds=config["timeout_seconds"],
                 vram_ceiling_bytes=config["vram_ceiling_bytes"],
             ),
+            # HM1. Captured attention goes to Studio's own data area, in a
+            # folder of its own (the owner's decision); presentation derives
+            # the same root from the same state root when it adopts a capture.
+            sidecar_root=sidecar_root(config["studio_state_root"]),
         )
 
     config["result_root"].mkdir(parents=True, exist_ok=True)

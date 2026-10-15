@@ -1553,7 +1553,15 @@ class StudioPresentation:
             value = document.get("gpu_tile_compositing")
             if value is not None:
                 requested = bool(value)
-        return {"gpu_tile_compositing_requested": requested}
+        else:
+            document = {}
+        # HM2. The attention capture, on unless the owner turned it off
+        # ("on by default, with a setting to turn it off for big batches").
+        capture = document.get("attention_capture")
+        return {
+            "gpu_tile_compositing_requested": requested,
+            "attention_capture_requested": True if capture is None else bool(capture),
+        }
 
     #: Decorrelates the negative prompt's draw from the positive one. Without
     #: it, a template that puts the same token in both boxes draws the SAME
@@ -2150,9 +2158,31 @@ class StudioPresentation:
             shutdown()
 
 
+_ATTENTION_LOCK_FALLBACK = threading.Lock()
+
+
+def _attention_lock(server: Any) -> Any:
+    """HM2. The server's attention-store lock. A server built without
+    `__init__` (the socket-free test harnesses) shares one module lock."""
+    return getattr(server, "_attention_move_lock", None) or _ATTENTION_LOCK_FALLBACK
+
+
 class _StudioHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
+
+    def attention_roots(self) -> tuple[Path, Path]:
+        """HM2. `(store root, pending root)` for attention sidecars: the
+        owner's folder as last moved to (`attention_store.read_location`), or
+        the default under the state root; and always the state root's own
+        pending area, where the port writes."""
+
+        from forge_studio.attention_store import read_location, sidecar_root, store_root
+
+        state_root = getattr(self, "state_root", None)
+        if not state_root:
+            raise RuntimeError("This host keeps no attention data.")
+        return store_root(state_root, read_location(state_root)), sidecar_root(state_root)
 
     def __init__(
         self,
@@ -2172,6 +2202,10 @@ class _StudioHTTPServer(ThreadingHTTPServer):
         #: U1. Check for Updates, for the launcher's own Git checkout. Absent on
         #: every other host, which keeps the adapter's "unavailable" answers.
         self.updater = updater
+        #: HM2. Read for the attention-capture setting in the store readout.
+        self.preferences = preferences
+        #: HM2. Serialises a move of the attention store against adoption.
+        self._attention_move_lock = threading.Lock()
 
         self.presentation = presentation
         # Optional: hosts that do not configure model roots simply do not expose
@@ -2219,6 +2253,9 @@ class _StudioHTTPServer(ThreadingHTTPServer):
             self.gallery_service = GalleryService(
                 state_root, result_root=result_root
             )
+            # HM2: the Gallery deletes a picture's attention sidecar when its
+            # trash is emptied, so it needs to know where they live.
+            self.gallery_service.attention_roots = self.attention_roots
         # Built after the Gallery so a finished generation can tell it what it
         # produced. The adapter only ever WRITES there, and the write cannot
         # raise, so the Gallery has no way to affect whether a picture is made.
@@ -2420,8 +2457,29 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             # -1 in the prompt box became a real number by the time the picture
             # existed.
             gallery.record_generation(digest, infotext, metadata)
+            # HM1. The attention capture the port left for this job, moved
+            # under the delivered pixels' identity and named on the row just
+            # written. Here because this is the one place that hash exists.
+            self._adopt_attention_capture(
+                gallery, str(metadata.get("request_id") or ""), digest)
         except Exception:  # noqa: BLE001 - see the docstring
             return
+
+    def _adopt_attention_capture(self, gallery: Any, request_id: str, digest: str) -> None:
+        """Move `<sidecars>/pending/<request id>` to the sharded store and
+        record its name (`forge_studio.attention_store`). Called inside
+        `_record_generation_metadata`'s never-raise block."""
+
+        roots = getattr(self.server, "attention_roots", None)
+        if not callable(roots) or not getattr(self.server, "state_root", None) or not request_id:
+            return
+        from forge_studio.attention_store import adopt
+
+        with _attention_lock(self.server):
+            store_root, pending_root = roots()
+            relative = adopt(pending_root, request_id, digest, store=store_root)
+        if relative:
+            gallery.record_attention(digest, relative)
 
     def _note_generation_to_gallery(self, status: Any) -> None:
         """Tell the Gallery a picture arrived, once per job.
@@ -2796,6 +2854,114 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(pixels.rgba)
+
+    # -- HM2: the attention sidecar store ---------------------------------
+
+    def _attention_store_status(self) -> dict[str, Any]:
+        """Settings' readout: the folder in use, whether it is the default,
+        whether capture is on, and the store's size and orphans."""
+
+        server = self.server
+        if not callable(getattr(server, "attention_roots", None)) or not getattr(server, "state_root", None):
+            return {"ok": False, "available": False}
+        from forge_studio.attention_store import sidecar_root
+
+        store_root, _pending = server.attention_roots()
+        preferences = getattr(server, "preferences", None)
+        try:
+            document = preferences.read() if preferences is not None else {}
+        except Exception:  # noqa: BLE001
+            document = {}
+        capture = document.get("attention_capture")
+        reply: dict[str, Any] = {
+            "ok": True, "available": True, "folder": str(store_root),
+            "is_default": store_root == sidecar_root(server.state_root),
+            "capture": True if capture is None else bool(capture),
+        }
+        gallery = self._gallery
+        if gallery is not None:
+            survey = gallery.attention_survey()
+            reply.update({k: v for k, v in survey.items() if k != "ok"})
+        return reply
+
+    def _attention_store_action(self, payload: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        server = self.server
+        if not callable(getattr(server, "attention_roots", None)) or not getattr(server, "state_root", None):
+            return HTTPStatus.NOT_FOUND, {"ok": False, "error": "This host keeps no heatmap data."}
+        action = str(payload.get("action") or "") if isinstance(payload, Mapping) else ""
+        if action == "clean":
+            gallery = self._gallery
+            if gallery is None:
+                return HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "The Gallery is not available."}
+            reply = gallery.attention_clean()
+            return (HTTPStatus.OK if reply.get("ok") else HTTPStatus.CONFLICT), reply
+        if action == "move":
+            return self._move_attention_store(payload.get("folder"))
+        if action == "open":
+            return HTTPStatus.OK, self._reveal_folder(server.attention_roots()[0])
+        return HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Unknown action."}
+
+    def _move_attention_store(self, folder: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        """Copy (verified), name the new folder, then remove the old copies.
+
+        The new folder is named only after every sidecar is safely in it, and
+        a failure before that deletes the copies: at every moment one folder
+        holds the whole store, and `location.json` names it. Adoption waits on
+        the same lock, so a capture cannot land in the old folder mid-move.
+        """
+
+        from forge_studio.attention_housekeeping import (
+            MoveRefused, copy_store, remove_originals, validate_target)
+        from forge_studio.attention_store import sidecar_root, write_location
+
+        server = self.server
+        lock = _attention_lock(server)
+        if not lock.acquire(blocking=False):
+            return HTTPStatus.CONFLICT, {"ok": False, "error": "A move is already running."}
+        try:
+            old_root, pending_root = server.attention_roots()
+            try:
+                target = validate_target(folder, old_root, pending_root)
+                pairs = copy_store(old_root, target)
+            except MoveRefused as refusal:
+                return HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(refusal)}
+            # The default is named as "", so moving back to it is a reset, not
+            # a pinned copy of today's state-root path.
+            value = "" if target == sidecar_root(server.state_root) else str(target)
+            try:
+                write_location(server.state_root, value)
+            except OSError:
+                remove_originals([(copy, copy) for _source, copy in pairs], target)
+                return HTTPStatus.INTERNAL_SERVER_ERROR, {
+                    "ok": False, "error": "The new folder could not be saved. Nothing was changed."}
+            left = remove_originals(pairs, old_root)
+            return HTTPStatus.OK, {"ok": True, "folder": str(target), "moved": len(pairs), "left_behind": left}
+        finally:
+            lock.release()
+
+    def _reveal_folder(self, folder: Path) -> dict[str, Any]:
+        """Open a folder in the file manager through `NativeActions.reveal`
+        (the vetted spawn), as the watermarks folder is opened."""
+
+        from forge_headless.contracts import HeadlessError
+
+        adapter = getattr(self.server, "source_adapter", None)
+        actions = getattr(adapter, "_native_actions", None)
+        if actions is None:
+            from forge_studio.native_actions import NativeActions
+
+            actions = NativeActions()
+            if adapter is not None:
+                adapter._native_actions = actions
+        try:
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            actions.reveal(folder)
+        except HeadlessError as error:
+            return {"ok": False, "unavailable": True, "path": str(folder),
+                    "error": getattr(error, "message", str(error))}
+        except OSError:
+            return {"ok": False, "path": str(folder), "error": "The folder could not be opened."}
+        return {"ok": True}
 
     def _open_watermarks_folder(self) -> dict[str, Any]:
         """P11. The Extension opens the folder so the owner can drop images in,
@@ -3551,6 +3717,10 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._send_result_bytes("application/vnd.iccprofile", profile)
                 return
+            # HM2. The heatmap data store's readout, for Settings.
+            if path == "/studio/attention/store":
+                self._send_json(HTTPStatus.OK, self._attention_store_status())
+                return
             # P11. The watermark library for Settings' dropdown.
             if path == "/studio/watermarks":
                 from forge_studio.watermarks import list_watermarks
@@ -3854,6 +4024,17 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             if path == "/studio/watermarks/open_folder":
                 self._read_json_optional()
                 self._send_json(HTTPStatus.OK, self._open_watermarks_folder())
+                return
+            # HM2. Clean up, move, or open the heatmap data store. STRICT
+            # origin, as every route that takes a filesystem path: "move"
+            # names a folder Studio will write into.
+            if path == "/studio/attention/store":
+                if not self._is_allowed_origin_strict():
+                    self._read_json_optional()
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden"})
+                    return
+                status, reply = self._attention_store_action(self._read_json_optional() or {})
+                self._send_json(status, reply)
                 return
             # P9. Develop's presets, kept in the state root.
             if path == "/studio/develop/presets":
