@@ -344,6 +344,12 @@ class FirstImageRequest:
     inpaint: "InpaintOptions | None" = None
     positive_prompt: str = ""
     negative_prompt: str = ""
+    #: RP1. The prompts as the owner typed them, BEFORE wildcards resolved,
+    #: or "" when nothing was expanded. Written into the saved parameters as
+    #: `Template:` / `Negative Template:` so the file and the Gallery keep the
+    #: raw prompt, as the Extension does. Never sent to the engine.
+    prompt_template: str = ""
+    negative_prompt_template: str = ""
     seed: int = 0
     #: Variation seed. Neo's spelling and Neo's defaults, read from the BASE
     #: `StableDiffusionProcessing` -- which is why these work for txt2img and

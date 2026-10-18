@@ -7,17 +7,24 @@
  * 2. Creates a tutorial document via StudioDocs (or reuses canvas)
  * 3. Sets up canvas state (draws shapes, loads images, sets prompts)
  * 4. Runs a walkthrough via StudioTour
- * 5. Optionally closes the tutorial doc on completion
+ * 5. Closes the tutorial document when the walkthrough ends or is cancelled
  *
  * Tutorials register by Codex entry ID. Codex checks StudioShowMe.has(id)
  * and renders a "Show Me" button on matching entries.
+ *
+ * CX1 (2026-10-18): the ControlNet, Regional Prompting and Live tutorials were
+ * removed with their features, which Studio cannot generate with yet. Do not
+ * bring them back until they can.
  */
 (function () {
 "use strict";
 
 var TAG = "[ShowMe]";
 var _tutorials = {};
-var _activeTutorialDoc = -1; // doc index of active tutorial, or -1
+// The tutorial tab and the tab the tester was on before it. Held as the
+// document objects themselves: tab indexes shift as tabs open and close.
+var _tutorialDoc = null;
+var _returnDoc = null;
 
 function _t(key, fallback) {
   return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
@@ -28,7 +35,7 @@ function _t(key, fallback) {
 // ========================================================================
 // Tutorials register with a unique tutorialId and an entryId that maps
 // to a Codex entry. Multiple tutorials can share one entryId (e.g.
-// controlnet_canny, controlnet_openpose both map to "controlnet").
+// inpaint_basics and soft_inpainting both map to "inpaint_basics").
 
 function _register(tutorialId, config) {
   _tutorials[tutorialId] = {
@@ -68,17 +75,19 @@ function run(tutorialId) {
     StudioModules.activateStudio();
   }
 
-  // Cancel any active tour
+  // Cancel any active tour, and take down the previous tutorial's tab:
+  // cancelling by force does not run the old tour's own cleanup.
   if (window.StudioTour && StudioTour.active) {
     StudioTour.active._forceCancel();
   }
+  _closeTutorialDoc();
 
   // Small delay for tab switch to render
   setTimeout(function () {
     try {
       tut.run();
     } catch (e) {
-      console.error(TAG, "Tutorial error:", entryId, e);
+      console.error(TAG, "Tutorial error:", tutorialId, e);
     }
   }, 200);
 }
@@ -87,25 +96,79 @@ function run(tutorialId) {
 // HELPERS
 // ========================================================================
 
+function _docIndex(doc) {
+  if (!doc || !window.StudioDocs) return -1;
+  return StudioDocs.docs.indexOf(doc);
+}
+
 function _createTutorialDoc(name) {
   if (!window.StudioDocs) { console.warn(TAG, "StudioDocs not available"); return -1; }
+  _closeTutorialDoc();
   // Doc title prefix translates; the tutorial name itself stays as-passed.
   var prefix = (window.I18N && window.I18N.t)
     ? window.I18N.t("showme.docPrefix", "Tutorial: " + name, { name: name })
     : "Tutorial: " + name;
+  _returnDoc = StudioDocs.activeDoc || null;
   var idx = StudioDocs.newDoc(prefix);
-  _activeTutorialDoc = idx;
+  _tutorialDoc = StudioDocs.docs[idx] || null;
   return idx;
 }
 
+// Closes the tutorial tab and goes back to the tab the tester came from.
 function _closeTutorialDoc() {
-  if (_activeTutorialDoc >= 0 && window.StudioDocs) {
-    // Mark not dirty so close doesn't prompt
-    var doc = StudioDocs.docs[_activeTutorialDoc];
-    if (doc) doc._canvasDirty = false;
-    StudioDocs.closeDoc(_activeTutorialDoc);
-    _activeTutorialDoc = -1;
+  var doc = _tutorialDoc, back = _returnDoc;
+  _tutorialDoc = null; _returnDoc = null;
+  var idx = _docIndex(doc);
+  if (idx < 0) return;
+  var wasActive = StudioDocs.activeIdx === idx;
+  // Mark not dirty so close doesn't prompt
+  doc._canvasDirty = false;
+  StudioDocs.closeDoc(idx);
+  if (wasActive) {
+    var bi = _docIndex(back);
+    if (bi >= 0) StudioDocs.switchDoc(bi);
   }
+}
+
+// Every walkthrough starts here: no persistence, no cancel prompt, and the
+// tutorial tab is taken down when the walkthrough finishes or is ended.
+// `after` runs once at the end, for tutorials that leave the Canvas tab.
+function _startTour(cfg, after) {
+  cfg.persist = false;
+  cfg.confirmCancel = false;
+  var finish = function () {
+    _closeTutorialDoc();
+    if (after) { try { after(); } catch (e) { console.warn(TAG, "after-hook failed:", e); } }
+  };
+  cfg.onComplete = finish;
+  cfg.onCancel = finish;
+  StudioTour.create(cfg).start(0);
+}
+
+function _click(selector) {
+  var el = document.querySelector(selector);
+  if (el) el.click();
+  return !!el;
+}
+
+// beforeShow helper: click something, then give the page a moment to draw.
+function _goTo(selector, ms) {
+  return function () {
+    _click(selector);
+    return new Promise(function (r) { setTimeout(r, ms || 250); });
+  };
+}
+
+function _setPrompt(text) {
+  var promptEl = document.getElementById("paramPrompt");
+  if (promptEl) promptEl.value = text;
+}
+
+function _refreshCanvas() {
+  window.StudioCore.markCompositeDirty();
+  window.StudioCore.composite();
+  window.StudioUI.redraw();
+  window.StudioUI.renderLayerPanel();
 }
 
 // Draw a simple colored rectangle on a layer
@@ -184,34 +247,79 @@ function _drawTutorialScene() {
   if (window.StudioCore && window.StudioCore.markCompositeDirty) window.StudioCore.markCompositeDirty();
 }
 
+// A tutorial tab with the sample scene already drawn.
+function _sceneDoc(nameKey, nameFallback) {
+  _createTutorialDoc(_t(nameKey, nameFallback));
+  _drawTutorialScene();
+  _refreshCanvas();
+}
+
+var CENTER = { bottom: "80px", left: "calc(50% - 190px)" };
+var MASK_TOOL = '#toolstrip [data-tool="mask"]';
+
 // ========================================================================
 // TUTORIAL DEFINITIONS
 // ========================================================================
 
-// ── Core Workflow (beginner tour replay) ─────────────────────────────
+// ── Core Workflow / first image (replay of the first-run walkthrough) ──
+// Replays the tester's own path; it never forgets which path they chose.
 
-_register("core_workflow", {
-  label: "Show Me",
-  run: function () {
-    if (window.Education) {
-      Education.reset();
-      Education.showFirstRun();
-    } else {
-      if (window.showToast) showToast(((window.I18N && window.I18N.t) ? window.I18N.t("showme.educationUnavailable", "Education system not available") : "Education system not available"), "error");
-    }
+function _replayWalkthrough() {
+  if (window.Education && Education.restartTour) {
+    Education.restartTour();
+  } else if (window.showToast) {
+    showToast(_t("showme.educationUnavailable", "Education system not available"), "error");
   }
-});
+}
 
-_register("first_image_showme", {
-  entryId: "first_image",
-  label: "Show Me",
+_register("core_workflow", { label: "Show Me", run: _replayWalkthrough });
+_register("first_image_showme", { entryId: "first_image", label: "Show Me", run: _replayWalkthrough });
+
+// ── Setting up models ────────────────────────────────────────────────
+
+_register("model_setup", {
+  entryId: "models_and_vae",
+  label: _t("showme.tutorialLabel.modelSetup", "Setting Up Models"),
   run: function () {
-    if (window.Education) {
-      Education.reset();
-      Education.showFirstRun();
-    } else {
-      if (window.showToast) showToast(((window.I18N && window.I18N.t) ? window.I18N.t("showme.educationUnavailable", "Education system not available") : "Education system not available"), "error");
-    }
+    _startTour({
+      id: "showme-models",
+      steps: [
+        {
+          id: "sm_intro",
+          text: _t("showme.models.intro.text", "Studio generates with the models in the folders you choose — there is no Load button. Let’s point it at yours.\n\nThis walkthrough takes you to <em>Settings</em> and back."),
+          spotlight: null, advance: "click", btn: _t("showme.models.intro.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "sm_folders",
+          text: _t("showme.models.folders.text", "<em>Settings → General → Model folders.</em> One folder per kind of file: <strong>Checkpoint</strong>, <strong>Text encoder</strong>, <strong>VAE</strong>, plus Auto Detail detectors, LoRAs and embeddings.\n\nType a path or press <em>Browse…</em> to open the folder window. Studio lists only the files directly inside each folder, not subfolders."),
+          beforeShow: function () {
+            _click('button[data-app="settings"]');
+            return new Promise(function (r) {
+              setTimeout(function () { _click('[data-settings-nav="general"]'); setTimeout(r, 250); }, 250);
+            });
+          },
+          spotlight: '[data-settings-section="model-folders"]', advance: "click",
+          btn: _t("showme.models.folders.btn", "Next")
+        },
+        {
+          id: "sm_save",
+          text: _t("showme.models.save.text", "Press <em>Save folders</em>. Every folder is checked together; if one can’t be used, nothing changes and your current folders keep working.\n\nA folder on another computer needs <em>Allow network model folders</em> switched on first."),
+          spotlight: "#modelFoldersSave", advance: "click", btn: _t("showme.models.save.btn", "Next")
+        },
+        {
+          id: "sm_pick",
+          text: _t("showme.models.pick.text", "Back on the Canvas, the <em>Model</em> box lists your checkpoints. Models that need them also use a <em>Text encoder</em> and a <em>VAE</em> — leave VAE on Automatic unless the model asks for one.\n\nAdded a file later? Press the ↻ button beside the box."),
+          beforeShow: _goTo('button[data-app="studio"]', 300),
+          spotlight: '[data-block="model"]', advance: "click", btn: _t("showme.models.pick.btn", "Next")
+        },
+        {
+          id: "sm_generate",
+          text: _t("showme.models.generate.text", "Choosing a model does not load it. <em>Generate</em> loads what you chose, so the first image after a change takes longer."),
+          spotlight: "#genBtn", advance: "click", btn: _t("showme.models.generate.btn", "Got it")
+        },
+      ],
+    });
   }
 });
 
@@ -220,150 +328,209 @@ _register("first_image_showme", {
 _register("inpaint_basics", {
   label: _t("showme.tutorialLabel.basicInpainting", "Basic Inpainting"),
   run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.inpainting", "Inpainting"));
-    _drawTutorialScene();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
+    _sceneDoc("showme.tutorialName.inpainting", "Inpainting");
     // Pre-fill prompt so generation doesn't choke on empty string
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "a full moon in a night sky, stars";
+    _setPrompt("a full moon in a night sky, stars");
 
-    StudioTour.create({
+    _startTour({
       id: "showme-inpaint",
       steps: [
         {
           id: "si_intro",
-          text: _t("showme.inpaint.intro.text", "Here\u2019s a simple scene. Let\u2019s change part of it using <em>inpainting</em>.\n\nSee the sun in the sky? We\u2019re going to replace it with something else."),
+          text: _t("showme.inpaint.intro.text", "Here’s a simple scene. Let’s change part of it using <em>inpainting</em>.\n\nSee the sun in the sky? We’re going to replace it with something else."),
           spotlight: null, advance: "click",
           btn: _t("showme.inpaint.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
         {
           id: "si_mask",
-          text: _t("showme.inpaint.mask.text", "Press <span class=\"cx-kbd\">Q</span> to enter mask mode. Your brush now paints a <em>red overlay</em> instead of color.\n\nPaint red over the sun. It doesn\u2019t need to be precise \u2014 just cover it."),
-          spotlight: "#maskModeBtn", advance: "click",
-          btn: _t("showme.inpaint.mask.btn", "I\u2019ve masked the sun")
+          text: _t("showme.inpaint.mask.text", "Press <span class=\"cx-kbd\">Q</span> to pick the <em>Inpaint Mask</em> tool (highlighted). Your brush now paints a <em>red overlay</em> instead of color.\n\nPaint red over the sun. It doesn’t need to be precise — just cover it."),
+          spotlight: MASK_TOOL, advance: "click",
+          btn: _t("showme.inpaint.mask.btn", "I’ve masked the sun")
+        },
+        {
+          id: "si_area",
+          text: _t("showme.inpaint.area.text", "The bar above the canvas has the inpaint settings. <em>Only Masked</em> redraws just the masked area at full detail, with <em>Padding</em> of surrounding context; <em>Whole Picture</em> redraws the full canvas.\n\n<em>Fill</em> chooses what is under the mask: <em>Original</em> keeps it, <em>Fill</em> starts from flat colour (best for removing things)."),
+          beforeShow: function () { _click(MASK_TOOL); },
+          spotlight: "#inpaintBar", advance: "click",
+          btn: _t("showme.inpaint.area.btn", "Next")
         },
         {
           id: "si_prompt",
-          text: _t("showme.inpaint.prompt.text", "A prompt has been pre-filled \u2014 \"a full moon in a night sky\" \u2014 but you can change it to whatever you want. The AI will only change the red area."),
+          text: _t("showme.inpaint.prompt.text", "A prompt has been pre-filled — \"a full moon in a night sky\" — but you can change it to whatever you want. The AI will only change the red area."),
           spotlight: "#paramPrompt", advance: "click",
           btn: _t("showme.inpaint.prompt.btn", "Next"),
           focusTarget: "#paramPrompt"
         },
         {
           id: "si_generate",
-          text: _t("showme.inpaint.generate.text", "Hit <em>Generate</em>. Only the masked area changes \u2014 the rest stays untouched.\n\nAfterward, press <span class=\"cx-kbd\">Q</span> to exit mask mode. Try different denoise values to see how much changes."),
+          text: _t("showme.inpaint.generate.text", "Hit <em>Generate</em>. Only the masked area changes — the rest stays untouched.\n\nAfterward, press <span class=\"cx-kbd\">Q</span> to go back to painting. Try different denoise values to see how much changes."),
           spotlight: "#genBtn", advance: "click",
           btn: _t("showme.inpaint.generate.btn", "Got it")
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Inpaint tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
-// ── Regional Prompting ───────────────────────────────────────────────
+// ── Soft Inpainting ──────────────────────────────────────────────────
 
-_register("regional_prompting", {
+_register("soft_inpainting", {
+  entryId: "inpaint_basics",
+  label: _t("showme.tutorialLabel.softInpainting", "Soft Inpainting"),
   run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.regionalPrompting", "Regional Prompting"));
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
+    _sceneDoc("showme.tutorialName.softInpainting", "Soft Inpainting");
+    _setPrompt("a castle tower, stone walls, medieval, detailed");
 
-    // Pre-fill main prompt
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "digital painting, detailed, dramatic lighting, high quality";
-
-    StudioTour.create({
-      id: "showme-regions",
+    _startTour({
+      id: "showme-softinpaint",
       steps: [
         {
-          id: "sr_intro",
-          text: _t("showme.regions.intro.text", "Regional prompting lets you assign <em>different prompts to different areas</em> of your canvas.\n\nInstead of one description for the whole image, you can say \"forest on the left, city on the right.\""),
-          spotlight: null, advance: "click", btn: _t("showme.regions.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          id: "ssi_intro",
+          text: _t("showme.softInpaint.intro.text", "Standard inpainting has a hard boundary — inside the mask changes, outside doesn’t. <em>Soft Inpainting</em> blends smoothly across the boundary for more natural transitions.\n\nIt works with a <em>soft mask</em>, and the Inpaint Mask is always a hard brush. So make a <em>named mask</em>: click <em>New mask</em> in the Masks panel."),
+          beforeShow: _goTo('[data-panel="generate"]', 250),
+          spotlight: "#maskNew", advance: "click",
+          btn: _t("showme.softInpaint.intro.btn", "I made a mask")
         },
         {
-          id: "sr_add",
-          text: _t("showme.regions.add.text", "Scroll down in the Generate panel to the <em>Regions</em> section. Click the <strong>+</strong> button to add a region.\n\nA new region appears with a colored swatch and a prompt field."),
-          spotlight: null, advance: "click", btn: _t("showme.regions.add.btn", "I added a region"),
-          position: { bottom: "80px", right: "340px" }
+          id: "ssi_soft",
+          text: _t("showme.softInpaint.soft.text", "With the new mask selected, the bar above the canvas has <em>Opacity</em> and <em>Hardness</em>. Turn <em>Hardness</em> down and paint over the house: the edge fades out.\n\nThe selected row says <em>used for inpainting</em> — that is the mask Generate sends."),
+          spotlight: "#masksList", advance: "click",
+          btn: _t("showme.softInpaint.soft.btn", "I painted it soft")
         },
         {
-          id: "sr_paint",
-          text: _t("showme.regions.paint.text", "Now paint on the canvas with the <em>brush</em> (<span class=\"cx-kbd\">B</span>). The region\u2019s color marks where this prompt applies.\n\nPaint the left half of the canvas, then type a prompt like \"dense forest, green trees\" in the region\u2019s prompt field."),
-          spotlight: "#toolstrip", advance: "click", btn: _t("showme.regions.paint.btn", "Next")
+          id: "ssi_enable",
+          text: _t("showme.softInpaint.enable.text", "Find <em>Soft Inpainting</em> in the Generate panel (it appears when the mask tool is active). Enable the checkbox.\n\nSix parameters. The two that matter most:\n\n• <strong>Preservation</strong> — how much of the original is kept. Higher = less change.\n• <strong>Contrast Boost</strong> — how sharp the blend edge is. Lower = softer blend."),
+          beforeShow: _goTo(MASK_TOOL, 250),
+          spotlight: "#softInpaintSection", advance: "click",
+          btn: _t("showme.softInpaint.enable.btn", "Next")
         },
         {
-          id: "sr_second",
-          text: _t("showme.regions.second.text", "Add a <em>second region</em> with the <strong>+</strong> button. Paint the right half with the new color. Give it a different prompt like \"modern city skyline.\"\n\nThe <em>main prompt</em> (top box) has been pre-filled with a style \u2014 it sets the overall look for all regions."),
-          spotlight: null, advance: "click", btn: _t("showme.regions.second.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
-        },
-        {
-          id: "sr_generate",
-          text: _t("showme.regions.generate.text", "Hit <em>Generate</em>. Each region gets its own content based on its prompt. Small regions work too \u2014 Studio\u2019s system is designed for this.\n\nRemember to clear regions when done \u2014 they persist until removed."),
-          spotlight: "#genBtn", advance: "click", btn: _t("showme.regions.generate.btn", "Got it")
+          id: "ssi_generate",
+          text: _t("showme.softInpaint.generate.text", "Hit <em>Generate</em> and compare with Soft Inpainting off (same mask, same seed).\n\nWith Soft Inpainting on, the mask’s grey is used; with it off, a soft mask is cut at 40%.\n\nThe other parameters (Schedule Bias, Mask Influence, Diff Threshold/Contrast) are fine at their defaults until you need specific control."),
+          spotlight: "#genBtn", advance: "click",
+          btn: _t("showme.softInpaint.generate.btn", "Got it")
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Regions tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
-// ── ControlNet ───────────────────────────────────────────────────────
+// ── Masks panel ──────────────────────────────────────────────────────
 
-_register("controlnet", {
-  label: _t("showme.tutorialLabel.overview", "Overview"),
+_register("masks_panel", {
+  label: "Show Me",
   run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.controlnet", "ControlNet"));
-    _drawTutorialScene();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
+    _sceneDoc("showme.tutorialName.masks", "Masks Panel");
 
-    // Pre-fill a prompt so generation doesn't choke on empty string
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "a snowy village at night, northern lights, detailed, high quality";
-
-    StudioTour.create({
-      id: "showme-controlnet",
+    _startTour({
+      id: "showme-masks",
       steps: [
         {
-          id: "sc_intro",
-          text: _t("showme.controlnet.intro.text", "ControlNet uses the <em>structure</em> of an existing image to guide generation. Let\u2019s use this scene as our structural source.\n\nThe AI will follow the layout (where the sky is, where the ground is, where objects are) but create new content."),
-          spotlight: null, advance: "click", btn: _t("showme.controlnet.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          id: "sk_intro",
+          text: _t("showme.masks.intro.text", "Besides the Inpaint mask, a picture can hold any number of <em>named masks</em>. They live in the <em>Masks</em> panel, inside Layers.\n\nThe mask <em>selected</em> there is the one Generate inpaints with."),
+          beforeShow: _goTo('[data-panel="generate"]', 250),
+          spotlight: "#masksList", advance: "click", btn: _t("showme.masks.intro.btn", "Next")
         },
         {
-          id: "sc_enable",
-          text: _t("showme.controlnet.enable.text", "In the <em>Extensions</em> tab, find <strong>ControlNet Unit 1</strong>. Enable the checkbox.\n\nSet the <em>Preprocessor</em> and <em>Model</em> to a matching pair \u2014 for example, <strong>Canny</strong> preprocessor with a <strong>Canny</strong> model. Set <em>Source</em> to <strong>Canvas</strong>.\n\nPreprocessor and model must match in type AND architecture (SD1.5 vs SDXL)."),
-          spotlight: null, advance: "click", btn: _t("showme.controlnet.enable.btn", "Next"),
-          position: { bottom: "80px", right: "340px" }
+          id: "sk_new",
+          text: _t("showme.masks.new.text", "Click <em>New mask</em>. A mask appears in the list and the Inpaint Mask tool is picked. Paint over the house; <em>− Subtract</em> in the bar above the canvas erases.\n\nDouble-click a name to rename it, the eye hides its overlay, the swatch changes its colour."),
+          spotlight: "#maskNew", advance: "click", btn: _t("showme.masks.new.btn", "I made a mask")
         },
         {
-          id: "sc_prompt",
-          text: _t("showme.controlnet.prompt.text", "A prompt has been pre-filled for you, but you can change it to whatever you like. Describe what the image should <em>become</em> while keeping this layout.\n\nThe structural map preserves the spatial arrangement \u2014 where foreground and background are, where objects sit."),
-          spotlight: "#paramPrompt", advance: "click", btn: _t("showme.controlnet.prompt.btn", "Next"),
-          focusTarget: "#paramPrompt"
+          id: "sk_selection",
+          text: _t("showme.masks.selection.text", "<em>Load as selection</em> turns the selected mask into a selection (Shift adds, Alt subtracts, Shift+Alt intersects); Ctrl+click on a row does the same.\n\nThe button beside it, <em>Save selection as mask</em>, goes the other way: draw a selection with any selection tool, then keep it as a mask."),
+          spotlight: "#maskToSelection", advance: "click", btn: _t("showme.masks.selection.btn", "Next")
         },
         {
-          id: "sc_generate",
-          text: _t("showme.controlnet.generate.text", "Hit <em>Generate</em>. The result follows the spatial structure of the original but with completely new content.\n\n<strong>Weight</strong> controls how strongly the structure guides (1.0 = full). <strong>Start/End</strong> controls which denoising steps it applies to \u2014 try 0.0\u20130.5 for looser structure."),
-          spotlight: "#genBtn", advance: "click", btn: _t("showme.controlnet.generate.btn", "Got it")
+          id: "sk_range",
+          text: _t("showme.masks.range.text", "<em>From range…</em> makes a soft mask from the picture itself: its <em>highlights</em>, <em>midtones</em>, <em>shadows</em>, or a <em>colour range</em>. Try <em>Shadows</em> — no painting needed.\n\n<em>From word…</em> does the same from a word of the prompt, for pictures Studio made with heatmap recording on (see the Codex)."),
+          spotlight: "#maskFromRange", advance: "click", btn: _t("showme.masks.range.btn", "Next")
+        },
+        {
+          id: "sk_use",
+          text: _t("showme.masks.use.text", "The selected row says <em>used for inpainting</em>. Write a prompt and press Generate: only that mask changes.\n\nMasks are kept per tab, come back after a reload, and are saved as layer masks when you export a PSD."),
+          spotlight: "#masksList", advance: "click", btn: _t("showme.masks.use.btn", "Got it")
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "ControlNet tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
+  }
+});
+
+// ── Outpaint ─────────────────────────────────────────────────────────
+
+_register("outpaint", {
+  entryId: "outpaint_canvas_size",
+  label: "Show Me",
+  run: function () {
+    _sceneDoc("showme.tutorialName.outpaint", "Outpaint");
+    _setPrompt("a wide mountain valley at dusk, painterly, detailed");
+
+    _startTour({
+      id: "showme-outpaint",
+      steps: [
+        {
+          id: "so_intro",
+          text: _t("showme.outpaint.intro.text", "<em>Outpaint</em> makes the picture bigger and asks the model to paint the new space so it continues the scene.\n\nThere is no button for it: it lives in the canvas right-click menu."),
+          spotlight: null, advance: "click", btn: _t("showme.outpaint.intro.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "so_menu",
+          text: _t("showme.outpaint.menu.text", "Right-click the canvas and choose <em>Outpaint…</em>. (<em>Canvas Size…</em>, just above it, grows or trims the canvas without generating.)"),
+          spotlight: "#canvasArea", advance: "click", btn: _t("showme.outpaint.menu.btn", "I opened it")
+        },
+        {
+          id: "so_dialog",
+          text: _t("showme.outpaint.dialog.text", "Choose how far to extend each side, in pixels (rounded to a multiple of 8). <em>Overlap</em> is how much of the existing edge is repainted so the join is seamless. <em>Refine new area</em> adds a second, light pass for crisper detail — slower, and off unless you choose it.\n\nPress <em>Extend</em>."),
+          spotlight: null, advance: "click", btn: _t("showme.outpaint.dialog.btn", "Next"),
+          position: { top: "80px", left: "60px" }
+        },
+        {
+          id: "so_generate",
+          text: _t("showme.outpaint.generate.text", "Studio fills the new area from the picture’s edge on a layer called <em>Outpaint fill</em>, masks it, and sets up inpainting. Describe what should appear, then press <em>Generate</em> (this needs a model).\n\nIt takes about as long as one normal generation, even on large pictures."),
+          spotlight: "#genBtn", advance: "click", btn: _t("showme.outpaint.generate.btn", "Got it")
+        },
+      ],
+    });
+  }
+});
+
+// ── Canvas right-click menu ──────────────────────────────────────────
+
+_register("canvas_menu", {
+  label: "Show Me",
+  run: function () {
+    _sceneDoc("showme.tutorialName.canvasMenu", "Canvas Menu");
+
+    _startTour({
+      id: "showme-canvasmenu",
+      steps: [
+        {
+          id: "scm_intro",
+          text: _t("showme.canvasMenu.intro.text", "Right-click anywhere on the canvas. This menu has things that have no toolbar button — start by right-clicking the picture now."),
+          spotlight: "#canvasArea", advance: "click", btn: _t("showme.canvasMenu.intro.btn", "Next")
+        },
+        {
+          id: "scm_selection",
+          text: _t("showme.canvasMenu.selection.text", "With a <em>selection</em> active (try the rectangle tool, <span class=\"cx-kbd\">M</span>), the menu adds <em>Invert</em>, <em>Feather</em>, <em>Grow</em> and <em>Shrink Selection…</em>, Copy/Cut/Delete, and <em>Smart Patch</em> — which fills the selection from the picture around it, with no model."),
+          spotlight: null, advance: "click", btn: _t("showme.canvasMenu.selection.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "scm_layers",
+          text: _t("showme.canvasMenu.layers.text", "Below that: <em>New Layer</em>, <em>Duplicate Layer</em>, <em>Merge Down</em>, <em>Flatten Visible</em>, then <em>Canvas Size…</em> and <em>Outpaint…</em> (only here)."),
+          spotlight: null, advance: "click", btn: _t("showme.canvasMenu.layers.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "scm_save",
+          text: _t("showme.canvasMenu.save.text", "At the bottom: <em>Open in New Tab</em> opens the flattened picture as a PNG in a new browser tab (allow pop-ups for Studio), and <em>Save as</em> PNG, JPEG, WebP or a layered PSD."),
+          spotlight: null, advance: "click", btn: _t("showme.canvasMenu.save.btn", "Got it"),
+          position: CENTER
+        },
+      ],
+    });
   }
 });
 
@@ -373,7 +540,6 @@ _register("layers_basics", {
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.layers", "Layers"));
     var S = window.StudioCore.state;
-    var C = window.StudioCore;
 
     // Draw on reference layer
     var ref = S.layers.find(function (l) { return l.type === "reference"; });
@@ -388,46 +554,40 @@ _register("layers_basics", {
     if (paint) {
       _drawRect(paint.ctx, 200, 200, 200, 200, "#c04040");
     }
+    _refreshCanvas();
 
-    C.markCompositeDirty();
-    C.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
-    StudioTour.create({
+    _startTour({
       id: "showme-layers",
       steps: [
         {
           id: "sl_intro",
           text: _t("showme.layers.intro.text", "This canvas has two layers. The <em>Background</em> layer has a blue square. <em>Layer 1</em> has a red square overlapping it.\n\nLayers are transparent sheets stacked on each other."),
           spotlight: "#layersList", advance: "click", btn: _t("showme.layers.intro.btn", "Next"),
-          beforeShow: function () {
-            var genTab = document.querySelector('[data-panel="generate"]');
-            if (genTab) genTab.click();
-            return new Promise(function (r) { setTimeout(r, 200); });
-          }
+          beforeShow: _goTo('[data-panel="generate"]', 200)
         },
         {
           id: "sl_visibility",
-          text: _t("showme.layers.visibility.text", "Try clicking the <em>eye icon</em> on Layer 1 to hide it. The red square disappears, revealing the blue one underneath.\n\nClick it again to show it. This is how you control what\u2019s visible without deleting anything."),
+          text: _t("showme.layers.visibility.text", "Try clicking the <em>eye icon</em> on Layer 1 to hide it. The red square disappears, revealing the blue one underneath.\n\nClick it again to show it. This is how you control what’s visible without deleting anything."),
           spotlight: "#layersList", advance: "click", btn: _t("showme.layers.visibility.btn", "Next")
         },
         {
           id: "sl_generation",
           text: _t("showme.layers.generation.text", "When you <em>Generate</em>, the result lands on the reference (bottom) layer. Your painting on upper layers is <strong>never overwritten</strong>.\n\nThis means you can always regenerate without losing your edits."),
           spotlight: null, advance: "click", btn: _t("showme.layers.generation.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
+        },
+        {
+          id: "sl_adjust",
+          text: _t("showme.layers.adjust.text", "The buttons above the list add <em>adjustment layers</em> — Brightness/Contrast, Hue/Saturation and Levels — that change everything beneath them without touching the pixels. Delete the layer to undo it.\n\nThe <em>Masks</em> panel below the list is covered in its own Show Me."),
+          spotlight: "#layerAddBrightness", advance: "click", btn: _t("showme.layers.adjust.btn", "Next")
         },
         {
           id: "sl_blend",
-          text: _t("showme.layers.blend.text", "Each layer has <em>Opacity</em> and <em>Blend Mode</em>. Try changing Layer 1\u2019s blend mode to Multiply or Screen to see how it interacts with the layer below.\n\nExport the full stack as PSD via the <em>Export</em> button."),
+          text: _t("showme.layers.blend.text", "Each layer has <em>Opacity</em> and <em>Blend Mode</em>. Try changing Layer 1’s blend mode to Multiply or Screen to see how it interacts with the layer below.\n\nThe <em>Save Canvas / PSD</em> button (the disk icon above the list) exports the full stack as a PSD."),
           spotlight: "#layersList", advance: "click", btn: _t("showme.layers.blend.btn", "Got it")
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Layers tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
@@ -435,8 +595,7 @@ _register("layers_basics", {
 
 _register("tool_clone", {
   run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.cloneStamp", "Clone Stamp"));
-    _drawTutorialScene();
+    _sceneDoc("showme.tutorialName.cloneStamp", "Clone Stamp");
 
     // Add an "unwanted" object to remove
     var S = window.StudioCore.state;
@@ -445,20 +604,16 @@ _register("tool_clone", {
       ref.ctx.fillStyle = "#ff00ff";
       ref.ctx.fillRect(S.W * 0.4, S.H * 0.65, 30, 30);
     }
+    _refreshCanvas();
 
-    window.StudioCore.markCompositeDirty();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
-    StudioTour.create({
+    _startTour({
       id: "showme-clone",
       steps: [
         {
           id: "scl_intro",
-          text: _t("showme.clone.intro.text", "See the pink square on the ground? We\u2019ll remove it using the <em>Clone Stamp</em>.\n\nThis tool copies pixels from one area and paints them over another \u2014 perfect for removing unwanted objects."),
+          text: _t("showme.clone.intro.text", "See the pink square on the ground? We’ll remove it using the <em>Clone Stamp</em>.\n\nThis tool copies pixels from one area and paints them over another — perfect for removing unwanted objects."),
           spotlight: null, advance: "click", btn: _t("showme.clone.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
         {
           id: "scl_select",
@@ -467,21 +622,146 @@ _register("tool_clone", {
         },
         {
           id: "scl_source",
-          text: _t("showme.clone.source.text", "Now hold <span class=\"cx-kbd\">Alt</span> and click on a <em>clean area</em> of green ground near the pink square. This sets your <strong>source point</strong> \u2014 where the clone copies from."),
+          text: _t("showme.clone.source.text", "Now hold <span class=\"cx-kbd\">Alt</span> and click on a <em>clean area</em> of green ground near the pink square. This sets your <strong>source point</strong> — where the clone copies from."),
           spotlight: null, advance: "click", btn: _t("showme.clone.source.btn", "I set the source"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
         {
           id: "scl_paint",
           text: _t("showme.clone.paint.text", "Now paint directly over the pink square. The tool copies green ground from the source point, covering the pink.\n\nIf the clone starts picking up wrong content, <span class=\"cx-kbd\">Alt+Click</span> a new source and keep going."),
-          spotlight: null, advance: "click", btn: _t("showme.clone.paint.btn", "Got it"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          spotlight: null, advance: "click", btn: _t("showme.clone.paint.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "scl_modes",
+          text: _t("showme.clone.modes.text", "The tool has three modes: <em>Clone</em> copies exactly; <em>Heal</em> copies the source’s detail but keeps the colour and light of where you paint; <em>Patch</em> needs no source at all. There is a separate Show Me for Patch."),
+          beforeShow: _goTo('#toolstrip [data-tool="clone"]', 200),
+          spotlight: "[data-clonemode=\"heal\"]", advance: "click", btn: _t("showme.clone.modes.btn", "Got it")
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Clone stamp tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
+  }
+});
+
+// ── Smart Patch ──────────────────────────────────────────────────────
+
+_register("smart_patch", {
+  entryId: "tool_smart_patch",
+  label: "Show Me",
+  run: function () {
+    _sceneDoc("showme.tutorialName.smartPatch", "Smart Patch");
+    var S = window.StudioCore.state;
+    var ref = S.layers.find(function (l) { return l.type === "reference"; });
+    if (ref) {
+      ref.ctx.fillStyle = "#ff00ff";
+      ref.ctx.fillRect(S.W * 0.4, S.H * 0.65, 30, 30);
+    }
+    _refreshCanvas();
+
+    _startTour({
+      id: "showme-smartpatch",
+      steps: [
+        {
+          id: "ssp_intro",
+          text: _t("showme.smartPatch.intro.text", "The pink square again. <em>Patch</em> removes small things like this from their surroundings — no source point, no model, no waiting."),
+          spotlight: null, advance: "click", btn: _t("showme.smartPatch.intro.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "ssp_mode",
+          text: _t("showme.smartPatch.mode.text", "Press <span class=\"cx-kbd\">K</span> for the Clone tool, then click <em>Patch</em> in the bar above the canvas."),
+          beforeShow: _goTo('#toolstrip [data-tool="clone"]', 200),
+          spotlight: "[data-clonemode=\"patch\"]", advance: "click", btn: _t("showme.smartPatch.mode.btn", "I chose Patch")
+        },
+        {
+          id: "ssp_paint",
+          text: _t("showme.smartPatch.paint.text", "Paint over the pink square, covering it fully, then let go. On release it is filled from the picture around it.\n\nIf the result isn’t right, undo (<span class=\"cx-kbd\">Ctrl+Z</span>) and paint a slightly larger area."),
+          spotlight: null, advance: "click", btn: _t("showme.smartPatch.paint.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "ssp_selection",
+          text: _t("showme.smartPatch.selection.text", "Same thing with a selection: draw one around a blemish, right-click inside it and choose <em>Smart Patch</em>.\n\nIt works best on small things against a plain-ish background. For anything large, mask it and use inpainting."),
+          spotlight: null, advance: "click", btn: _t("showme.smartPatch.selection.btn", "Got it"),
+          position: CENTER
+        },
+      ],
+    });
+  }
+});
+
+// ── Paint Mixer ──────────────────────────────────────────────────────
+
+_register("paint_mixer", {
+  entryId: "tool_paint_mixer",
+  label: "Show Me",
+  run: function () {
+    _createTutorialDoc(_t("showme.tutorialName.paintMixer", "Paint Mixer"));
+    _refreshCanvas();
+
+    _startTour({
+      id: "showme-paintmixer",
+      steps: [
+        {
+          id: "spm_intro",
+          text: _t("showme.paintMixer.intro.text", "The brush can <em>mix</em> colours like wet paint: it picks up the colour under it and carries it along the stroke, so blue and yellow make green, not just yellow on top."),
+          spotlight: null, advance: "click", btn: _t("showme.paintMixer.intro.btn", "Next"),
+          position: CENTER
+        },
+        {
+          id: "spm_on",
+          text: _t("showme.paintMixer.on.text", "Pick the brush (<span class=\"cx-kbd\">B</span>) and switch <em>Mix</em> on in the bar above the canvas. <em>Amount</em> is how much of the picked-up colour the brush carries: 0 is the plain brush colour, 100 only what it picked up."),
+          beforeShow: _goTo('#toolstrip [data-tool="brush"]', 200),
+          spotlight: "#brushMixBtn", advance: "click", btn: _t("showme.paintMixer.on.btn", "Mix is on")
+        },
+        {
+          id: "spm_paint",
+          text: _t("showme.paintMixer.paint.text", "Paint a wide <em>blue</em> stroke. Change the foreground colour to <em>yellow</em> and paint across it. Where they meet you get green, and the colours smear into each other along the stroke.\n\nTurn Mix off to go back to ordinary painting."),
+          spotlight: "#toolstrip", advance: "click", btn: _t("showme.paintMixer.paint.btn", "Got it")
+        },
+      ],
+    });
+  }
+});
+
+// ── Develop: local adjustments ───────────────────────────────────────
+
+_register("develop_local", {
+  entryId: "develop",
+  label: "Show Me",
+  run: function () {
+    _sceneDoc("showme.tutorialName.developLocal", "Develop");
+    // A mask for the walkthrough to use: the picture's shadows.
+    try {
+      if (window.StudioCore.createRangeMask) {
+        window.StudioCore.createRangeMask({ kind: "luminance", band: "shadows" });
+        if (window.StudioUI.renderMaskPanel) window.StudioUI.renderMaskPanel();
+      }
+    } catch (e) { console.warn(TAG, "could not make the sample mask:", e); }
+
+    _startTour({
+      id: "showme-develop",
+      steps: [
+        {
+          id: "sd_intro",
+          text: _t("showme.develop.intro.text", "<em>Develop</em> adjusts the whole picture — or just part of it. For a part you need a <em>mask</em>.\n\nWe made one for you: a mask of this picture’s <em>shadows</em>, in the Masks panel."),
+          beforeShow: _goTo('[data-panel="generate"]', 250),
+          spotlight: "#masksList", advance: "click", btn: _t("showme.develop.intro.btn", "Next")
+        },
+        {
+          id: "sd_local",
+          text: _t("showme.develop.local.text", "In the <em>Develop</em> tab, <em>Local adjustments</em> sits right under the global sliders. Press <em>Add local adjustment</em> and choose the mask.\n\nThen move Exposure, Contrast, Highlights, Shadows, Whites, Blacks, Temperature, Tint, Saturation or Vibrance: they change only what the mask covers."),
+          beforeShow: _goTo('button[data-module="develop"]', 500),
+          spotlight: '[data-section="local"]', advance: "click", btn: _t("showme.develop.local.btn", "Next")
+        },
+        {
+          id: "sd_ba",
+          text: _t("showme.develop.ba.text", "<em>B/A</em> flips between before and after, and <em>Reset</em> clears every Develop adjustment. The switch beside the title turns Develop on or off without losing your settings."),
+          spotlight: null, advance: "click", btn: _t("showme.develop.ba.btn", "Got it"),
+          position: { bottom: "80px", right: "340px" }
+        },
+      ],
+    }, function () { if (window.StudioModules) StudioModules.activateStudio(); });
   }
 });
 
@@ -506,37 +786,30 @@ _register("tool_transform", {
       paint.ctx.closePath();
       paint.ctx.fill();
     }
+    _refreshCanvas();
 
-    window.StudioCore.markCompositeDirty();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
-    StudioTour.create({
+    _startTour({
       id: "showme-transform",
       steps: [
         {
           id: "st_intro",
-          text: _t("showme.transform.intro.text", "Here\u2019s a shape on the canvas. Press <span class=\"cx-kbd\">V</span> to activate the <em>Transform</em> tool.\n\nDrag the handles to resize, drag inside to move, and rotate from the corners."),
+          text: _t("showme.transform.intro.text", "Here’s a shape on the canvas. Press <span class=\"cx-kbd\">V</span> to activate the <em>Transform</em> tool.\n\nDrag the handles to resize, drag inside to move, and rotate from the corners."),
           spotlight: "#toolstrip", advance: "click", btn: _t("showme.transform.intro.btn", "Next")
         },
         {
           id: "st_basic",
           text: _t("showme.transform.basic.text", "Try the basics: drag a corner handle to resize. Hold <span class=\"cx-kbd\">Shift</span> to constrain proportions. Drag inside to reposition.\n\n<span class=\"cx-kbd\">Enter</span> applies the transform. <span class=\"cx-kbd\">Escape</span> cancels."),
           spotlight: null, advance: "click", btn: _t("showme.transform.basic.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
         {
           id: "st_warp",
-          text: _t("showme.transform.warp.text", "In the context bar, you\u2019ll see <em>warp mode buttons</em>:\n\n\u2022 <strong>Affine</strong> \u2014 free deformation with control points\n\u2022 <strong>Similitude</strong> \u2014 scale + rotate only (no skew)\n\u2022 <strong>Rigid</strong> \u2014 minimal distortion, natural repositioning\n\u2022 <strong>Perspective</strong> \u2014 four-corner pin\n\nTry each one to see how they differ."),
+          text: _t("showme.transform.warp.text", "The bar above the canvas has more modes:\n\n• <strong>Skew</strong> (<span class=\"cx-kbd\">K</span>) — edge handles shear the shape\n• <strong>Persp</strong> (<span class=\"cx-kbd\">P</span>) — drag the corners freely for perspective\n• <strong>Warp</strong> (<span class=\"cx-kbd\">W</span>) — free deformation with control points; then <em>Aff</em>, <em>Sim</em> or <em>Rig</em> picks how it deforms (affine, angle-preserving, shape-preserving)\n\nThere are also Flip and Rotate buttons. Try each one."),
           spotlight: null, advance: "click", btn: _t("showme.transform.warp.btn", "Got it"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Transform tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
@@ -549,230 +822,32 @@ _register("canvas_routing", {
     window.StudioUI.redraw();
 
     // Pre-fill prompt so generation doesn't choke on empty string
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "a colorful landscape, digital painting, detailed";
+    _setPrompt("a colorful landscape, digital painting, detailed");
 
-    StudioTour.create({
+    _startTour({
       id: "showme-routing",
       steps: [
         {
           id: "scr_blank",
-          text: _t("showme.routing.blank.text", "This is a <em>blank canvas</em>. If you hit Generate right now, Studio runs <strong>txt2img</strong> \u2014 generating from scratch based only on your prompt.\n\nNo mode selection needed. The canvas state IS the mode."),
+          text: _t("showme.routing.blank.text", "This is a <em>blank canvas</em>. If you hit Generate right now, Studio runs <strong>txt2img</strong> — generating from scratch based only on your prompt.\n\nNo mode selection needed. The canvas state IS the mode."),
           spotlight: null, advance: "click",
           btn: _t("showme.routing.blank.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
         {
           id: "scr_content",
-          text: _t("showme.routing.content.text", "Now paint something on the canvas \u2014 anything. A scribble, a shape, a splash of color.\n\nOnce there are pixels on the canvas, Generate switches to <strong>img2img</strong> automatically. The AI works <em>with</em> what\u2019s there. <em>Denoise</em> controls how much it changes."),
+          text: _t("showme.routing.content.text", "Now paint something on the canvas — anything. A scribble, a shape, a splash of color.\n\nOnce there are pixels on the canvas, Generate switches to <strong>img2img</strong> automatically. The AI works <em>with</em> what’s there. <em>Denoise</em> controls how much it changes."),
           spotlight: "#toolstrip", advance: "click",
           btn: _t("showme.routing.content.btn", "I painted something")
         },
         {
           id: "scr_mask",
-          text: _t("showme.routing.mask.text", "Now press <span class=\"cx-kbd\">Q</span> to enter mask mode. Paint a red overlay over part of your content.\n\nWith a mask present, Generate switches to <strong>inpainting</strong> \u2014 only the masked area changes. Everything else stays untouched.\n\nThree modes, zero toggles. The pixels decide."),
-          spotlight: "#maskModeBtn", advance: "click",
+          text: _t("showme.routing.mask.text", "Now press <span class=\"cx-kbd\">Q</span> to pick the <em>Inpaint Mask</em> tool (highlighted) and paint a red overlay over part of your content. A mask selected in the Masks panel counts too.\n\nWith a mask present, Generate switches to <strong>inpainting</strong> — only the masked area changes. Everything else stays untouched.\n\nThree modes, zero toggles. The pixels decide."),
+          spotlight: MASK_TOOL, advance: "click",
           btn: _t("showme.routing.mask.btn", "Got it")
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Canvas routing tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
-  }
-});
-
-// ── ControlNet: Canny ────────────────────────────────────────────────
-
-_register("controlnet_canny", {
-  entryId: "controlnet",
-  label: _t("showme.tutorialLabel.cannyEdges", "Canny (Edges)"),
-  run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.controlnetCanny", "ControlNet: Canny"));
-    _drawTutorialScene();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "a winter village at night, snow covered roofs, warm window light, high quality";
-
-    StudioTour.create({
-      id: "showme-cn-canny",
-      steps: [
-        {
-          id: "cnc_intro",
-          text: _t("showme.cnCanny.intro.text", "<em>Canny</em> extracts edge lines from your image. The AI follows those edges while generating new content \u2014 maintaining architectural layouts, linework, and structural outlines."),
-          spotlight: null, advance: "click", btn: _t("showme.cnCanny.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
-        },
-        {
-          id: "cnc_setup",
-          text: _t("showme.cnCanny.setup.text", "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>Canny</strong>\n3. Set Model to a <strong>Canny</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\nPreprocessor and model must both be Canny, and match your checkpoint architecture (SD1.5 or SDXL)."),
-          spotlight: null, advance: "click", btn: _t("showme.cnCanny.setup.btn", "Next"),
-          position: { bottom: "80px", right: "340px" }
-        },
-        {
-          id: "cnc_generate",
-          text: _t("showme.cnCanny.generate.text", "A prompt has been pre-filled. Hit <em>Generate</em> \u2014 the result follows the edges of the original scene (house outline, tree shape, horizon line) but with completely new colors, textures, and content.\n\nLower the <strong>Weight</strong> for looser edge following. Try <strong>Start/End 0.0\u20130.5</strong> for structural guidance that fades during detail refinement."),
-          spotlight: "#genBtn", advance: "click", btn: _t("showme.cnCanny.generate.btn", "Got it")
-        },
-      ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Canny tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
-  }
-});
-
-// ── ControlNet: OpenPose ─────────────────────────────────────────────
-
-_register("controlnet_openpose", {
-  entryId: "controlnet",
-  label: _t("showme.tutorialLabel.openposePoses", "OpenPose (Poses)"),
-  run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.controlnetOpenpose", "ControlNet: OpenPose"));
-
-    // Draw a simple figure for pose detection
-    var S = window.StudioCore.state;
-    var ref = S.layers.find(function (l) { return l.type === "reference"; });
-    if (ref) {
-      var ctx = ref.ctx, W = S.W, H = S.H;
-      ctx.fillStyle = "#c8d8e8"; ctx.fillRect(0, 0, W, H);
-      // Simple stick figure
-      ctx.strokeStyle = "#333"; ctx.lineWidth = 4; ctx.lineCap = "round";
-      var cx = W / 2, headY = H * 0.2;
-      // Head
-      ctx.beginPath(); ctx.arc(cx, headY, 20, 0, Math.PI * 2); ctx.stroke();
-      // Torso
-      ctx.beginPath(); ctx.moveTo(cx, headY + 20); ctx.lineTo(cx, H * 0.55); ctx.stroke();
-      // Arms
-      ctx.beginPath(); ctx.moveTo(cx - 60, H * 0.35); ctx.lineTo(cx, H * 0.3); ctx.lineTo(cx + 70, H * 0.4); ctx.stroke();
-      // Legs
-      ctx.beginPath(); ctx.moveTo(cx - 40, H * 0.75); ctx.lineTo(cx, H * 0.55); ctx.lineTo(cx + 45, H * 0.78); ctx.stroke();
-    }
-
-    window.StudioCore.markCompositeDirty();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "a woman standing, casual outfit, park background, natural lighting, high quality";
-
-    StudioTour.create({
-      id: "showme-cn-openpose",
-      steps: [
-        {
-          id: "cnp_intro",
-          text: _t("showme.cnOpenpose.intro.text", "<em>OpenPose</em> detects body poses \u2014 the position of head, arms, legs, and joints. The AI generates a new character following that exact pose.\n\nHere\u2019s a simple figure. OpenPose will extract its pose."),
-          spotlight: null, advance: "click", btn: _t("showme.cnOpenpose.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
-        },
-        {
-          id: "cnp_setup",
-          text: _t("showme.cnOpenpose.setup.text", "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>OpenPose</strong>\n3. Set Model to an <strong>OpenPose</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\nThe preprocessor detects the pose skeleton. The model uses it to guide generation."),
-          spotlight: null, advance: "click", btn: _t("showme.cnOpenpose.setup.btn", "Next"),
-          position: { bottom: "80px", right: "340px" }
-        },
-        {
-          id: "cnp_generate",
-          text: _t("showme.cnOpenpose.generate.text", "Hit <em>Generate</em>. The result shows a new character in the same pose as the figure.\n\nOpenPose is great for: maintaining specific poses, transferring poses from reference photos, generating consistent character positions across images.\n\nYou can also use a real photo as the source \u2014 set Source to <strong>Upload</strong> instead of Canvas."),
-          spotlight: "#genBtn", advance: "click", btn: _t("showme.cnOpenpose.generate.btn", "Got it")
-        },
-      ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "OpenPose tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
-  }
-});
-
-// ── ControlNet: Depth ────────────────────────────────────────────────
-
-_register("controlnet_depth", {
-  entryId: "controlnet",
-  label: _t("showme.tutorialLabel.depthLayout", "Depth (Layout)"),
-  run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.controlnetDepth", "ControlNet: Depth"));
-    _drawTutorialScene();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "an alien landscape, bioluminescent plants, purple sky, sci-fi, detailed";
-
-    StudioTour.create({
-      id: "showme-cn-depth",
-      steps: [
-        {
-          id: "cnd_intro",
-          text: _t("showme.cnDepth.intro.text", "<em>Depth</em> extracts a depth map \u2014 what\u2019s close vs far. The AI preserves the spatial arrangement (foreground objects stay in front, background stays behind) while creating entirely new content."),
-          spotlight: null, advance: "click", btn: _t("showme.cnDepth.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
-        },
-        {
-          id: "cnd_setup",
-          text: _t("showme.cnDepth.setup.text", "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>Depth</strong> (or Depth Anything)\n3. Set Model to a <strong>Depth</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\n<em>Note:</em> Some Depth preprocessors require compatible GPU drivers. If you get an error, try <strong>Canny</strong> instead."),
-          spotlight: null, advance: "click", btn: _t("showme.cnDepth.setup.btn", "Next"),
-          position: { bottom: "80px", right: "340px" }
-        },
-        {
-          id: "cnd_generate",
-          text: _t("showme.cnDepth.generate.text", "Hit <em>Generate</em>. The house, tree, and ground stay in their spatial positions but become entirely new content.\n\nDepth is ideal for: scene reimagination, style transfer while keeping composition, maintaining spatial relationships in complex scenes."),
-          spotlight: "#genBtn", advance: "click", btn: _t("showme.cnDepth.generate.btn", "Got it")
-        },
-      ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Depth tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
-  }
-});
-
-// ── Soft Inpainting ──────────────────────────────────────────────────
-
-_register("soft_inpainting", {
-  entryId: "inpaint_basics",
-  label: _t("showme.tutorialLabel.softInpainting", "Soft Inpainting"),
-  run: function () {
-    _createTutorialDoc(_t("showme.tutorialName.softInpainting", "Soft Inpainting"));
-    _drawTutorialScene();
-    window.StudioCore.composite();
-    window.StudioUI.redraw();
-    window.StudioUI.renderLayerPanel();
-
-    var promptEl = document.getElementById("paramPrompt");
-    if (promptEl) promptEl.value = "a castle tower, stone walls, medieval, detailed";
-
-    StudioTour.create({
-      id: "showme-softinpaint",
-      steps: [
-        {
-          id: "ssi_intro",
-          text: _t("showme.softInpaint.intro.text", "Standard inpainting has a hard boundary \u2014 inside the mask changes, outside doesn\u2019t. <em>Soft Inpainting</em> adds smooth blending at the boundary for more natural transitions.\n\nLet\u2019s try it. First, press <span class=\"cx-kbd\">Q</span> and mask an area \u2014 paint over the house."),
-          spotlight: "#maskModeBtn", advance: "click",
-          btn: _t("showme.softInpaint.intro.btn", "I\u2019ve masked the house")
-        },
-        {
-          id: "ssi_enable",
-          text: _t("showme.softInpaint.enable.text", "Find <em>Soft Inpainting</em> in the Generate panel (it appears when mask mode is active). Enable the checkbox.\n\nYou\u2019ll see six parameters. Here\u2019s what matters most:\n\n\u2022 <strong>Preservation</strong> \u2014 how much the original is kept outside the mask. Higher = less change.\n\u2022 <strong>Transition Contrast</strong> \u2014 how sharp the blend edge is. Lower = softer blend."),
-          spotlight: null, advance: "click",
-          btn: _t("showme.softInpaint.enable.btn", "Next"),
-          position: { bottom: "80px", right: "340px" }
-        },
-        {
-          id: "ssi_generate",
-          text: _t("showme.softInpaint.generate.text", "Hit <em>Generate</em> and compare the result to standard inpainting (disable Soft Inpainting and regenerate with the same mask to compare).\n\nSoft Inpainting works best with <em>feathered masks</em> \u2014 use a soft brush (low hardness) to paint your mask for the best blending.\n\nThe other parameters (Schedule Bias, Mask Influence, Difference Threshold/Contrast) are fine at defaults until you need specific control."),
-          spotlight: "#genBtn", advance: "click",
-          btn: _t("showme.softInpaint.generate.btn", "Got it")
-        },
-      ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Soft inpainting tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
@@ -785,31 +860,28 @@ _register("tool_radial_symmetry", {
     window.StudioCore.composite();
     window.StudioUI.redraw();
 
-    StudioTour.create({
+    _startTour({
       id: "showme-radialsym",
       steps: [
         {
           id: "srs_intro",
-          text: _t("showme.radialSym.intro.text", "Radial symmetry mirrors your brush strokes around a center point. Let\u2019s paint a mandala pattern.\n\nFirst, select the <em>Brush</em> tool (<span class=\"cx-kbd\">B</span>)."),
+          text: _t("showme.radialSym.intro.text", "Radial symmetry mirrors your brush strokes around a center point. Let’s paint a mandala pattern.\n\nFirst, select the <em>Brush</em> tool (<span class=\"cx-kbd\">B</span>)."),
           spotlight: "#toolstrip", advance: "click", btn: _t("showme.radialSym.intro.btn", "Next")
         },
         {
           id: "srs_enable",
-          text: _t("showme.radialSym.enable.text", "In the context bar (top of the canvas area), find the symmetry buttons (near the right side). Click the <strong>radial</strong> button (the starburst icon).\n\nSet the <em>axis count</em> \u2014 try <strong>6</strong> for a snowflake pattern or <strong>8</strong> for a mandala. More axes = more repetitions."),
+          text: _t("showme.radialSym.enable.text", "In the context bar (top of the canvas area), find the symmetry buttons (near the right side). Click the <strong>radial</strong> button (the starburst icon).\n\nSet the <em>axis count</em> — try <strong>6</strong> for a snowflake pattern or <strong>8</strong> for a mandala. More axes = more repetitions."),
           spotlight: null, advance: "click", btn: _t("showme.radialSym.enable.btn", "Next"),
           position: { top: "100px", left: "calc(50% - 190px)" }
         },
         {
           id: "srs_paint",
-          text: _t("showme.radialSym.paint.text", "Now paint on the canvas. Every stroke is replicated around the center point.\n\nTry painting outward from the center, or in arcs. Even simple strokes create complex patterns.\n\nThe smudge tool also works with radial symmetry \u2014 each segment has its own independent smudge buffer."),
+          text: _t("showme.radialSym.paint.text", "Now paint on the canvas. Every stroke is replicated around the center point.\n\nTry painting outward from the center, or in arcs. Even simple strokes create complex patterns.\n\nThe smudge tool also works with radial symmetry — each segment has its own independent smudge buffer."),
           spotlight: null, advance: "click", btn: _t("showme.radialSym.paint.btn", "Got it"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Radial symmetry tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
@@ -819,32 +891,28 @@ _register("lora_browser", {
   entryId: "loras",
   label: _t("showme.tutorialLabel.loraBrowser", "LoRA Browser"),
   run: function () {
-    StudioTour.create({
+    _startTour({
       id: "showme-loras",
       steps: [
         {
           id: "slb_intro",
-          text: _t("showme.lora.intro.text", "The <em>LoRA Browser</em> lets you visually browse and insert LoRAs without typing the syntax manually.\n\nLook for the <strong>LORA</strong> button near the prompt box in the Generate panel \u2014 click it to open the browser."),
-          spotlight: null, advance: "click", btn: _t("showme.lora.intro.btn", "Next"),
-          position: { bottom: "80px", right: "340px" }
+          text: _t("showme.lora.intro.text", "The <em>LoRAs</em> block under the prompt box keeps your LoRAs as a list, so you never type the syntax by hand.\n\nPress <strong>+ LoRAs</strong> to open the LoRA browser."),
+          beforeShow: _goTo('[data-panel="generate"]', 200),
+          spotlight: "#loraStackAddBtn", advance: "click", btn: _t("showme.lora.intro.btn", "Next")
         },
         {
           id: "slb_browse",
-          text: _t("showme.lora.browse.text", "The browser shows cards for each LoRA file in your <code>models/Lora/</code> folder. Cards display the name and <em>trigger words</em> (read from sidecar <code>.json</code> metadata files).\n\nUse the search bar to filter by name or trigger word."),
+          text: _t("showme.lora.browse.text", "The browser shows a card for each LoRA file in your LoRA folder (set in <em>Settings → General → Model folders</em>). Cards show the name and <em>trigger words</em> (read from sidecar <code>.json</code> files).\n\nUse the search bar to filter by name or trigger word."),
           spotlight: null, advance: "click", btn: _t("showme.lora.browse.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "slb_insert",
-          text: _t("showme.lora.insert.text", "Click a LoRA card to insert it into your prompt. The browser auto-inserts the <code>&lt;lora:name:weight&gt;</code> tag AND any trigger words at the preferred weight.\n\nYou can stack multiple LoRAs \u2014 just click more cards. Lower individual weights (0.5\u20130.7) when stacking to prevent conflicts."),
-          spotlight: null, advance: "click", btn: _t("showme.lora.insert.btn", "Got it"),
-          position: { bottom: "80px", right: "340px" }
+          text: _t("showme.lora.insert.text", "Click a card to add it to the list at its preferred weight. When you press Generate, Studio adds the <code>&lt;lora:name:weight&gt;</code> tags and any trigger words to the prompt for you — <em>Preview</em> shows exactly what will be sent.\n\nYou can stack several; lower the weights (0.5–0.7) when you do. <em>Import</em> moves <code>&lt;lora:…&gt;</code> tags you typed into the list."),
+          spotlight: "#loraStackPreviewBtn", advance: "click", btn: _t("showme.lora.insert.btn", "Got it")
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "LoRA browser tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
@@ -858,31 +926,29 @@ _register("brush_dynamics", {
     window.StudioCore.composite();
     window.StudioUI.redraw();
 
-    StudioTour.create({
+    _startTour({
       id: "showme-dynamics",
       steps: [
         {
           id: "sbd_intro",
-          text: _t("showme.dynamics.intro.text", "The brush engine has a <em>dynamics panel</em> that controls advanced stroke behavior.\n\nSelect the <em>Brush</em> (<span class=\"cx-kbd\">B</span>) and look for the <strong>gear icon</strong> in the brush presets area below the context bar."),
-          spotlight: "#toolstrip", advance: "click", btn: _t("showme.dynamics.intro.btn", "Next")
+          text: _t("showme.dynamics.intro.text", "The brush engine has a <em>dynamics panel</em> that controls how a stroke is built.\n\nSelect the <em>Brush</em> (<span class=\"cx-kbd\">B</span>) and click the <strong>gear icon</strong> at the end of the brush presets (highlighted)."),
+          beforeShow: _goTo('#toolstrip [data-tool="brush"]', 200),
+          spotlight: "#dynamicsToggle", advance: "click", btn: _t("showme.dynamics.intro.btn", "Next")
         },
         {
           id: "sbd_panel",
-          text: _t("showme.dynamics.panel.text", "The Brush Dynamics panel exposes:\n\n\u2022 <strong>Spacing</strong> \u2014 gap between brush stamps (lower = smoother, higher = dotted)\n\u2022 <strong>Size Jitter</strong> \u2014 random size variation per stamp\n\u2022 <strong>Opacity Jitter</strong> \u2014 random opacity variation\n\u2022 <strong>Scatter</strong> \u2014 random offset from stroke path\n\u2022 <strong>Rotation Jitter</strong> \u2014 random angle per stamp\n\u2022 <strong>Follow Stroke</strong> \u2014 stamps rotate to follow stroke direction"),
+          text: _t("showme.dynamics.panel.text", "The panel has three groups:\n\n• <strong>Stroke</strong> — <em>Follow stroke</em>, <em>Buildup</em> (stamps accumulate), <em>Spacing</em>, <em>Size / Opacity / Rotation Jitter</em>, <em>Scatter</em>\n• <strong>Brush Shape</strong> — <em>Ratio</em>, <em>Density</em>, <em>Spikes</em>, <em>Angle</em>, <em>Taper in</em>, <em>Falloff</em> (Std or Gauss)\n• <strong>Paper</strong> — a surface texture (Fine Grain, Canvas, Rough Tooth, Laid) with <em>Depth</em>, <em>Scale</em> and <em>Tooth</em>; it belongs to the document, so every brush paints on the same surface"),
           spotlight: null, advance: "click", btn: _t("showme.dynamics.panel.btn", "Next"),
           position: { top: "120px", left: "60px" }
         },
         {
           id: "sbd_try",
-          text: _t("showme.dynamics.try.text", "Try painting with different dynamics settings. High scatter + size jitter creates foliage and particle effects. High spacing creates dotted/stippled lines.\n\nThe <strong>Scatter</strong> preset is pre-configured with dynamics for textured spray effects. Each preset stores its own dynamics."),
+          text: _t("showme.dynamics.try.text", "Try painting with different settings. High scatter + size jitter creates foliage and particle effects. High spacing creates dotted lines. A paper surface makes strokes break up like chalk.\n\nThe <strong>Scatter</strong> preset is pre-configured for textured spray. Each preset stores its own dynamics."),
           spotlight: null, advance: "click", btn: _t("showme.dynamics.try.btn", "Got it"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Brush dynamics tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
@@ -892,38 +958,35 @@ _register("wildcards_tutorial", {
   entryId: "wildcards",
   label: "Show Me",
   run: function () {
-    StudioTour.create({
+    _startTour({
       id: "showme-wildcards",
       steps: [
         {
           id: "sw_intro",
           text: _t("showme.wildcards.intro.text", "Wildcards insert <em>random text</em> into your prompts for automatic variety. The syntax is <code>__name__</code> (double underscores).\n\nEach generation picks a different line from the matching text file."),
           spotlight: null, advance: "click", btn: _t("showme.wildcards.intro.btn", "Next"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
         {
           id: "sw_browse",
-          text: _t("showme.wildcards.browse.text", "Click the <strong>WILDCARD</strong> button near the prompt box to open the wildcard browser. This shows all your installed wildcard files.\n\nWildcard files live in <code>extensions/sd-dynamic-prompts/wildcards/</code>. Each <code>.txt</code> file is one wildcard \u2014 the filename becomes the name."),
+          text: _t("showme.wildcards.browse.text", "Click the <strong>WILDCARD</strong> button under the prompt box to open the wildcard browser. It lists your wildcard files.\n\nThey live in the wildcard folder you choose in <em>Settings → Prompts & Metadata → Dynamic Prompts</em>. Each <code>.txt</code> file is one wildcard — the filename becomes the name."),
           spotlight: null, advance: "click", btn: _t("showme.wildcards.browse.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "sw_syntax",
-          text: _t("showme.wildcards.syntax.text", "Try typing in your prompt: <code>a __colors__ cat sitting on a __furniture__</code>\n\nEach generation replaces <code>__colors__</code> with a random line from <code>colors.txt</code> and <code>__furniture__</code> from <code>furniture.txt</code>.\n\n<strong>Folders work too:</strong> a file at <code>wildcards/animals/cats.txt</code> is used as <code>__animals/cats__</code>."),
+          text: _t("showme.wildcards.syntax.text", "Try typing in your prompt: <code>a __colors__ cat sitting on a __furniture__</code>\n\nEach generation replaces <code>__colors__</code> with a random line from <code>colors.txt</code> and <code>__furniture__</code> from <code>furniture.txt</code>.\n\n<strong>Folders work too:</strong> a file at <code>animals/cats.txt</code> is used as <code>__animals/cats__</code>."),
           spotlight: "#paramPrompt", advance: "click", btn: _t("showme.wildcards.syntax.btn", "Next"),
           focusTarget: "#paramPrompt"
         },
         {
           id: "sw_lexicon",
-          text: _t("showme.wildcards.lexicon.text", "The <em>Wildcards</em> tab (in the main tab bar) provides a full wildcard editor \u2014 folder tree, file creation, inline editing, and preview.\n\nWildcards work in the negative prompt too. Common pattern: put your standard negatives in <code>neg4.txt</code> and use <code>__neg4__</code> instead of typing them every time."),
+          text: _t("showme.wildcards.lexicon.text", "The <em>Wildcards</em> tab (in the main tab bar) is a full wildcard editor — folder tree, file creation, inline editing, preview, sorting and duplicate removal.\n\nWildcards work in the negative prompt too. Common pattern: put your standard negatives in <code>neg4.txt</code> and use <code>__neg4__</code> instead of typing them every time."),
           spotlight: null, advance: "click", btn: _t("showme.wildcards.lexicon.btn", "Got it"),
-          position: { bottom: "80px", left: "calc(50% - 190px)" }
+          position: CENTER
         },
       ],
-      persist: false, confirmCancel: false,
-      onComplete: function () { console.log(TAG, "Wildcards tutorial complete"); },
-      onCancel: function () {},
-    }).start(0);
+    });
   }
 });
 
@@ -937,6 +1000,6 @@ window.StudioShowMe = {
   run: run
 };
 
-console.log(TAG, "Show Me system loaded \u2014", Object.keys(_tutorials).length, "tutorials registered");
+console.log(TAG, "Show Me system loaded —", Object.keys(_tutorials).length, "tutorials registered");
 
 })();

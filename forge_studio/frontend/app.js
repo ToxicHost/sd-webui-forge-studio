@@ -970,7 +970,6 @@ const Live = {
       this._updateUI();
       window.Customizer?.updateToggleState();
       console.log("[Live] Active, seed:", this.seed);
-      window.Education?.maybeShowTip?.("live");
       // Trigger an initial submit with current canvas state
       this._scheduleCanvasCheck(0);
     } catch (e) {
@@ -11360,6 +11359,9 @@ function _maybeShowFirstRun(hadStoredConfig) {
   try {
     if (hadStoredConfig) return;                              // existing user
     if (localStorage.getItem(_ONBOARD_KEY)) return;           // already chosen/skipped
+    // ED1. Also kept in Studio's preferences: localStorage is per port and
+    // per browser, so a launch on another port asked again.
+    if (window.Prefs?.get?.("education", null)?.onboarded) return;
   } catch (_) { return; }
   // Defer a tick so the rest of init settles (dropdowns, theme) first.
   setTimeout(_showFirstRunModal, 200);
@@ -11377,7 +11379,7 @@ function _setToggleState(id, want) {
 function _showFirstRunModal() {
   if (document.getElementById("firstRunOverlay")) return;
   const _tt = (k, f) => (window.I18N && window.I18N.t) ? window.I18N.t(k, f) : f;
-  let _customPath = "";   // server-side folder picked for auto-save (empty = Forge default)
+  let _customPath = "";   // server-side folder picked for auto-save (empty = Studio’s results folder)
 
   const ov = document.createElement("div");
   ov.id = "firstRunOverlay";
@@ -11400,7 +11402,7 @@ function _showFirstRunModal() {
       '<div class="first-run-group">' +
         '<div class="first-run-label">' + _tt("firstRun.saveLoc.label", "Where should images save?") + '</div>' +
         '<div class="first-run-choices" data-fr="saveloc">' +
-          '<button class="first-run-choice active" data-val="default">' + _tt("firstRun.saveLoc.default", "Forge default folder") + '</button>' +
+          '<button class="first-run-choice active" data-val="default">' + _tt("firstRun.saveLoc.default", "Studio’s results folder") + '</button>' +
           '<button class="first-run-choice" data-val="custom">' + _tt("firstRun.saveLoc.custom", "Choose a folder…") + '</button>' +
         '</div>' +
         '<div class="first-run-browse" id="firstRunBrowseRow" style="display:none;">' +
@@ -11408,7 +11410,7 @@ function _showFirstRunModal() {
             'placeholder="' + _tt("firstRun.saveLoc.placeholder", "Type a folder path on the Forge server…") + '">' +
           '<button class="first-run-browse-btn" id="firstRunBrowse">' + _tt("firstRun.saveLoc.browse", "Browse…") + '</button>' +
         '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.saveLoc.hint", "This folder lives on the machine running Forge/Studio. Type the path directly (best for remote/VM), or Browse if the dialog opens on that machine. Leave on default to use Forge’s output folder.") + '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.saveLoc.hint", "This folder is on the machine running Studio. Type a path or press Browse… to pick one. Leave on the default to use Studio’s results folder.") + '</div>' +
       '</div>' +
       '<div class="first-run-group">' +
         '<div class="first-run-label">' + _tt("firstRun.meta.label", "Embed metadata into image files") + '</div>' +
@@ -11465,7 +11467,14 @@ function _showFirstRunModal() {
   });
 
   const _pick = (group) => ov.querySelector('[data-fr="' + group + '"] .first-run-choice.active')?.dataset.val;
-  const _close = () => { ov.remove(); try { localStorage.setItem(_ONBOARD_KEY, "1"); } catch (_) {} };
+  const _close = () => {
+    ov.remove();
+    try { localStorage.setItem(_ONBOARD_KEY, "1"); } catch (_) {}
+    try {
+      const edu = window.Prefs?.get?.("education", null);
+      window.Prefs?.set?.("education", { ...(edu && typeof edu === "object" ? edu : {}), onboarded: true });
+    } catch (_) {}
+  };
 
   document.getElementById("firstRunSkip")?.addEventListener("click", _close);
 

@@ -14,9 +14,15 @@ ROOT = Path(__file__).resolve().parent
 APP = ROOT / "app"
 def interpreter_for(app: Path) -> Path:
     # The marker also ensures a damaged portable runtime never falls back to a venv.
+    # Windows keeps `Scripts\python.exe`; macOS and Linux keep `bin/python`
+    # (the checkout launcher reuses this module on every platform, MAC1).
+    if os.name == "nt":
+        if (app / "portable-runtime.json").is_file():
+            return app / "runtime" / "python.exe"
+        return app / "venv" / "Scripts" / "python.exe"
     if (app / "portable-runtime.json").is_file():
-        return app / "runtime" / "python.exe"
-    return app / "venv" / "Scripts" / "python.exe"
+        return app / "runtime" / "bin" / "python3"
+    return app / "venv" / "bin" / "python"
 
 
 PYTHON = interpreter_for(APP)

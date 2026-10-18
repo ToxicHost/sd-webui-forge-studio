@@ -26,7 +26,7 @@
   // through _t() so the locale-aware text shows on first render. Elements
   // also get data-i18n attributes so applyToDom() keeps them in sync on
   // locale switches.
-  const _t = (key, fallback) => (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+  const _t = (key, fallback, params) => (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
 
   const TAG = "[LoRA Browser]";
 
@@ -681,7 +681,7 @@
       grid.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "lora-empty";
-      empty.innerHTML = `<span class="lora-empty-text">${allLoras.length === 0 ? _t("lora.empty.none", "No LoRAs found in your models/Lora directory") : _t("lora.empty.noMatch", "No LoRAs match your search")}</span>`;
+      empty.innerHTML = `<span class="lora-empty-text">${allLoras.length === 0 ? _t("lora.empty.none", "No LoRAs found — add a LoRA folder in Settings → General → Model folders") : _t("lora.empty.noMatch", "No LoRAs match your search")}</span>`;
       wrap.appendChild(empty);
       return;
     }
@@ -962,9 +962,10 @@
     const estSec = Math.round(missing.length * 2.5);
     const estLabel = estSec >= 60 ? `~${Math.ceil(estSec / 60)} min` : `~${estSec} s`;
     const ok = window.confirm(_t("lora.civitai.confirmFetch",
-      `Fetch Civitai metadata for ${missing.length} LoRA(s) in “${label}”?\n\n` +
-      `This sends file hashes (not filenames or prompts) to civitai.com.\n` +
-      `Estimated time: ${estLabel}. You can cancel mid-way.`));
+      "Fetch Civitai metadata for {count} LoRA(s) in “{folder}”?\n\n" +
+      "This sends file hashes (not filenames or prompts) to civitai.com.\n" +
+      "Estimated time: {time}. You can cancel mid-way.",
+      { count: missing.length, folder: label, time: estLabel }));
     if (!ok) return;
 
     // Per-LoRA loop with live progress + cancel, so 100+ LoRAs feels
@@ -1048,11 +1049,13 @@
     const errPart = errors ? ` · ${errors} error${errors === 1 ? "" : "s"}` : "";
     if (cancelled) {
       showToast(_t("lora.civitai.cancelled",
-        `Stopped at ${done}/${total} · fetched ${ok_count} · no match ${notfound}${errPart}`),
+        "Stopped at {done}/{total} · fetched {fetched} · no match {missing}{errors}",
+        { done, total, fetched: ok_count, missing: notfound, errors: errPart }),
         "info");
     } else {
       showToast(_t("lora.civitai.bulkDone",
-        `Fetched ${ok_count} · no match ${notfound}${errPart}`),
+        "Fetched {fetched} · no match {missing}{errors}",
+        { fetched: ok_count, missing: notfound, errors: errPart }),
         errors ? "info" : "success");
     }
     await refreshLoras();

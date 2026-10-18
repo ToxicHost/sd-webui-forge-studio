@@ -46,10 +46,16 @@ CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu130"
 CUDA_TORCH_SPEC = "torch==2.11.0+cu130 torchvision==0.26.0+cu130"
 CUDA_XFORMERS_SPEC = "xformers==0.0.35"
 
-# Apple Silicon default. Deliberately unpinned: the repository pins a
-# ``+cu130`` build that has no macOS wheel, and no macOS wheel availability has
-# been verified from this workspace. Pinning an unverified version would invent
-# a fact. Owners who want a pin can set TORCH_COMMAND.
+# Apple Silicon default: the SAME release as the CUDA pin, from plain PyPI.
+# Verified 2026-10-18 by resolving against PyPI for macosx_*_arm64 / cp313
+# (Evidence/mac-phase1/macos-arm64-wheels.json): torch-2.11.0 ships
+# `cp313-cp313-macosx_11_0_arm64`, torchvision 0.26.0 likewise. One version on
+# both platforms keeps a Mac report comparable with a Windows one.
+APPLE_SILICON_TORCH_SPEC = "torch==2.11.0 torchvision==0.26.0"
+
+# Intel macOS. Unpinned and unverified: PyTorch publishes no current x86_64
+# macOS wheels, and an Intel Mac has no MPS, so Studio cannot generate there
+# whatever installs (`scripts/bootstrap_environment.py` says so first).
 MACOS_TORCH_SPEC = "torch torchvision"
 
 ARM64_MACHINES = frozenset({"arm64", "aarch64"})
@@ -175,11 +181,13 @@ def select_torch_command(
             machine=str(machine or ""),
             acceleration_family=acceleration,
             source=PLATFORM_DEFAULT,
-            command=f"pip install {MACOS_TORCH_SPEC}",
+            command="pip install " + (
+                APPLE_SILICON_TORCH_SPEC if acceleration == MPS else MACOS_TORCH_SPEC
+            ),
             index_url=override_index,
             supported=True,
             reason=(
-                "Apple Silicon: default PyPI build."
+                "Apple Silicon: PyPI build of the pinned release."
                 if acceleration == MPS
                 else "Intel macOS: default PyPI build, no MPS."
             ),

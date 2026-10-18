@@ -46,5 +46,10 @@ neo_owned_files_modified=21
 neo_inference_paths_modified=0
 neo_pixel_paths_modified=2
 
+# `neo_inference_paths_modified=0` counts FILES. Since 2026-10-11 one
+# Studio-owned runtime adapter changes Anima's inference behaviour in "Studio"
+# emphasis mode without editing a Neo file: ADAPTER-001 in
+# docs/14_PATCH_INVENTORY.md (forge_headless/anima_emphasis.py).
+
 # Historical, kept because it dates the baseline rather than describing now.
 working_tree_at_phase_0_start=clean

@@ -8,7 +8,7 @@ The value is in the *wiring* and in the ordering, which was paid for live.
 ```text
 StudioStartupGlobals    headless_options + ForgeStateBridge + HeadlessCompatibilityContext
 ControlledPayloadOpener ControlledLoadAuthorization + validate_exact_path
-                        + initialize_cuda + PayloadWatch
+                        + initialize_device + PayloadWatch
 build_forge_engine      backend.loader.forge_loader
 publish_engine          the import-order constraint, then shared.sd_model
 ```
@@ -556,7 +556,7 @@ class ControlledPayloadOpener:
                 step="payloads_opened",
             )
 
-        from .controlled_device import initialize_cuda
+        from .controlled_device import initialize_device
         from .load_telemetry import PayloadWatch, StageTimer
         from .model_intake import validate_exact_path
 
@@ -570,11 +570,13 @@ class ControlledPayloadOpener:
         )
 
         # Exact-path validation first: a wrong or missing role fails here,
-        # before CUDA is touched and before anything is opened.
+        # before the device is touched and before anything is opened.
         for role in ordered:
             validate_exact_path(authorization, role)
 
-        device = initialize_cuda(authorization)
+        # The engine's device: CUDA exactly as before, MPS on Apple Silicon,
+        # and a clear refusal anywhere else (MAC1).
+        device = initialize_device(authorization)
 
         loader_paths = {
             role: authorization.loader_path(role)  # type: ignore[attr-defined]

@@ -1,9 +1,11 @@
 """Create or repair the standalone environment before launching Studio.
 
-Release launchers are tracked under packaging/windows. This module checks Torch
+Release launchers are tracked under packaging/windows; the macOS launchers are
+`Start-Studio.command` and `start-studio.sh` (MAC1). This module checks Torch
 and installed requirements, repairing interrupted setup without replacing a
-working venv. The platform selector supplies the existing Torch/CUDA defaults;
-requirements.txt intentionally does not install an unspecified Torch build.
+working venv. The platform selector supplies the existing Torch/CUDA defaults
+and the pinned Apple Silicon build; requirements.txt intentionally does not
+install an unspecified Torch build.
 """
 
 from __future__ import annotations
@@ -92,6 +94,8 @@ def torch_install_command() -> list[str]:
 
     from modules.platform_selection import select_torch_command
 
+    from modules.platform_selection import CPU, ENVIRONMENT_OVERRIDE, MACOS
+
     selection = select_torch_command(system=platform.system(),
                                      machine=platform.machine())
     if not selection.supported:
@@ -99,11 +103,33 @@ def torch_install_command() -> list[str]:
             "Studio has no Torch build for this platform.\n"
             f"  {selection.reason}\n"
             "Set TORCH_COMMAND to install one yourself.")
+    if (selection.platform_family == MACOS and selection.acceleration_family == CPU
+            and selection.source != ENVIRONMENT_OVERRIDE):
+        # An Intel Mac has no GPU Studio can use, and Studio does not generate
+        # on the processor alone. Said here, before a long download that
+        # could only end in the same refusal at the first Generate.
+        raise BootstrapError(
+            "Studio needs a Mac with Apple Silicon (M1 or newer).\n"
+            "This Mac has an Intel processor, which has no GPU Studio can use.")
     # "pip install a b --extra-index-url c" -> ["install", "a", "b", ...]
     parts = selection.command.split()
     if parts[:1] == ["pip"]:
         parts = parts[1:]
     return parts
+
+
+def _launcher_name() -> str:
+    """The file an owner double-clicks on this operating system."""
+
+    return "Start-Studio.bat" if os.name == "nt" else "Start-Studio.command"
+
+
+def _install_python_hint() -> str:
+    if os.name == "nt":
+        return "Install Python 3.13 with its launcher"
+    # macOS ships /usr/bin/python3 as 3.9, which is too old. python.org's
+    # installer is the one route that needs neither Homebrew nor a terminal.
+    return "Install Python 3.13 from python.org (the macOS 64-bit universal2 installer)"
 
 
 def _require_supported_interpreter() -> None:
@@ -117,10 +143,62 @@ def _require_supported_interpreter() -> None:
             "one you already have.")
 
 
+def _python_probe() -> str:
+    return (
+        "import json,sys; "
+        "print(json.dumps({'version':list(sys.version_info[:2]),'executable':sys.executable}))"
+    )
+
+
+def _probe_candidate(command: list[str], run: Callable[..., subprocess.CompletedProcess],
+                     env: dict[str, str] | None = None) -> str | None:
+    """The executable behind `command` if it is a supported Python, else None."""
+    try:
+        result = run([*command, "-c", _python_probe()],
+                     capture_output=True, text=True, encoding="utf-8",
+                     errors="replace", check=False, timeout=10, env=env)
+        if result.returncode != 0:
+            return None
+        found = json.loads(result.stdout)
+        version = tuple(found["version"])
+        executable = found["executable"]
+        if (MINIMUM_PYTHON <= version <= MAXIMUM_PYTHON
+                and isinstance(executable, str) and executable.strip()):
+            return executable
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+        return None
+    return None
+
+
+def find_supported_python_posix(
+    runner: Callable[..., subprocess.CompletedProcess] | None = None,
+    which: Callable[[str], str | None] | None = None,
+) -> str | None:
+    """`python3.13`, `python3.12`, `python3.11` on PATH, newest first; never installs.
+
+    python.org's macOS installer links `python3.13` into /usr/local/bin, which
+    is on the default PATH, so this finds it without searching the disk.
+    """
+    import shutil
+
+    run = runner or subprocess.run
+    locate = which or shutil.which
+    for minor in range(MAXIMUM_PYTHON[1], MINIMUM_PYTHON[1] - 1, -1):
+        candidate = locate(f"python3.{minor}")
+        if not candidate:
+            continue
+        found = _probe_candidate([candidate], run)
+        if found:
+            return found
+    return None
+
+
 def find_supported_python(
     runner: Callable[..., subprocess.CompletedProcess] | None = None,
 ) -> str | None:
     """Ask Windows' launcher for an installed supported Python; never install it."""
+    if os.name != "nt":
+        return find_supported_python_posix(runner)
     run = runner or subprocess.run
     env = os.environ.copy()
     env.pop("PYLAUNCHER_ALLOW_INSTALL", None)
@@ -149,7 +227,10 @@ def find_supported_python(
 
 
 def select_interpreter(argv: list[str]) -> int | None:
-    """Re-execute setup when PATH picked an unsupported Python on Windows.
+    """Re-execute setup when PATH picked an unsupported Python.
+
+    Windows asks the `py` launcher; macOS and Linux look for `python3.13`,
+    `python3.12` and `python3.11` on PATH (macOS's own `python3` is 3.9).
 
     None means the current interpreter is supported. An integer is the exit
     code of setup in the selected interpreter. Explicit choices and existing
@@ -167,13 +248,15 @@ def select_interpreter(argv: list[str]) -> int | None:
             raise BootstrapError(
                 f"{original}\nThe existing app/venv has been preserved. "
                 "Use a fresh extraction with supported Python to rebuild setup.") from original
-        if sys.platform != "win32" or "--no-python-search" in argv:
+        if "--no-python-search" in argv:
             raise
         selected = find_supported_python()
         if selected is None:
+            where = ("through the Windows py launcher" if os.name == "nt"
+                     else "on PATH (python3.13, python3.12 or python3.11)")
             raise BootstrapError(
-                f"{original}\nNo supported Python was found through the Windows py launcher. "
-                "Install Python 3.13 with its launcher, then run Start-Studio.bat again.") from original
+                f"{original}\nNo supported Python was found {where}. "
+                f"{_install_python_hint()}, then run {_launcher_name()} again.") from original
         print(f"PATH selected Python {sys.version_info[0]}.{sys.version_info[1]}; "
               f"using compatible Python at {selected}.", flush=True)
         try:

@@ -75,6 +75,27 @@ def _cuda_is_live(torch_module: Any) -> bool:
     return True
 
 
+def _mps_is_live(torch_module: Any) -> bool:
+    """True only when this process has allocated on Apple's Metal device.
+
+    MPS has no `is_initialized`; memory the driver holds for this process is
+    the equivalent evidence. On a Mac that cache is system RAM, so returning
+    it after an unload is worth the one call (MAC1).
+    """
+
+    backend = getattr(getattr(torch_module, "backends", None), "mps", None)
+    mps = getattr(torch_module, "mps", None)
+    if backend is None or mps is None:
+        return False
+    try:
+        if not backend.is_available():
+            return False
+        held = getattr(mps, "driver_allocated_memory", None)
+        return bool(callable(held) and held() > 0)
+    except BaseException:  # noqa: BLE001 - a refusing probe is a no-op
+        return False
+
+
 def release_terminal_cache() -> dict[str, Any]:
     """Clear the allocator once, after ownership has been released.
 
@@ -94,7 +115,7 @@ def release_terminal_cache() -> dict[str, Any]:
     if torch_module is None:
         return report
 
-    if not _cuda_is_live(torch_module):
+    if not (_cuda_is_live(torch_module) or _mps_is_live(torch_module)):
         report["reason"] = CUDA_NOT_INITIALIZED
         return report
 

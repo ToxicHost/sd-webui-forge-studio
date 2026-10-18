@@ -372,6 +372,25 @@ class RequestTranslation:
         }
 
 
+def _template_fields(expansion: Any) -> dict[str, Any]:
+    """RP1. The owner's raw prompts, from the server's wildcard snapshot.
+
+    Only a prompt the expansion actually changed is carried; an unchanged one
+    stays "" so the saved parameters gain no line that says nothing.
+    """
+
+    if expansion is None:
+        return {}
+    fields: dict[str, Any] = {}
+    original = str(getattr(expansion, "original_prompt", "") or "")
+    if original != str(getattr(expansion, "resolved_prompt", "") or ""):
+        fields["prompt_template"] = original
+    original_negative = str(getattr(expansion, "original_negative_prompt", "") or "")
+    if original_negative != str(getattr(expansion, "resolved_negative_prompt", "") or ""):
+        fields["negative_prompt_template"] = original_negative
+    return fields
+
+
 def _variation_fields(variation: Any) -> dict[str, Any]:
     """Neo's four variation fields, or nothing at all.
 
@@ -668,6 +687,9 @@ def translate_request(
         model_id=str(request.model_id),
         positive_prompt=str(request.positive_prompt),
         negative_prompt=str(request.negative_prompt),
+        # RP1. The raw prompts, for the saved parameters only (never the
+        # engine), when the server's wildcard expansion changed them.
+        **_template_fields(getattr(request, "prompt_expansion", None)),
         seed=int(request.seed),
         # Carried as ONE group, like hires and auto_detail: absent stays
         # indistinguishable from absent, so a request without `variation`
@@ -1010,7 +1032,13 @@ class HeadlessGenerationSession:
 
     def capability_for(self, model_id: str, operation: str) -> ModelCapability:
         model = self._require_model(model_id)
+        # MAC1: the device fields, as the engine chose them (contract section
+        # 5). UNKNOWN until the engine has booted -- "did not say" -- and
+        # never derived from the host OS. A read only: nothing is imported.
+        from .device_facts import contract_fields
+
         return ModelCapability(
+            **contract_fields(),
             model_id=model.model_id,
             operation=operation,
             dimension_alignment=DIMENSION_ALIGNMENT,

@@ -420,11 +420,11 @@ function _updateMaskToggleUI() {
     // M3: the selected named mask is what the next inpaint sends.
     const source = C.inpaintSourceEntry();
     if (status && source !== S.mask) {
-        status.textContent = "Inpainting with “" + source.name + "” (cut at 40%)"
-            + (S._userMaskMode ? "" : " · inactive");
+        status.textContent = _i18n("mask.status.inpaintingWith", "Inpainting with “{name}” (cut at 40%)", { name: source.name })
+            + (S._userMaskMode ? "" : _i18n("mask.status.inactive", " · inactive"));
     } else if (status) status.textContent = _maskHasCoverage
-        ? (S._userMaskMode ? "Generation mask: ready" : "Generation mask: saved, inactive") + (S.mask.visible ? "" : " · overlay hidden")
-        : "Generation mask: empty";
+        ? (S._userMaskMode ? _i18n("mask.status.ready", "Generation mask: ready") : _i18n("mask.status.savedInactive", "Generation mask: saved, inactive")) + (S.mask.visible ? "" : _i18n("mask.status.overlayHidden", " · overlay hidden"))
+        : _i18n("ui.mask.statusEmpty", "Generation mask: empty");
     document.querySelectorAll("[data-mask-operation]").forEach(b => {
         const selected = b.dataset.maskOperation === S.maskOperation;
         b.classList.toggle("active", selected); b.setAttribute("aria-pressed", String(selected));
@@ -1408,7 +1408,6 @@ function bindCanvas() {
         // Region painting
         if (S.regionMode && C.activeRegion() && (S.tool === "brush" || S.tool === "eraser")) {
             if (!C.noteStrokeUndo("Region paint: " + C.activeRegion().name)) return;
-            window.Education?.maybeShowTip?.("regions");
             S.drawing = true; _capture(cv, e.pointerId);
             _beginWebGLLiveFallbackIfNeeded();
             if (S.tool === "eraser") C.regionEraseMove(p.x, p.y, p.x, p.y);
@@ -3001,10 +3000,10 @@ function showSaveMenu(anchor) {
     let wmCheckbox = null;
     const wmChecked = () => wmCheckbox ? wmCheckbox.checked : undefined;
     const items = [
-        { label: "Save as PNG", fn: () => saveFlattened("png", "image/png", wmChecked()) },
-        { label: "Save as JPEG", fn: () => saveFlattened("jpg", "image/jpeg", wmChecked()) },
-        { label: "Save as WebP", fn: () => saveFlattened("webp", "image/webp", wmChecked()) },
-        { label: "Save as PSD (layers)", fn: () => savePSD() },
+        { label: _i18n("ctx.savePng", "Save as PNG"), fn: () => saveFlattened("png", "image/png", wmChecked()) },
+        { label: _i18n("ctx.saveJpeg", "Save as JPEG"), fn: () => saveFlattened("jpg", "image/jpeg", wmChecked()) },
+        { label: _i18n("ctx.saveWebp", "Save as WebP"), fn: () => saveFlattened("webp", "image/webp", wmChecked()) },
+        { label: _i18n("ctx.savePsd", "Save as PSD (layers)"), fn: () => savePSD() },
     ];
     for (const item of items) {
         const btn = document.createElement("button");
@@ -3696,19 +3695,19 @@ function _openCanvasSizeDialog() {
     overlay.style.cssText = "position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;";
     const box = document.createElement("div");
     box.style.cssText = "background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:10px;";
-    box.innerHTML = `<strong>Canvas Size</strong>
+    box.innerHTML = `<strong>${_i18n("dialog.canvasSize.title", "Canvas Size")}</strong>
         <div style="display:flex;gap:10px;align-items:center;">
-          <label>Width <input id="csWidth" type="number" min="8" step="8" style="width:80px" class="param-val"></label>
-          <label>Height <input id="csHeight" type="number" min="8" step="8" style="width:80px" class="param-val"></label>
+          <label>${_i18n("ui.dims.width", "Width")} <input id="csWidth" type="number" min="8" step="8" style="width:80px" class="param-val"></label>
+          <label>${_i18n("ui.dims.height", "Height")} <input id="csHeight" type="number" min="8" step="8" style="width:80px" class="param-val"></label>
         </div>
         <div style="display:flex;gap:12px;align-items:center;">
-          <span>Anchor</span>
+          <span>${_i18n("dialog.canvasSize.anchor", "Anchor")}</span>
           <div id="csAnchor" style="display:grid;grid-template-columns:repeat(3,22px);gap:3px;"></div>
         </div>
-        <p style="margin:0;font-size:11px;color:var(--text-3,#999);">Nothing is scaled: new space is transparent, and a smaller size trims. Rounded to a multiple of 8.</p>
+        <p style="margin:0;font-size:11px;color:var(--text-3,#999);">${_i18n("dialog.canvasSize.note", "Nothing is scaled: new space is transparent, and a smaller size trims. Rounded to a multiple of 8.")}</p>
         <div style="display:flex;gap:8px;justify-content:flex-end;">
-          <button class="defaults-btn" id="csCancel">Cancel</button>
-          <button class="defaults-btn" id="csApply">Apply</button>
+          <button class="defaults-btn" id="csCancel">${_i18n("dialog.cancel", "Cancel")}</button>
+          <button class="defaults-btn" id="csApply">${_i18n("dialog.apply", "Apply")}</button>
         </div>`;
     overlay.appendChild(box);
     document.body.appendChild(overlay);
@@ -3762,18 +3761,18 @@ function _openOutpaintDialog() {
     box.style.cssText = "background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;min-width:300px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:10px;";
     const field = (id, label, value) => `<label style="display:flex;justify-content:space-between;gap:8px;align-items:center;">${label}
         <input id="${id}" type="number" min="0" step="8" value="${value}" style="width:80px" class="param-val"></label>`;
-    box.innerHTML = `<strong>Outpaint</strong>
+    box.innerHTML = `<strong>${_i18n("dialog.outpaint.title", "Outpaint")}</strong>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
-          ${field("opLeft", "Left", 0)}${field("opRight", "Right", 256)}
-          ${field("opTop", "Top", 0)}${field("opBottom", "Bottom", 0)}
+          ${field("opLeft", _i18n("dialog.outpaint.left", "Left"), 0)}${field("opRight", _i18n("dialog.outpaint.right", "Right"), 256)}
+          ${field("opTop", _i18n("dialog.outpaint.top", "Top"), 0)}${field("opBottom", _i18n("dialog.outpaint.bottom", "Bottom"), 0)}
         </div>
-        ${field("opOverlap", "Overlap into the picture", 32)}
-        <label style="display:flex;gap:8px;align-items:center;" title="A second, light pass over the new area at full detail. Off: one pass, faster.">
-          <input id="opRefine" type="checkbox"${window.Prefs?.get?.("outpaint_refine") ? " checked" : ""}> Refine new area (slower, crisper)</label>
-        <p style="margin:0;font-size:11px;color:var(--text-3,#999);max-width:300px;">The new area is filled from the picture's edge (a layer, "Outpaint fill") and masked with an overlap; then press Generate. Your inpaint settings are used as they are -- a high Denoise blends the new area best.</p>
+        ${field("opOverlap", _i18n("dialog.outpaint.overlap", "Overlap into the picture"), 32)}
+        <label style="display:flex;gap:8px;align-items:center;" title="${_i18n("dialog.outpaint.refine.tooltip", "A second, light pass over the new area at full detail. Off: one pass, faster.")}">
+          <input id="opRefine" type="checkbox"${window.Prefs?.get?.("outpaint_refine") ? " checked" : ""}> ${_i18n("dialog.outpaint.refine", "Refine new area (slower, crisper)")}</label>
+        <p style="margin:0;font-size:11px;color:var(--text-3,#999);max-width:300px;">${_i18n("dialog.outpaint.note", "The new area is filled from the picture's edge (a layer, \"Outpaint fill\") and masked with an overlap; then press Generate. Your inpaint settings are used as they are -- a high Denoise blends the new area best.")}</p>
         <div style="display:flex;gap:8px;justify-content:flex-end;">
-          <button class="defaults-btn" id="opCancel">Cancel</button>
-          <button class="defaults-btn" id="opApply">Extend</button>
+          <button class="defaults-btn" id="opCancel">${_i18n("dialog.cancel", "Cancel")}</button>
+          <button class="defaults-btn" id="opApply">${_i18n("dialog.outpaint.extend", "Extend")}</button>
         </div>`;
     overlay.appendChild(box);
     document.body.appendChild(overlay);
@@ -3790,7 +3789,7 @@ function _openOutpaintDialog() {
         try { window.Prefs?.set?.("outpaint_refine", refine); } catch (_) {}
         close();
         const done = C.outpaintPrepare(sides, overlap, { refine });
-        if (!done) { if (window.showToast) showToast("Choose at least one side to extend.", "info"); return; }
+        if (!done) { if (window.showToast) showToast(_i18n("dialog.outpaint.noSide", "Choose at least one side to extend."), "info"); return; }
         stopMarchingAnts();
         const wEl = document.getElementById("paramWidth"), hEl = document.getElementById("paramHeight");
         if (wEl) wEl.value = done.width;
@@ -3798,7 +3797,7 @@ function _openOutpaintDialog() {
         syncCanvasToViewport(); C.zoomFit(); updateStatus();
         renderLayerPanel(); renderMaskPanel(); renderHistoryPanel(); _updateMaskToggleUI(); _redraw();
         if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
-        if (window.showToast) showToast("Ready to outpaint: " + done.width + "×" + done.height + ". Press Generate.", "success");
+        if (window.showToast) showToast(_i18n("dialog.outpaint.ready", "Ready to outpaint: {width}×{height}. Press Generate.", { width: done.width, height: done.height }), "success");
     });
     box.querySelector("#opRight").focus();
 }
@@ -3819,16 +3818,16 @@ function _openRangeMenu(anchor) {
         if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
     };
     const items = [
-        ["Highlights", () => make({ kind: "luminance", band: "highlights" })],
-        ["Midtones", () => make({ kind: "luminance", band: "midtones" })],
-        ["Shadows", () => make({ kind: "luminance", band: "shadows" })],
-        ["Colour range (foreground colour)…", () => {
-            const ans = prompt("Fuzziness for " + S.color + "? (1-255: how far from the colour still counts)", "40");
+        [_i18n("mask.range.highlights", "Highlights"), () => make({ kind: "luminance", band: "highlights" })],
+        [_i18n("mask.range.midtones", "Midtones"), () => make({ kind: "luminance", band: "midtones" })],
+        [_i18n("mask.range.shadows", "Shadows"), () => make({ kind: "luminance", band: "shadows" })],
+        [_i18n("mask.range.colour", "Colour range (foreground colour)…"), () => {
+            const ans = prompt(_i18n("mask.range.fuzziness", "Fuzziness for {colour}? (1-255: how far from the colour still counts)", { colour: S.color }), "40");
             if (ans === null) { menu.remove(); return; }
             const fuzz = Math.round(Number(ans));
             if (!(fuzz >= 1 && fuzz <= 255)) {
                 menu.remove();
-                if (window.showToast) showToast("Enter a whole number from 1 to 255.", "error");
+                if (window.showToast) showToast(_i18n("mask.range.fuzzinessInvalid", "Enter a whole number from 1 to 255."), "error");
                 return;
             }
             make({ kind: "colour", hex: S.color, fuzz });
@@ -3858,7 +3857,7 @@ function _openRangeMenu(anchor) {
 async function _remakeWordMask(m) {
     const L = C.activeLayer(), o = m.origin || {};
     const toast = (text, kind) => window.showToast?.(text, kind || "info");
-    if (!L || !L.source) { toast("The active layer has no word data: place a Studio picture on it first."); return; }
+    if (!L || !L.source) { toast(_i18n("mask.word.noData", "The active layer has no word data: place a Studio picture on it first.")); return; }
     const words = Array.isArray(o.words) && o.words.length ? o.words : [o.word];
     const body = { content_hash: L.source.content_hash, words };
     if (o.view === "object" && o.part) body.part = o.part;
@@ -3946,7 +3945,7 @@ function _maskRow(m, id) {
     if (id == null ? S.maskTarget == null : S.maskTarget === id) {
         const used = document.createElement("span");
         used.className = "mask-inpaint-badge";
-        used.textContent = " · used for inpainting";
+        used.textContent = _i18n("mask.row.usedForInpainting", " · used for inpainting");
         meta.appendChild(used);
     }
     info.appendChild(nameEl); info.appendChild(meta);
@@ -3989,7 +3988,7 @@ function _maskRow(m, id) {
     swatch.style.background = C.maskColorOf(m);
     if (id != null) {
         swatch.type = "button";
-        swatch.title = "Mask colour";
+        swatch.title = _i18n("mask.row.colour", "Mask colour");
         swatch.addEventListener("click", e => {
             e.stopPropagation();
             const pick = document.createElement("input");
@@ -4011,7 +4010,7 @@ function _maskRow(m, id) {
         const remake = document.createElement("button");
         remake.type = "button"; remake.className = "mask-remake";
         remake.textContent = "↻";
-        remake.title = "Remake from the same words on the active layer's picture (keeps this mask)";
+        remake.title = _i18n("mask.row.remake", "Remake from the same words on the active layer's picture (keeps this mask)");
         remake.addEventListener("click", e => { e.stopPropagation(); _remakeWordMask(m); });
         row.appendChild(remake);
     }
@@ -4051,9 +4050,9 @@ function renderMaskPanel() {
 // transform. A layer changed since its picture was placed is warned about,
 // and the mask is still made (6.5). Every name and word is text only.
 const _WORD_PREVIEWS = [
-    ["object", "Object", "Crisp edge: a person, a candle, a sun"],
-    ["area", "Area / light", "Soft: sky, glow, reflections"],
-    ["everything", "Everything else", "All but the picture's objects: room, background"],
+    ["object", _i18n("mask.word.object", "Object"), _i18n("mask.word.object.hint", "Crisp edge: a person, a candle, a sun")],
+    ["area", _i18n("mask.word.area", "Area / light"), _i18n("mask.word.area.hint", "Soft: sky, glow, reflections")],
+    ["everything", _i18n("mask.word.everything", "Everything else"), _i18n("mask.word.everything.hint", "All but the picture's objects: room, background")],
 ];
 async function _wordMaskRequest(body) {
     const base = (window.API && window.API.base) || "";
@@ -4129,7 +4128,7 @@ function _openWordMaskDialog(opts = {}) {
     const box = document.createElement("div");
     box.className = "modal-box word-mask-box";
     const title = document.createElement("h3");
-    title.textContent = "Mask from words";
+    title.textContent = _i18n("mask.word.title", "Mask from words");
     const note = document.createElement("p");
     note.className = "word-mask-note";
     // The picture's slow part (MobileSAM reading it, then every word's
@@ -4173,13 +4172,13 @@ function _openWordMaskDialog(opts = {}) {
     const partsRow = document.createElement("div");
     partsRow.className = "word-mask-parts";
     const larger = document.createElement("button");
-    larger.type = "button"; larger.className = "ar-btn"; larger.textContent = "◂ Larger part";
+    larger.type = "button"; larger.className = "ar-btn"; larger.textContent = _i18n("mask.word.larger", "◂ Larger part");
     const smaller = document.createElement("button");
-    smaller.type = "button"; smaller.className = "ar-btn"; smaller.textContent = "Smaller part ▸";
+    smaller.type = "button"; smaller.className = "ar-btn"; smaller.textContent = _i18n("mask.word.smaller", "Smaller part ▸");
     const partsText = document.createElement("span");
     partsText.className = "word-mask-parts-text";
     const backToWord = document.createElement("button");
-    backToWord.type = "button"; backToWord.className = "ar-btn"; backToWord.textContent = "Back to the word";
+    backToWord.type = "button"; backToWord.className = "ar-btn"; backToWord.textContent = _i18n("mask.word.backToWord", "Back to the word");
     partsRow.append(larger, partsText, smaller, backToWord);
     const stage = document.createElement("div");
     stage.className = "word-mask-stage";
@@ -4189,7 +4188,7 @@ function _openWordMaskDialog(opts = {}) {
     method.className = "word-mask-method";
     const makeButton = document.createElement("button");
     makeButton.type = "button"; makeButton.className = "ar-btn primary word-mask-make";
-    makeButton.textContent = "Make mask";
+    makeButton.textContent = _i18n("mask.word.make", "Make mask");
     makeButton.addEventListener("click", () => {
         const t = shown && shown.tiles.find(x => x.key === _wordMaskShape.view);
         if (t) make(t);
@@ -4213,19 +4212,19 @@ function _openWordMaskDialog(opts = {}) {
         row.append(name, input, value);
         return row;
     };
-    shape.append(slider("Grow", "grow", -32, 64), slider("Feather", "feather", 0, 64));
+    shape.append(slider(_i18n("mask.word.grow", "Grow"), "grow", -32, 64), slider(_i18n("mask.word.feather", "Feather"), "feather", 0, 64));
     for (const el of [views, makeRow, shape, partsRow]) el.hidden = true;
     right.append(views, partsRow, stage, shape, makeRow);
     body.append(words, right);
     const help = document.createElement("p");
     help.className = "word-mask-help";
-    help.textContent = "Click words to build one mask from several (a woman and her dress); click a word "
+    help.textContent = _i18n("mask.word.help", "Click words to build one mask from several (a woman and her dress); click a word "
         + "again to take it out. Parts the word's map covers whole (a filament in a bulb) come out as "
-        + "the whole; mist, dusk and night stay diffuse with every method.";
+        + "the whole; mist, dusk and night stay diffuse with every method.");
     const actions = document.createElement("div");
     actions.className = "modal-actions";
     const cancel = document.createElement("button");
-    cancel.className = "ar-btn"; cancel.textContent = "Cancel";
+    cancel.className = "ar-btn"; cancel.textContent = _i18n("dialog.cancel", "Cancel");
     actions.append(cancel);
     box.append(title, note, loading, body, help, actions);
     overlay.append(box);
@@ -4381,7 +4380,7 @@ function _openWordMaskDialog(opts = {}) {
         if (onObject && parts) {
             larger.disabled = parts.index <= 0;
             smaller.disabled = parts.index >= parts.count - 1;
-            partsText.textContent = "shape " + (parts.index + 1) + " of " + parts.count;
+            partsText.textContent = _i18n("mask.word.shapeOf", "shape {n} of {count}", { n: parts.index + 1, count: parts.count });
         }
         backToWord.hidden = !clickPoint;
         view.classList.toggle("word-mask-clickable", onObject);
@@ -4482,7 +4481,7 @@ function renderLayerPanel() {
         if (isActive && L.type === "adjustment") {
             const meta = document.createElement("div");
             meta.className = "layer-meta";
-            meta.textContent = "⚙ Adjustment";
+            meta.textContent = _i18n("layer.adjustment", "⚙ Adjustment");
             info.appendChild(nameEl); info.appendChild(meta);
             try {
                 // Wrap the redraw callback so every adjustment-editor handler
@@ -4689,7 +4688,7 @@ function renderRegionPanel() {
         const clrBtn = document.createElement("button");
         clrBtn.style.cssText = "font-size:9px;padding:1px 4px;background:none;border:1px solid var(--border);border-radius:3px;color:var(--text-3);cursor:pointer;";
         clrBtn.textContent = "⌫";
-        clrBtn.title = "Clear region mask";
+        clrBtn.title = _i18n("region.clear.tooltip", "Clear region mask");
         clrBtn.addEventListener("click", e => { e.stopPropagation(); C.clearRegion(r.id); _redraw(); });
 
         const delBtn = document.createElement("button");
@@ -4956,33 +4955,33 @@ function _showCtxMenu(x, y) {
     const hasSel = S.selection?.active;
 
     const items = [
-        { label: "Select All", shortcut: "Ctrl+A", action: () => { C.selectionStep("Select: All", () => C.selectionAll()); startMarchingAnts(); renderHistoryPanel(); _redraw(); } },
-        hasSel ? { label: "Deselect", shortcut: "Ctrl+D", action: () => { C.selectionStep("Select: Deselect", () => C.selectionClear()); stopMarchingAnts(); renderHistoryPanel(); _redraw(); } } : null,
-        hasSel ? { label: "Invert Selection", shortcut: "Ctrl+Shift+I", action: () => { C.selectionStep("Select: Invert", () => C.selectionInvert()); renderHistoryPanel(); _redraw(); } } : null,
-        hasSel ? { label: "Feather Selection…", action: () => _adjustSelection("feather") } : null,
-        hasSel ? { label: "Grow Selection…", action: () => _adjustSelection("grow") } : null,
-        hasSel ? { label: "Shrink Selection…", action: () => _adjustSelection("shrink") } : null,
-        hasSel ? { label: "Smart Patch", action: _smartPatchSelection } : null,
+        { label: _i18n("ctx.selectAll", "Select All"), shortcut: "Ctrl+A", action: () => { C.selectionStep("Select: All", () => C.selectionAll()); startMarchingAnts(); renderHistoryPanel(); _redraw(); } },
+        hasSel ? { label: _i18n("ctx.deselect", "Deselect"), shortcut: "Ctrl+D", action: () => { C.selectionStep("Select: Deselect", () => C.selectionClear()); stopMarchingAnts(); renderHistoryPanel(); _redraw(); } } : null,
+        hasSel ? { label: _i18n("ctx.invertSelection", "Invert Selection"), shortcut: "Ctrl+Shift+I", action: () => { C.selectionStep("Select: Invert", () => C.selectionInvert()); renderHistoryPanel(); _redraw(); } } : null,
+        hasSel ? { label: _i18n("ctx.featherSelection", "Feather Selection…"), action: () => _adjustSelection("feather") } : null,
+        hasSel ? { label: _i18n("ctx.growSelection", "Grow Selection…"), action: () => _adjustSelection("grow") } : null,
+        hasSel ? { label: _i18n("ctx.shrinkSelection", "Shrink Selection…"), action: () => _adjustSelection("shrink") } : null,
+        hasSel ? { label: _i18n("ctx.smartPatch", "Smart Patch"), action: _smartPatchSelection } : null,
         { type: "sep" },
-        hasSel ? { label: "Copy", shortcut: "Ctrl+C", action: () => { C.selectionCopy(); } } : null,
-        hasSel ? { label: "Cut", shortcut: "Ctrl+X", action: () => { C.selectionCut(); _redraw(); } } : null,
-        S.clipboard ? { label: "Paste", shortcut: "Ctrl+V", action: () => { C.selectionPaste(); renderLayerPanel(); _redraw(); } } : null,
-        hasSel ? { label: "Delete", shortcut: "Del", action: () => { C.saveUndo("Delete"); C.selectionDelete(); _redraw(); } } : null,
+        hasSel ? { label: _i18n("ctx.copy", "Copy"), shortcut: "Ctrl+C", action: () => { C.selectionCopy(); } } : null,
+        hasSel ? { label: _i18n("ctx.cut", "Cut"), shortcut: "Ctrl+X", action: () => { C.selectionCut(); _redraw(); } } : null,
+        S.clipboard ? { label: _i18n("ctx.paste", "Paste"), shortcut: "Ctrl+V", action: () => { C.selectionPaste(); renderLayerPanel(); _redraw(); } } : null,
+        hasSel ? { label: _i18n("ctx.delete", "Delete"), shortcut: "Del", action: () => { C.saveUndo("Delete"); C.selectionDelete(); _redraw(); } } : null,
         { type: "sep" },
-        { label: "New Layer", shortcut: "Ctrl+Shift+N", action: _addLayer },
-        { label: "Duplicate Layer", shortcut: "Ctrl+J", action: _duplicateLayer },
-        { label: "Merge Down", shortcut: "Ctrl+E", action: _mergeDown },
-        { label: "Flatten Visible", shortcut: "Ctrl+Shift+E", action: _flattenVisible },
-        { label: "Canvas Size…", action: _openCanvasSizeDialog },
-        { label: "Outpaint…", action: _openOutpaintDialog },
+        { label: _i18n("ctx.newLayer", "New Layer"), shortcut: "Ctrl+Shift+N", action: _addLayer },
+        { label: _i18n("ctx.duplicateLayer", "Duplicate Layer"), shortcut: "Ctrl+J", action: _duplicateLayer },
+        { label: _i18n("ctx.mergeDown", "Merge Down"), shortcut: "Ctrl+E", action: _mergeDown },
+        { label: _i18n("ctx.flattenVisible", "Flatten Visible"), shortcut: "Ctrl+Shift+E", action: _flattenVisible },
+        { label: _i18n("ctx.canvasSize", "Canvas Size…"), action: _openCanvasSizeDialog },
+        { label: _i18n("ctx.outpaint", "Outpaint…"), action: _openOutpaintDialog },
         { type: "sep" },
-        { label: "Zoom to Fit", shortcut: "F", action: () => { C.zoomFit(); updateStatus(); _redraw(); } },
+        { label: _i18n("ctx.zoomToFit", "Zoom to Fit"), shortcut: "F", action: () => { C.zoomFit(); updateStatus(); _redraw(); } },
         { type: "sep" },
-        { label: "Open in New Tab", action: _ctxOpenCanvasInNewTab },
-        { label: "Save as PNG", action: () => _ctxSaveCanvas("png") },
-        { label: "Save as JPEG", action: () => _ctxSaveCanvas("jpeg") },
-        { label: "Save as WebP", action: () => _ctxSaveCanvas("webp") },
-        { label: "Save as PSD (layers)", action: () => savePSD() },
+        { label: _i18n("ctx.openInNewTab", "Open in New Tab"), action: _ctxOpenCanvasInNewTab },
+        { label: _i18n("ctx.savePng", "Save as PNG"), action: () => _ctxSaveCanvas("png") },
+        { label: _i18n("ctx.saveJpeg", "Save as JPEG"), action: () => _ctxSaveCanvas("jpeg") },
+        { label: _i18n("ctx.saveWebp", "Save as WebP"), action: () => _ctxSaveCanvas("webp") },
+        { label: _i18n("ctx.savePsd", "Save as PSD (layers)"), action: () => savePSD() },
     ].filter(Boolean);
 
     menu.innerHTML = items.map(item => {
@@ -5022,13 +5021,13 @@ function _showLayerCtxMenu(x, y) {
     const menu = _createCtxMenu();
 
     const items = [
-        { label: "Flip Horizontal", shortcut: "Ctrl+Shift+H", action: () => _safeFlipLayer({ horizontal: true }), disabled: isAdjust },
-        { label: "Flip Vertical",   shortcut: "Ctrl+Shift+V", action: () => _safeFlipLayer({ vertical: true }),   disabled: isAdjust },
+        { label: _i18n("layerCtx.flipH", "Flip Horizontal"), shortcut: "Ctrl+Shift+H", action: () => _safeFlipLayer({ horizontal: true }), disabled: isAdjust },
+        { label: _i18n("layerCtx.flipV", "Flip Vertical"),   shortcut: "Ctrl+Shift+V", action: () => _safeFlipLayer({ vertical: true }),   disabled: isAdjust },
         { type: "sep" },
-        { label: "Rotate 90° CW",  action: () => _safeRotateLayer(Math.PI / 2),  disabled: isAdjust },
-        { label: "Rotate 90° CCW", action: () => _safeRotateLayer(-Math.PI / 2), disabled: isAdjust },
-        { label: "Rotate 180°",    action: () => _safeRotateLayer(Math.PI),      disabled: isAdjust },
-        { label: "Rotate Arbitrary…", action: () => {
+        { label: _i18n("layerCtx.rotateCw", "Rotate 90° CW"),  action: () => _safeRotateLayer(Math.PI / 2),  disabled: isAdjust },
+        { label: _i18n("layerCtx.rotateCcw", "Rotate 90° CCW"), action: () => _safeRotateLayer(-Math.PI / 2), disabled: isAdjust },
+        { label: _i18n("layerCtx.rotate180", "Rotate 180°"),    action: () => _safeRotateLayer(Math.PI),      disabled: isAdjust },
+        { label: _i18n("layerCtx.rotateArbitrary", "Rotate Arbitrary…"), action: () => {
             const ans = prompt("Rotate by how many degrees? (positive = clockwise)", "15");
             if (ans === null) return;
             const deg = parseFloat(ans);

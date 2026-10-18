@@ -41,6 +41,28 @@ def valid(path: Path, asset: dict) -> bool:
             and path.stat().st_size == asset["bytes"] and sha256(path) == asset["sha256"])
 
 
+def _tls_context():
+    """Verify downloads against certifi's CA bundle when it is installed.
+
+    python.org's macOS Python ships no CA certificates until its "Install
+    Certificates.command" is run, so a plain `urlopen` fails TLS verification
+    on a fresh Mac (MAC1). certifi is already installed with `requests`; it
+    is the same bundle pip uses. Without it, the system default is used, as
+    before. Verification is never turned off.
+    """
+    import ssl
+
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+def _download(url: str):
+    return urlopen(url, timeout=60, context=_tls_context())
+
+
 def install_asset(app: Path, asset: dict, *, from_directory: Path | None = None,
                   opener=None) -> bool:
     """Return whether a file was installed; never scan other model locations."""
@@ -54,7 +76,7 @@ def install_asset(app: Path, asset: dict, *, from_directory: Path | None = None,
     url = BASE_URL + path.name
     if from_directory is None:
         print(f"Downloading {path.name} ({asset['bytes'] / 1_000_000:.1f} MB) ...", flush=True)
-        source = (opener or urlopen)(url, timeout=60)
+        source = opener(url, timeout=60) if opener is not None else _download(url)
     else:
         source = (from_directory / path.name).open("rb")
     part = None
@@ -111,7 +133,8 @@ def main() -> int:
         ensure(from_directory=args.from_directory)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"Studio asset setup could not finish: {exc}")
-        print("Existing files were preserved. Check the connection/cache and run Start-Studio.bat again.")
+        shortcut = "Start-Studio.bat" if os.name == "nt" else "Start-Studio.command"
+        print(f"Existing files were preserved. Check the connection/cache and run {shortcut} again.")
         print("The repository's studio-assets-v1 release must be published before first-time online setup.")
         return 1
     return 0

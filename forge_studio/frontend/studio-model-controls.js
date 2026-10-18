@@ -322,7 +322,9 @@
       ? "Unloading"
       : (running ? (running.stage || "Generating") : "Idle");
     refs.chip.dataset.stage = stage.toLowerCase();
-    refs.chip.textContent = stage;
+    // HL1: shown translated; the dataset keeps the English stage for CSS.
+    refs.chip.textContent = (window.I18N && window.I18N.t)
+      ? window.I18N.t("ui.jobs.stage." + stage.toLowerCase(), stage) : stage;
 
     refs.running.textContent = "";
     refs.running.hidden = !running;
@@ -330,14 +332,18 @@
 
     refs.queuedSection.hidden = queued.length === 0;
     refs.queuedHeading.textContent =
-      queued.length === 1 ? "1 waiting" : `${queued.length} waiting`;
+      (window.I18N && window.I18N.t)
+        ? window.I18N.t("ui.jobs.waiting", "{count} waiting", { count: queued.length })
+        : `${queued.length} waiting`;
     refs.queueList.textContent = "";
     queued.forEach((job, index) => {
       refs.queueList.appendChild(jobRow(job, "queued", index, queued.length));
     });
 
     refs.recentDisclosure.hidden = recent.length === 0;
-    refs.recentSummary.textContent = `Recent (${recent.length})`;
+    refs.recentSummary.textContent = (window.I18N && window.I18N.t)
+      ? window.I18N.t("ui.jobs.recentCount", "Recent ({count})", { count: recent.length })
+      : `Recent (${recent.length})`;
     refs.recentList.textContent = "";
     recent.forEach((job) => {
       refs.recentList.appendChild(jobRow(job, "recent", 0, 0));

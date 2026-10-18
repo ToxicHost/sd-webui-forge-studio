@@ -3,6 +3,36 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Help Center, translations, raw prompts, fixes — 2026-10-18 (fourth update)
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Pictures are unchanged:
+checked on a real GPU against the previous update, five jobs (Anima, Anima
+with Hires, Auto Detail, Outpaint with Refine, SDXL), all byte-identical.
+
+- **Help Center refreshed.** It describes what Studio does now: new articles
+  for the Masks panel, masks from words, tones and colour, word heatmaps,
+  Word Detail, Outpaint and Canvas Size, the canvas right-click menu, Smart
+  Patch, Paint Mixer, Develop local adjustments, crash recovery, model setup,
+  the Settings map and a "Not in Studio yet" list. Show Me has new
+  walkthroughs, and its tutorial tabs now close when they finish.
+- **German, Spanish and French.** The whole interface is translated: menus,
+  dialogs, panels, tooltips, Settings, the Help Center and Show Me. These are
+  first drafts; corrections from native speakers are welcome.
+- **The raw prompt is saved.** When wildcards change your prompt, the picture
+  keeps what you typed as well (a `Template:` line), in the file and in the
+  Gallery, so sending it back with the raw prompt works. Pictures made before
+  this update cannot get it back.
+- **Gallery shows a just-made picture's real size.** It showed the size before
+  Hires.
+- **The tutorial and the welcome card are remembered** in Studio's own
+  settings, not only in the browser, so they do not come back after a change
+  of port or browser.
+- If reading your upscaler folders ever fails, Studio keeps the list it had
+  and stops retrying, instead of retrying at every menu refresh.
+- Groundwork for a Mac version (Apple Silicon). Not supported yet: it is being
+  tested.
+
 ## Settings kept between launches, upscaler folder, file names, Open in New Tab — 2026-10-18 (third update)
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

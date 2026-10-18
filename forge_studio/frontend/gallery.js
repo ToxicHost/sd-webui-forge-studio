@@ -1754,7 +1754,7 @@ async function scanDuplicates() {
         html += '<div class="gal-dup-group-header">';
         html += '<span class="gal-dup-group-toggle">\u25BC</span>';
         html += '<span class="gal-dup-group-count">' + imgs.length + ' images' + (sim != null ? ' \u00B7 ' + sim + '% similar' : '') + '</span>';
-        html += '<button class="gal-dup-select-rest" data-gid="' + gi + '">Select all but first</button>';
+        html += '<button class="gal-dup-select-rest" data-gid="' + gi + '">' + _t("gallery.dup.selectRest", "Select all but first") + '</button>';
         html += '</div>';
         html += '<div class="gal-dup-items">';
         imgs.forEach((item, ii) => {
@@ -1966,7 +1966,7 @@ function renderFolderSidebar() {
     _folderPaths = [];
     const tree = buildFolderTree();
     const titleHtml = '<div class="gal-sidebar-title"><span data-i18n="gallery.sidebar.folders">' + _t('gallery.sidebar.folders', 'Folders') + '</span></div>';
-    col.innerHTML = titleHtml + renderFolderNode(tree, 0) + '<div class="gal-link-folder-btn" id="gal-link-folder">' + IC.folderPlus + ' Link new folder</div>';
+    col.innerHTML = titleHtml + renderFolderNode(tree, 0) + '<div class="gal-link-folder-btn" id="gal-link-folder">' + IC.folderPlus + ' ' + _t("gallery.linkFolder", "Link new folder") + '</div>';
     col.querySelector("#gal-link-folder")?.addEventListener("click", pickAndAddFolder);
     updateFolderActive();
 }
@@ -2740,6 +2740,18 @@ async function loadMetadata(img) {
         const m = img && img.ephemeral
             ? _metaFromInfotext(img.infotext || "")
             : await api("/image/" + img.id + "/metadata");
+        // GD1. A just-generated picture's Dimensions came from the infotext's
+        // "Size:", which is the BASE size -- a 768x1368 picture with Hires 2x
+        // showed 768 x 1368 for a 1536 x 2736 file. Measure the picture
+        // itself; the infotext stays the fallback.
+        if (img && img.ephemeral && img.b64Url) {
+            try {
+                const probe = new Image();
+                probe.src = img.b64Url;
+                await probe.decode();
+                if (probe.naturalWidth) { img.width = probe.naturalWidth; img.height = probe.naturalHeight; }
+            } catch (_) { /* keep the fallback */ }
+        }
         let h = '<div class="gal-meta-section-title">Metadata</div>'; let has = false;
         const dv = m.date_original || m.date_time || ""; if (dv) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.date", "Date") + '</div><div class="gal-meta-value">' + esc(dv) + '</div></div>'; } else if (img && img.file_date) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.date", "Date") + '</div><div class="gal-meta-value">' + new Date(img.file_date * 1000).toLocaleDateString("en-US", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) + '</div></div>'; }
         if (img && img.width) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.dimensions", "Dimensions") + '</div><div class="gal-meta-value">' + img.width + ' \u00d7 ' + img.height + ' px</div></div>'; }
@@ -2752,7 +2764,10 @@ async function loadMetadata(img) {
         for (const [k, l0] of ord) {
             if (m[k] == null || m[k] === "") continue;
             has = true;
-            const l = (k === "denoising") ? denoiseLabel : l0;
+            // GD1. Neo's "Size" is the size the base pass ran at; with Hires
+            // the file is larger, which Dimensions above now shows.
+            const l = (k === "denoising") ? denoiseLabel
+                : (k === "size" && (m.hires_upscaler || m.hires_steps || m.hires_upscale)) ? "Base Size" : l0;
             const isPrompt = k === "prompt" || k === "negative_prompt";
             if (isPrompt) {
                 // Prompt is the RESOLVED text (what the model saw); the raw

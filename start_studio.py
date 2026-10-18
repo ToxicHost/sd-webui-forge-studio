@@ -1,6 +1,7 @@
 """Start Studio from a Git checkout using the existing release launcher."""
 from __future__ import annotations
 import importlib.util
+import os
 from pathlib import Path
 
 APP = Path(__file__).resolve().parent
@@ -25,7 +26,8 @@ def checkout_launcher(app: Path = APP):
 def main() -> int:
     launcher = checkout_launcher()
     if not launcher.PYTHON.is_file():
-        return launcher.fail("Run Start-Studio.bat to prepare the local Python environment first.")
+        shortcut = "Start-Studio.bat" if os.name == "nt" else "Start-Studio.command"
+        return launcher.fail(f"Run {shortcut} to prepare the local Python environment first.")
     try:
         launcher.ROOT.mkdir(parents=True, exist_ok=True)
         for name in ("Stable-diffusion", "VAE", "text_encoder"):

@@ -83,6 +83,9 @@ def _redactions() -> list[tuple[re.Pattern[str], str]]:
         (re.compile(r"(?i)([A-Z]:[\\/]+Users[\\/]+)[A-Za-z0-9._-]+", ), r"\1<REDACTED>"),
         (re.compile(r"(?i)(/home/)[A-Za-z0-9._-]+"), r"\1<REDACTED>"),
         (re.compile(r"(?i)(/Users/)(?!shared\b)[A-Za-z0-9._-]+"), r"\1<REDACTED>"),
+        # macOS names external disks after whatever the owner typed, which is
+        # often their own name ("Someone's SSD"). Spaces and apostrophes included.
+        (re.compile(r"(/Volumes/)[^/\n\"']+(?:'[^/\n\"']*)*"), r"\1<REDACTED>"),
     ]
 
 
@@ -140,6 +143,27 @@ def _gpu() -> dict[str, object]:
             "memory_total": parts[2] or None}
 
 
+def _apple() -> dict[str, object]:
+    """Chip, memory and macOS version on a Mac; all null elsewhere. MAC1.
+
+    The Mac counterpart of `_gpu`: an Apple Silicon GPU is part of the chip,
+    and its memory is the system's. A chip name and a memory size are shared
+    by many thousands of machines; the serial number and hardware UUID are
+    deliberately NOT queried.
+    """
+
+    chip = _run(["sysctl", "-n", "machdep.cpu.brand_string"])
+    memory = _run(["sysctl", "-n", "hw.memsize"])
+    macos = _run(["sw_vers", "-productVersion"]) if chip else None
+    try:
+        memory_bytes = int(memory) if memory else None
+    except ValueError:
+        memory_bytes = None
+    if not (chip and chip.startswith("Apple")):
+        return {"chip": None, "memory_bytes": None, "macos": None}
+    return {"chip": chip, "memory_bytes": memory_bytes, "macos": macos}
+
+
 def collect(state_root: Path | None) -> dict[str, object]:
     """THE ALLOW-LIST. Nothing outside this function is gathered."""
 
@@ -160,6 +184,7 @@ def collect(state_root: Path | None) -> dict[str, object]:
             "implementation": platform.python_implementation(),
         },
         "gpu": _gpu(),
+        "apple": _apple(),
         "versions": _versions(),
         # Presence, checked WITHOUT importing: `find_spec` does not execute the
         # package, so this cannot initialise CUDA as a side effect of asking.
@@ -203,6 +228,7 @@ def _readable(report: dict[str, object], log: str | None) -> str:
     """The file the tester reads before deciding to send anything."""
 
     gpu = report["gpu"]                              # type: ignore[index]
+    apple = report.get("apple") or {}                # type: ignore[union-attr]
     versions = report["versions"]                    # type: ignore[index]
     out = [
         "Forge Studio - support bundle",
@@ -216,6 +242,12 @@ def _readable(report: dict[str, object], log: str | None) -> str:
         f"python         {report['python']['version']} "         # type: ignore[index]
         f"{report['python']['architecture']}",                   # type: ignore[index]
         f"gpu            {gpu['name']}  driver {gpu['driver']}",  # type: ignore[index]
+    ]
+    if apple.get("chip"):                                         # type: ignore[union-attr]
+        memory = apple.get("memory_bytes")                        # type: ignore[union-attr]
+        out.append(f"mac            {apple['chip']}  macOS {apple.get('macos')}  "  # type: ignore[index,union-attr]
+                   f"memory {round(memory / 1024**3) if memory else None} GB")
+    out += [
         f"distribution   {versions['distribution_version']}",     # type: ignore[index]
         f"commit         {versions['repository_commit']}",        # type: ignore[index]
         f"torch present  {report['torch_present']}",

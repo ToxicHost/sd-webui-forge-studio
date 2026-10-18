@@ -132,6 +132,17 @@ def _model_is_loaded() -> bool:
     return model is not None and type(model).__name__ != "FakeInitialModel"
 
 
+def _device_facts() -> dict[str, str]:
+    """The engine's device in the contract's words (MAC1). Never raises."""
+
+    try:
+        from .device_facts import describe
+
+        return describe()
+    except Exception:  # noqa: BLE001 - a report field, never a failed boot
+        return {}
+
+
 def bootstrap_backend(
     repository_root: Path,
     *,
@@ -304,6 +315,15 @@ def bootstrap_backend(
 
         _install_attention_capture()
 
+        # Apple Silicon only (MAC1, ADAPTER-003): plain fp8 weights upcast as
+        # they load, scaled fp8 refused with a sentence, the VAE kept out of
+        # fp16, and Neo's OOM check kept off CUDA. Installs nothing unless
+        # Neo's memory manager is in MPS mode, so CUDA runs Neo's path.
+        # Never raises.
+        from .mps_adapter import install as _install_mps_adapter
+
+        _install_mps_adapter()
+
         from .neo_registries import read_registries
 
         registries = read_registries()
@@ -347,6 +367,8 @@ def bootstrap_backend(
             # was asked for. A request is not an outcome, and the failure mode
             # this guards is a value set too late to be read.
             **effective(runtime),
+            # MAC1: the device the engine chose, so the launcher can say it.
+            "device": _device_facts(),
         },
     )
     if report.ready:

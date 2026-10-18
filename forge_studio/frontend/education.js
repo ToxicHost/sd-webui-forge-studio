@@ -34,7 +34,41 @@ var Education = (function () {
   // STATE PERSISTENCE
   // ========================================================================
 
+  // ED1. The tutorial's progress is ALSO kept in Studio's own preferences
+  // (the state root), under `education.state`. The browser keeps localStorage
+  // per origin, and the origin includes the port: a launch on another port
+  // (the random port every tester had until P2, or 7866 when 7865 is busy) or
+  // in another browser read nothing back, so the tutorial picker came back.
+  // localStorage still wins when it has a choice; the mirror fills it in.
+  function _prefsEducation() {
+    try {
+      var edu = (window.Prefs && window.Prefs.get) ? window.Prefs.get("education", null) : null;
+      return (edu && typeof edu === "object") ? edu : {};
+    } catch (e) { return {}; }
+  }
+
+  function _mirrorToPrefs(state) {
+    try {
+      if (!(window.Prefs && window.Prefs.set)) return;
+      var edu = Object.assign({}, _prefsEducation());
+      edu.state = state;
+      window.Prefs.set("education", edu);
+    } catch (e) { /* the browser copy still holds it */ }
+  }
+
   function _load() {
+    var mirrored = _prefsEducation().state;
+    if (!localStorage.getItem(STORAGE_PREFIX + "tier") && mirrored && typeof mirrored === "object" && mirrored.tier) {
+      _state.tier = String(mirrored.tier);
+      _state.enabled = mirrored.enabled !== false;
+      _state.guidedStep = parseInt(mirrored.guidedStep) || 0;
+      _state.guidedActive = !!mirrored.guidedActive;
+      _state.generationCount = parseInt(mirrored.generationCount) || 0;
+      _state.flags = (mirrored.flags && typeof mirrored.flags === "object") ? mirrored.flags : {};
+      _state.dismissedHints = Array.isArray(mirrored.dismissedHints) ? mirrored.dismissedHints : [];
+      _save();  // back into this origin's localStorage
+      return;
+    }
     _state.tier = localStorage.getItem(STORAGE_PREFIX + "tier") || null;
     _state.enabled = localStorage.getItem(STORAGE_PREFIX + "enabled") !== "0";
     _state.guidedStep = parseInt(localStorage.getItem(STORAGE_PREFIX + "guided-step")) || 0;
@@ -52,6 +86,13 @@ var Education = (function () {
     localStorage.setItem(STORAGE_PREFIX + "gen-count", _state.generationCount);
     localStorage.setItem(STORAGE_PREFIX + "flags", JSON.stringify(_state.flags));
     localStorage.setItem(STORAGE_PREFIX + "dismissed", JSON.stringify(_state.dismissedHints));
+    if (_state.tier) {
+      _mirrorToPrefs({
+        tier: _state.tier, enabled: _state.enabled, guidedStep: _state.guidedStep,
+        guidedActive: _state.guidedActive, generationCount: _state.generationCount,
+        flags: _state.flags, dismissedHints: _state.dismissedHints
+      });
+    }
   }
 
   function _setFlag(n, v) { if (v === undefined) v = true; _state.flags[n] = v; _save(); }
@@ -60,6 +101,8 @@ var Education = (function () {
     Object.keys(localStorage).filter(function (k) { return k.startsWith(STORAGE_PREFIX) || k.startsWith("st-tour-"); }).forEach(function (k) { localStorage.removeItem(k); });
     _state.tier = null; _state.enabled = true; _state.guidedStep = 0; _state.guidedActive = false;
     _state.generationCount = 0; _state.flags = {}; _state.dismissedHints = [];
+    // ED1: a reset is a reset everywhere, or the mirror would undo it.
+    if (_prefsEducation().state) _mirrorToPrefs(null);
   }
 
   // ========================================================================
@@ -80,13 +123,18 @@ var Education = (function () {
     return [
       {
         id: "need_model",
-        text: _t("education.tour.modelBranch.needModel.text", "Before we start, you need an AI <em>model</em> \u2014 the brain that generates images. You don\u2019t have one installed yet.\n\nHere\u2019s a good starter model to get going:\n<a href=\"https://pixeldrain.com/u/5pv797g8\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--accent-bright);text-decoration:underline;\">Download ToxicHost\u2019s recommended model</a>\n\nOnce downloaded, put the file in your Forge folder:\n<code>models/Stable-diffusion/</code>\n\nDon\u2019t close Studio \u2014 just drop the file in that folder."),
+        text: _t("education.tour.modelBranch.needModel.text", "Before we start, Studio needs an AI <em>model</em> \u2014 the brain that generates images \u2014 and it can\u2019t see one yet.\n\nIf you don\u2019t have one, here\u2019s a good starter:\n<a href=\"https://pixeldrain.com/u/5pv797g8\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--accent-bright);text-decoration:underline;\">Download ToxicHost\u2019s recommended model</a>\n\nSave it in a folder of your own. Then open <em>Settings \u2192 General \u2192 Model folders</em>, add that folder as the <em>Checkpoint folder</em> (use <em>Browse\u2026</em>) and press <em>Save folders</em>.\n\nThe <em>Setting Up Models</em> article in the Codex has the details."),
         spotlight: null, reveal: ["edu-show-model"], advance: "click",
-        btn: _t("education.tour.modelBranch.needModel.btn", "I\u2019ve put it in the folder")
+        btn: _t("education.tour.modelBranch.needModel.btn", "I\u2019ve saved the folder")
       },
       {
         id: "refresh_models",
-        text: _t("education.tour.modelBranch.refreshModels.text", "Now click the <em>refresh button</em> (\u21bb) next to the Model dropdown. Studio will scan for new models without needing a restart.\n\nOnce your model appears in the dropdown, select it and we\u2019ll get started."),
+        text: _t("education.tour.modelBranch.refreshModels.text", "Now click the <em>refresh button</em> (\u21bb) next to the Model dropdown. Studio will rescan your folders without needing a restart.\n\nOnce your model appears in the dropdown, select it and we\u2019ll get started."),
+        beforeShow: function () {
+          var canvasTab = document.querySelector('button[data-app="studio"]');
+          if (canvasTab) canvasTab.click();
+          return new Promise(function (resolve) { setTimeout(resolve, 200); });
+        },
         spotlight: "#refreshModelsBtn", reveal: ["edu-show-model"],
         advance: function (next, nextBtn, tour) {
           var poll = setInterval(function () {
@@ -125,9 +173,13 @@ var Education = (function () {
       },
       {
         id: "generating",
-        text: _t("education.tour.core.generating.text", "Working on it \u2014 watch the progress bar."),
+        text: _t("education.tour.core.generating.text", "Working on it \u2014 watch the progress bar.\n\nIf nothing starts, Studio is telling you what\u2019s missing (usually a model: pick one in the <em>Model</em> box, then press <em>Generate</em> again)."),
         spotlight: null, reveal: [],
         advance: function (next, nextBtn, tour) {
+          // Generate can be refused (no model chosen yet), and then there is no
+          // picture to wait for. The button lets the tester move on rather
+          // than watching a progress bar that will never move.
+          if (nextBtn) nextBtn.addEventListener("click", function () { next(); });
           var poll = setInterval(function () {
             if (window.State && !window.State.generating && window.State.sessionEntries && window.State.sessionEntries.length > 0) {
               clearInterval(poll);
@@ -137,7 +189,7 @@ var Education = (function () {
           }, 500);
           tour.addCleanup(function () { clearInterval(poll); });
         },
-        btn: null
+        btn: _t("education.tour.core.generating.btn", "Skip this step")
       },
       {
         id: "first_image",
@@ -207,8 +259,8 @@ var Education = (function () {
       },
       {
         id: "branch_masking",
-        text: _t("education.tour.inpaint.masking.text", "What if you only want to change <em>part</em> of the image?\n\nPress <span class=\"cx-kbd\">Q</span> to enter mask mode. Your brush now paints a red overlay. The red tells the AI: \"only change this area.\"\n\nPaint the mask \u2192 write what should go there \u2192 Generate. Only the masked area changes. Press <span class=\"cx-kbd\">Q</span> again to exit. You\u2019ll use this constantly."),
-        spotlight: "#maskModeBtn", reveal: [], advance: "click",
+        text: _t("education.tour.inpaint.masking.text", "What if you only want to change <em>part</em> of the image?\n\nPress <span class=\"cx-kbd\">Q</span> to pick the <em>Inpaint Mask</em> tool. Your brush now paints a red overlay. The red tells the AI: \"only change this area.\"\n\nPaint the mask \u2192 write what should go there \u2192 Generate. Only the masked area changes. Press <span class=\"cx-kbd\">Q</span> again to go back to painting. You\u2019ll use this constantly."),
+        spotlight: '#toolstrip [data-tool="mask"]', reveal: [], advance: "click",
         btn: _t("education.tour.inpaint.masking.btn", "Next")
       },
     ];
@@ -222,7 +274,7 @@ var Education = (function () {
     return [
       {
         id: "exp_layout",
-        text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools). <em>Canvas</em> in the center \u2014 scroll to zoom, Space+drag to pan. <em>Panel</em> on the right with Generate, Extensions, and Settings tabs. <span class=\"cx-kbd\">\\</span> collapses it.\n\nContext bar above the canvas shows controls for the active tool."),
+        text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools plus the Inpaint Mask). <em>Canvas</em> in the center \u2014 scroll to zoom, Space+drag to pan, right-click for the canvas menu. <em>Panel</em> on the right (Generate and Extensions tabs). <span class=\"cx-kbd\">\\</span> collapses it. <em>Settings</em> is its own tab at the top.\n\nContext bar above the canvas shows controls for the active tool."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.layout.btn", "Next"),
         position: { bottom: "80px", left: "calc(50% - 190px)" }
@@ -243,7 +295,7 @@ var Education = (function () {
       },
       {
         id: "exp_mask_regions",
-        text: _t("education.tour.experienced.maskRegions.text", "<em>Mask mode</em> (<span class=\"cx-kbd\">Q</span>) uses the same brush engine \u2014 pressure, hardness, all of it. No separate mask canvas.\n\n<em>Regional prompting</em> is painted directly on the canvas. Add a region, paint its area with the region color, write a prompt. Uses pre-softmax attention bias, not output blending \u2014 small regions actually get their own content."),
+        text: _t("education.tour.experienced.maskRegions.text", "The <em>Inpaint Mask</em> tool (<span class=\"cx-kbd\">Q</span>) paints a hard-edged generation mask. Beside it, the <em>Masks panel</em> (inside Layers) holds named masks \u2014 from a brush, a selection, tones, a colour or a prompt word \u2014 with their own opacity and hardness. The mask selected there is the one Generate inpaints with.\n\nThere are no separate txt2img/img2img/inpaint tabs: the canvas and the selected mask decide."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.maskRegions.btn", "Next"),
         position: { bottom: "80px", left: "calc(50% - 190px)" }
@@ -267,7 +319,7 @@ var Education = (function () {
       },
       {
         id: "exp_extras",
-        text: _t("education.tour.experienced.extras.text", "<em>ControlNet</em> (2 units) can source from the canvas composite, active layer, or an upload. <em>ADetailer</em> (3 slots) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it \u2014 resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> \u2014 persists server-side across sessions."),
+        text: _t("education.tour.experienced.extras.text", "<em>Auto Detail</em> (3 slots, including a Words detector) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it \u2014 resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> \u2014 persists server-side across sessions \u2014 or as named <em>workflows</em>. Model folders, save folders and the file-name pattern are in <em>Settings</em>."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.extras.btn", "Next"),
         position: { bottom: "80px", right: "340px" }
@@ -461,6 +513,32 @@ var Education = (function () {
   // SETTINGS
   // ========================================================================
 
+  // Replays the tester's own path from the beginning WITHOUT forgetting it.
+  // Settings > Education > Restart Tour and the "Show Me" buttons on the
+  // Core Workflow and Making Your First Image articles both land here. With no
+  // path chosen yet there is nothing to replay: `pickIfUnset` shows the picker
+  // (Show Me) instead of a toast (the Settings button).
+  function _restartTour(pickIfUnset) {
+    if (!_state.tier || _state.tier === "skip") {
+      if (pickIfUnset) _showFirstRun();
+      else if (window.showToast) window.showToast(_t("education.toast.selectPath", "Select a path first"), "info");
+      return;
+    }
+    if (_tour && _tour.isActive) _tour._forceCancel();
+
+    if (_state.tier === "beginner") {
+      var gt = document.querySelector('[data-panel="generate"]'); if (gt) gt.click();
+      _state.guidedStep = 0; _state.guidedActive = true;
+      delete _state.flags.used_result_to_canvas;
+      delete _state.flags.needed_model_download;
+      delete _state.flags.model_downloaded;
+      _save();
+      setTimeout(function () { _startGuidedWalkthrough(); }, 200);
+    } else if (_state.tier === "experienced" || _state.tier === "ai_user" || _state.tier === "art_user") {
+      setTimeout(function () { _startExperiencedTour(); }, 200);
+    }
+  }
+
   function _injectSettings() {
     if (document.getElementById("eduRestartTour")) return; // already injected
 
@@ -485,25 +563,7 @@ var Education = (function () {
     if (anchor && anchor.parentNode === host) host.insertBefore(g, anchor); else host.appendChild(g);
     if (window.I18N && typeof window.I18N.applyToDom === "function") { try { window.I18N.applyToDom(g); } catch (e) {} }
 
-    g.querySelector("#eduRestartTour").addEventListener("click", function () {
-      if (!_state.tier || _state.tier === "skip") {
-        if (window.showToast) window.showToast(_t("education.toast.selectPath", "Select a path first"), "info");
-        return;
-      }
-      if (_tour && _tour.isActive) _tour._forceCancel();
-
-      if (_state.tier === "beginner") {
-        var gt = document.querySelector('[data-panel="generate"]'); if (gt) gt.click();
-        _state.guidedStep = 0; _state.guidedActive = true;
-        delete _state.flags.used_result_to_canvas;
-        delete _state.flags.needed_model_download;
-        delete _state.flags.model_downloaded;
-        _save();
-        setTimeout(function () { _startGuidedWalkthrough(); }, 200);
-      } else if (_state.tier === "experienced" || _state.tier === "ai_user" || _state.tier === "art_user") {
-        setTimeout(function () { _startExperiencedTour(); }, 200);
-      }
-    });
+    g.querySelector("#eduRestartTour").addEventListener("click", function () { _restartTour(false); });
 
     g.querySelector("#eduChangePath").addEventListener("click", function () {
       if (_tour && _tour.isActive) _tour._forceCancel();
@@ -540,8 +600,10 @@ var Education = (function () {
   // ========================================================================
   // FIRST-ENCOUNTER TIPS
   // ========================================================================
-  // Exactly three static callouts — Layers, Regions, Live — each shown once
-  // on the first meaningful interaction and never again after dismissal.
+  // Static callouts (today only Layers), each shown once on the first
+  // meaningful interaction and never again after dismissal. The Regions and
+  // Live tips were removed with their features (CX1): do not bring them back
+  // until those features can generate.
   // Seen-state persists server-side via prefs key "education"
   // ({seen:{layers:true,...}}), so it survives reloads and Clear Storage.
   // Deliberately not a tour engine. Copy teaches workflow, not UI labels.
@@ -552,16 +614,6 @@ var Education = (function () {
       fallback: "Generate, send to canvas, mask, and regenerate to composite elements — layers are for building images in passes, like a paint program.",
       codexId: "layers_basics"
     },
-    regions: {
-      i18n: "education.tip.regions",
-      fallback: "Each region carries its own prompt inside a single generation — draw where something should go, describe it in that region's prompt, and generate once.",
-      codexId: "regional_prompting"
-    },
-    live: {
-      i18n: "education.tip.live",
-      fallback: "Live is img2img over your canvas, not a scribble-to-image guide — low strength follows your sketch closely, higher strength takes liberties. Apply commits the result beneath your paint layer.",
-      codexId: "live_painting"
-    }
   };
   var _tipEl = null;
 
@@ -635,10 +687,16 @@ var Education = (function () {
   }
 
   function init() {
-    // Warm the prefs cache so tip seen-state is available synchronously by
-    // the time a first interaction can happen (cached promise; app.js
-    // already awaits the same load at boot).
-    try { if (window.Prefs && window.Prefs.load) window.Prefs.load(); } catch (e) {}
+    // ED1. Wait for Studio's preferences (a cached promise app.js also
+    // awaits at boot) before deciding whether to show the tutorial picker:
+    // the saved choice may live only there. A failed load decides from the
+    // browser alone, as before.
+    var loading = null;
+    try { if (window.Prefs && window.Prefs.load) loading = window.Prefs.load(); } catch (e) {}
+    Promise.resolve(loading).catch(function () {}).then(_start);
+  }
+
+  function _start() {
     if (!window.StudioTour) {
       console.error("[Education] StudioTour engine not loaded \u2014 walkthroughs disabled");
       _load();
@@ -683,6 +741,7 @@ var Education = (function () {
     reset: _reset,
     showFirstRun: _showFirstRun,
     startExperiencedTour: _startExperiencedTour,
+    restartTour: function () { _restartTour(true); },
     maybeShowTip: maybeShowTip,
     get tour() { return _tour; },
   };

@@ -48,34 +48,44 @@ def _same(a: str, b: str) -> bool:
     return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
-def scan() -> bool:
-    """Rebuild `shared.sd_upscalers` from the roots. True when it did.
+#: `scan()` outcomes. RETRY: failed before Neo touched its list, so another
+#: try can work. FINAL: Neo's `load_upscalers()` had already deleted the list
+#: (its first statement) when it failed, which repeats on every try; the
+#: previous list is put back and the caller stops retrying
+#: (`neo_registries._read_upscalers` explains the loop that prevents).
+SCANNED, RETRY, FINAL = "scanned", "retry", "final"
 
-    Never leaves the registry missing: Neo's `load_upscalers()` opens with
-    `del shared.sd_upscalers`, so a failure after that point would leave no
-    list at all (`neo_registries._read_upscalers` explains why that is
-    unrecoverable). The previous list is put back on any failure.
+
+def scan() -> str:
+    """Rebuild `shared.sd_upscalers` from the roots; one of the outcomes above.
+
+    Never leaves the registry missing: the previous list is put back on any
+    failure, so the menus keep what they had.
     """
 
     from modules import modelloader, shared
 
-    options = shared.cmd_opts
-    if not _DEFAULT:
-        _DEFAULT.append(str(getattr(options, "esrgan_models_path", "") or ""))
-    default = _DEFAULT[0]
-    primary = _ROOTS[0] if _ROOTS else default
-    extras = [r for r in (*_ROOTS[1:], default) if r and not _same(r, primary)]
+    options = getattr(shared, "cmd_opts", None)
+    primary = extras = None
+    if options is not None:
+        if not _DEFAULT:
+            _DEFAULT.append(str(getattr(options, "esrgan_models_path", "") or ""))
+        default = _DEFAULT[0]
+        primary = _ROOTS[0] if _ROOTS else default
+        extras = [r for r in (*_ROOTS[1:], default) if r and not _same(r, primary)]
 
     previous = list(getattr(shared, "sd_upscalers", []) or [])
     try:
-        options.esrgan_models_path = primary
+        if primary is not None:
+            options.esrgan_models_path = primary
         modelloader.load_upscalers()
         if extras:
             _add_folders(shared, extras)
     except BaseException:  # noqa: BLE001 - a list of upscalers is never fatal
+        deleted = not hasattr(shared, "sd_upscalers")
         shared.sd_upscalers = previous
-        return False
-    return True
+        return FINAL if deleted else RETRY
+    return SCANNED
 
 
 def _add_folders(shared: Any, folders: list[str]) -> None:
@@ -109,4 +119,4 @@ def _add_folders(shared: Any, folders: list[str]) -> None:
     shared.sd_upscalers = [*fixed, *sorted([*models, *added], key=lambda s: s.name.lower())]
 
 
-__all__ = ("roots", "scan", "set_roots")
+__all__ = ("FINAL", "RETRY", "SCANNED", "roots", "scan", "set_roots")

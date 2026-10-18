@@ -224,6 +224,40 @@ def result_folder(result_root: Path | str, request: object) -> Path:
     )
 
 
+def with_prompt_templates(infotext: str, request: object) -> str:
+    """RP1. Neo's parameters with the owner's raw prompts added.
+
+    The Extension appends `Template: <raw prompt>` to the saved parameters
+    when wildcards changed the prompt (`studio_api.py`, "Preserve raw
+    wildcard template in embedded metadata"); Neo writes only the resolved
+    text, so Studio's files and Gallery rows had lost the raw prompt. Studio's
+    parser (`forge_studio/gallery_metadata.py`) reads `Template:` and
+    `Negative Template:` as their own fields, and a line after the settings
+    tail would not wrap correctly, so they go just BEFORE the `Steps: N`
+    line -- the order Studio's own infotext writes them in.
+    """
+
+    template = str(getattr(request, "prompt_template", "") or "")
+    negative = str(getattr(request, "negative_prompt_template", "") or "")
+    extra = []
+    if template.strip() and template.strip() != str(
+            getattr(request, "positive_prompt", "") or "").strip():
+        extra.append(f"Template: {template}")
+    if negative.strip() and negative.strip() != str(
+            getattr(request, "negative_prompt", "") or "").strip():
+        extra.append(f"Negative Template: {negative}")
+    if not extra or not infotext:
+        return infotext
+    lines = infotext.split("\n")
+    if any(line.startswith(("Template:", "Negative Template:")) for line in lines):
+        return infotext  # already carried, as the Extension checks
+    import re
+
+    tail = next((i for i in range(len(lines) - 1, -1, -1)
+                 if re.match(r"Steps: \d", lines[i])), len(lines))
+    return "\n".join([*lines[:tail], *extra, *lines[tail:]])
+
+
 def name_context(request: object, processing: object, image: Any) -> dict[str, Any]:
     """NM1. What the owner's file name pattern can say about this result.
 
@@ -486,7 +520,7 @@ def _device_memory_summary() -> str:
         import torch
 
         if not torch.cuda.is_available():
-            return ""
+            return _metal_memory_summary(torch)
         free, total = torch.cuda.mem_get_info()
         return (
             f"{free // (1024 * 1024)} MiB free of "
@@ -494,6 +528,26 @@ def _device_memory_summary() -> str:
         )
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _metal_memory_summary(torch: Any) -> str:
+    """The Apple GPU's figures (MAC1), or "" off a Mac.
+
+    There is no "free VRAM" on Apple Silicon: the GPU shares system RAM. What
+    Metal does report is what this process holds and the working set macOS
+    recommends for the GPU, and those two are what an owner can act on.
+    """
+
+    backend = getattr(getattr(torch, "backends", None), "mps", None)
+    mps = getattr(torch, "mps", None)
+    if backend is None or mps is None or not backend.is_available():
+        return ""
+    held = int(mps.driver_allocated_memory())
+    text = f"Studio held {held // (1024 * 1024)} MiB of shared memory on the Apple GPU"
+    recommended = getattr(mps, "recommended_max_memory", None)
+    if callable(recommended):
+        text += f"; macOS recommends at most {int(recommended()) // (1024 * 1024)} MiB"
+    return text + ". Closing other apps frees memory for Studio."
 
 
 def _hires_target_description(request: Any) -> str:
@@ -2166,6 +2220,9 @@ class StudioLiveGenerationPort:
         # why every result the owner ever saved was anonymous.
         infotexts = list(getattr(processed, "infotexts", []) or [])
         infotext = str(infotexts[0]) if infotexts else ""
+        # RP1. The raw prompts the owner typed, when wildcards changed them --
+        # into the file AND the Gallery, which both take this string.
+        infotext = with_prompt_templates(infotext, request)
 
         image = _stamped(images[0], request)
         seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))

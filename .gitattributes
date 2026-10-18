@@ -4,3 +4,7 @@ forge_studio/frontend/** whitespace=-trailing-space
 forge_studio/frontend/fonts/OFL.txt -text
 forge_studio/frontend/**/*.png -text
 forge_studio/frontend/**/*.ttf -text
+# POSIX launchers (MAC1). A CRLF after the shebang makes /bin/sh fail on a Mac,
+# so these stay LF even when a Windows checkout builds the archive.
+/start-studio.sh text eol=lf
+/Start-Studio.command text eol=lf

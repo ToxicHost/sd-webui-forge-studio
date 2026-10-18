@@ -28,7 +28,7 @@
 <div class="titlebar">
   <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.17.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
   <div class="tab-bar" id="appTabs">
-    <button class="active" data-app="studio">Canvas</button>
+    <button class="active" data-app="studio" data-i18n="ui.tab.canvas">Canvas</button>
     <button data-app="settings" data-i18n="tabs.settings">Settings</button>
   </div>
 </div>
@@ -47,7 +47,7 @@
     <div class="toolstrip" id="toolstrip">
       <button class="tool-btn active" data-tool="brush" data-tool-tip="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
       <button class="tool-btn" data-tool="eraser" data-tool-tip="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
-      <button class="tool-btn" data-tool="mask" aria-label="Inpaint Mask" title="Inpaint Mask" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z"/><path d="M4 14 13 5M8 19 20 7M14 19l6-6"/></svg></button>
+      <button class="tool-btn" data-tool="mask" data-i18n-aria-label="ui.tool.inpaintMask" aria-label="Inpaint Mask" data-i18n-title="ui.tool.inpaintMask" title="Inpaint Mask" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z"/><path d="M4 14 13 5M8 19 20 7M14 19l6-6"/></svg></button>
       <button class="tool-btn" data-tool="eyedropper" data-tool-tip="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
       <div class="tool-sep"></div>
       <button class="tool-btn" data-tool="fill" data-tool-tip="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
@@ -134,8 +134,8 @@
              Pixel Perfect reports when it is out of regime rather than
              silently doing nothing -- see `pixelPerfectActive`. -->
         <span class="ctx-item" data-ctx="pixel-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn" id="aliasedBtn" data-i18n-title="ctxBar.aliased.tooltip" title="Aliased: hard pixel edges, no antialiasing">Alias</button>
-          <button class="ctx-mode-btn" id="pixelPerfectBtn" data-i18n-title="ctxBar.pixelPerfect.tooltip" title="Pixel Perfect: one-pixel corners (needs Aliased and a 1px brush)">PP</button>
+          <button class="ctx-mode-btn" id="aliasedBtn" data-i18n-title="ctxBar.aliased.tooltip" title="Aliased: hard pixel edges, no antialiasing" data-i18n="ui.brush.alias">Alias</button>
+          <button class="ctx-mode-btn" id="pixelPerfectBtn" data-i18n-title="ctxBar.pixelPerfect.tooltip" title="Pixel Perfect: one-pixel corners (needs Aliased and a 1px brush)" data-i18n="ui.brush.pixelPerfect">PP</button>
         </span>
         <!-- CT10 Paint Mixer: the brush picks up the colour under it and
              carries it along the stroke, like wet paint. Amount 0 is the
@@ -144,18 +144,18 @@
           <button class="ctx-mode-btn" id="brushMixBtn" data-i18n="ctxBar.mix" data-i18n-title="ctxBar.mix.tooltip" title="Mix: the brush picks up the colour under it and carries it along the stroke, like wet paint">Mix</button>
           <span class="ctx-scrub" data-key="brushMix" data-label="Amount" data-min="0" data-max="100" data-step="5" data-suffix="%" data-scale="100">Amount: 50%</span>
         </span>
-        <span class="ctx-item" data-ctx="mask-target"><strong>Inpaint Mask</strong> · Generation mask</span>
-        <span class="ctx-item" data-ctx="mask-operation" role="group" aria-label="Mask operation">
-          <button class="ctx-mode-btn" data-mask-operation="add" aria-pressed="true">+ Add</button>
-          <button class="ctx-mode-btn" data-mask-operation="subtract" aria-pressed="false">− Subtract</button>
+        <span class="ctx-item" data-ctx="mask-target"><strong data-i18n="ui.mask.inpaintMask">Inpaint Mask</strong> <span data-i18n="ui.mask.generationMask">· Generation mask</span></span>
+        <span class="ctx-item" data-ctx="mask-operation" role="group" data-i18n-aria-label="ui.mask.operation" aria-label="Mask operation">
+          <button class="ctx-mode-btn" data-mask-operation="add" aria-pressed="true" data-i18n="ui.mask.add">+ Add</button>
+          <button class="ctx-mode-btn" data-mask-operation="subtract" aria-pressed="false" data-i18n="ui.mask.subtract">− Subtract</button>
         </span>
-        <label class="ctx-item" data-ctx="mask-overlay"><input type="checkbox" id="maskOverlayToggle" checked> Show overlay</label>
-        <span class="ctx-item" data-ctx="mask-clear"><button class="ctx-mode-btn" id="maskClearBtn" disabled>Clear mask</button></span>
-        <span class="ctx-item" data-ctx="mask-selection" id="maskSelectionStatus">Hard round · pressure off</span>
-        <span id="generationMaskStatus" role="status" aria-live="polite">Generation mask: empty</span>
+        <label class="ctx-item" data-ctx="mask-overlay"><input type="checkbox" id="maskOverlayToggle" checked> <span data-i18n="ui.mask.showOverlay">Show overlay</span></label>
+        <span class="ctx-item" data-ctx="mask-clear"><button class="ctx-mode-btn" id="maskClearBtn" disabled data-i18n="ui.mask.clear">Clear mask</button></span>
+        <span class="ctx-item" data-ctx="mask-selection" id="maskSelectionStatus" data-i18n="ui.mask.brushStatus">Hard round · pressure off</span>
+        <span id="generationMaskStatus" role="status" aria-live="polite" data-i18n="ui.mask.statusEmpty">Generation mask: empty</span>
         <!-- Pen pressure toggle + Size/Opacity sub-options -->
         <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn" id="pressureBtn" data-i18n-title="ctxBar.penPressure.tooltip" title="Pen pressure">Pen</button>
+          <button class="ctx-mode-btn" id="pressureBtn" data-i18n-title="ctxBar.penPressure.tooltip" title="Pen pressure" data-i18n="ui.brush.pen">Pen</button>
           <button class="ctx-mode-btn pressure-sub" id="pressureSizeBtn" data-i18n-title="ctxBar.penPressure.size.tooltip" title="Pressure affects size" style="display:none;">S</button>
           <button class="ctx-mode-btn pressure-sub" id="pressureOpacityBtn" data-i18n-title="ctxBar.penPressure.opacity.tooltip" title="Pressure affects opacity" style="display:none;">O</button>
         </span>
@@ -205,26 +205,26 @@
           <label class="tf-field"><span class="tf-lbl">H</span><input type="number" id="tfH" class="tf-input" step="1" min="4"></label>
           <label class="tf-field"><span class="tf-lbl">R°</span><input type="number" id="tfR" class="tf-input tf-input-r" step="0.5"></label>
           <span style="border-left:1px solid var(--border);padding-left:4px;margin-left:2px;">
-            <button class="ctx-mode-btn" id="tfSkewBtn" data-i18n-title="transformTool.skew.tooltip" title="Skew mode — edge handles shear (K)">Skew</button>
-            <button class="ctx-mode-btn" id="tfPerspBtn" data-i18n-title="transformTool.persp.tooltip" title="Perspective mode — drag corners freely (P)">Persp</button>
-            <button class="ctx-mode-btn" id="tfWarpBtn" data-i18n-title="transformTool.warp.tooltip" title="Warp mode — MLS deformation (W)">Warp</button>
+            <button class="ctx-mode-btn" id="tfSkewBtn" data-i18n-title="transformTool.skew.tooltip" title="Skew mode — edge handles shear (K)" data-i18n="ui.transform.skew">Skew</button>
+            <button class="ctx-mode-btn" id="tfPerspBtn" data-i18n-title="transformTool.persp.tooltip" title="Perspective mode — drag corners freely (P)" data-i18n="ui.transform.perspective">Persp</button>
+            <button class="ctx-mode-btn" id="tfWarpBtn" data-i18n-title="transformTool.warp.tooltip" title="Warp mode — MLS deformation (W)" data-i18n="ui.transform.warp">Warp</button>
           </span>
           <span style="border-left:1px solid var(--border);padding-left:4px;margin-left:2px;display:inline-flex;gap:2px;align-items:center;">
-            <button class="ctx-mode-btn" id="tfFlipHBtn" data-i18n-title="transformTool.flipH.tooltip" title="Flip layer horizontally (Ctrl+Shift+H)">Flip H</button>
-            <button class="ctx-mode-btn" id="tfFlipVBtn" data-i18n-title="transformTool.flipV.tooltip" title="Flip layer vertically (Ctrl+Shift+V)">Flip V</button>
+            <button class="ctx-mode-btn" id="tfFlipHBtn" data-i18n-title="transformTool.flipH.tooltip" title="Flip layer horizontally (Ctrl+Shift+H)" data-i18n="ui.transform.flipH">Flip H</button>
+            <button class="ctx-mode-btn" id="tfFlipVBtn" data-i18n-title="transformTool.flipV.tooltip" title="Flip layer vertically (Ctrl+Shift+V)" data-i18n="ui.transform.flipV">Flip V</button>
             <button class="ctx-mode-btn" id="tfRot90CCWBtn" data-i18n-title="transformTool.rot90Ccw.tooltip" title="Rotate layer 90° counter-clockwise">⟲ 90°</button>
             <button class="ctx-mode-btn" id="tfRot90CWBtn" data-i18n-title="transformTool.rot90Cw.tooltip" title="Rotate layer 90° clockwise">⟳ 90°</button>
             <button class="ctx-mode-btn" id="tfRot180Btn" data-i18n-title="transformTool.rot180.tooltip" title="Rotate layer 180°">180°</button>
-            <button class="ctx-mode-btn" id="tfRotArbBtn" data-i18n-title="transformTool.rotArb.tooltip" title="Rotate layer by an arbitrary angle">Rot°…</button>
+            <button class="ctx-mode-btn" id="tfRotArbBtn" data-i18n-title="transformTool.rotArb.tooltip" title="Rotate layer by an arbitrary angle" data-i18n="ui.transform.rotate">Rot°…</button>
           </span>
           <span id="tfWarpOpts" style="display:none;border-left:1px solid var(--border);padding-left:4px;margin-left:2px;gap:2px;align-items:center;">
             <button class="ctx-mode-btn active" data-wdensity="3" data-i18n-title="transformTool.warp.density3" title="3×3 grid">3</button>
             <button class="ctx-mode-btn" data-wdensity="4" data-i18n-title="transformTool.warp.density4" title="4×4 grid">4</button>
             <button class="ctx-mode-btn" data-wdensity="5" data-i18n-title="transformTool.warp.density5" title="5×5 grid">5</button>
             <span style="border-left:1px solid var(--border);padding-left:3px;margin-left:2px;">
-              <button class="ctx-mode-btn" data-wmode="affine" data-i18n-title="transformTool.warp.affine" title="Affine — allows shear">Aff</button>
-              <button class="ctx-mode-btn" data-wmode="similitude" data-i18n-title="transformTool.warp.similitude" title="Similitude — preserves angles">Sim</button>
-              <button class="ctx-mode-btn active" data-wmode="rigid" data-i18n-title="transformTool.warp.rigid" title="Rigid — preserves shape">Rig</button>
+              <button class="ctx-mode-btn" data-wmode="affine" data-i18n-title="transformTool.warp.affine" title="Affine — allows shear" data-i18n="ui.transform.affine">Aff</button>
+              <button class="ctx-mode-btn" data-wmode="similitude" data-i18n-title="transformTool.warp.similitude" title="Similitude — preserves angles" data-i18n="ui.transform.similarity">Sim</button>
+              <button class="ctx-mode-btn active" data-wmode="rigid" data-i18n-title="transformTool.warp.rigid" title="Rigid — preserves shape" data-i18n="ui.transform.rigid">Rig</button>
             </span>
           </span>
         </span>
@@ -309,7 +309,7 @@
              along with everything else. -->
         <select class="param-select" id="brushPresetPicker" data-help="help.canvas.brushPreset"
                 style="height:22px;font-size:10px;max-width:130px;margin-right:6px;">
-          <option value="">Preset…</option>
+          <option value="" data-i18n="ui.brush.preset">Preset…</option>
         </select>
         <button class="brush-preset-btn active" data-i18n-title="brushPreset.round" title="Round">&#x25cf;</button>
         <button class="brush-preset-btn" data-i18n-title="brushPreset.flat" title="Flat">&#x25ac;</button>
@@ -370,8 +370,8 @@
           </div>
           <div style="display:flex;gap:4px;margin-top:6px;">
             <span style="width:80px;" data-i18n="brushDynamics.falloff">Falloff</span>
-            <button class="ctx-mode-btn active" data-falloff="default" data-i18n-title="brushDynamics.falloff.std.tooltip" title="Standard smoothstep">Std</button>
-            <button class="ctx-mode-btn" data-falloff="gaussian" data-i18n-title="brushDynamics.falloff.gauss.tooltip" title="Gaussian bell curve">Gauss</button>
+            <button class="ctx-mode-btn active" data-falloff="default" data-i18n-title="brushDynamics.falloff.std.tooltip" title="Standard smoothstep" data-i18n="ui.brushShape.std">Std</button>
+            <button class="ctx-mode-btn" data-falloff="gaussian" data-i18n-title="brushDynamics.falloff.gauss.tooltip" title="Gaussian bell curve" data-i18n="ui.brushShape.gauss">Gauss</button>
           </div>
         </div>
         <!-- BE10. DOCUMENT PAPER.
@@ -413,8 +413,8 @@
       <!-- Live generation preview thumbnail (bottom-right corner of viewport) -->
       <div id="canvasPreviewWrap" style="display:none; position:absolute; bottom:40px; right:12px; z-index:10; border-radius:6px; overflow:hidden; border:1px solid var(--border); background:var(--bg-surface); box-shadow:0 4px 16px rgba(0,0,0,0.4);">
         <img id="canvasPreview" style="display:block; min-width:480px; max-width:45vw; max-height:70vh; width:auto; height:auto; object-fit:contain;">
-        <div id="canvasPreviewLabel" style="position:absolute; top:4px; left:6px; font-size:9px; color:var(--text-4); font-family:var(--mono); background:rgba(0,0,0,0.5); padding:1px 5px; border-radius:3px;">Preview</div>
-        <button id="canvasPreviewClose" style="display:none; position:absolute; top:4px; right:6px; background:rgba(0,0,0,0.5); border:none; color:var(--text-3); cursor:pointer; font-size:14px; line-height:1; padding:2px 6px; border-radius:3px;" title="Close preview">✕</button>
+        <div id="canvasPreviewLabel" style="position:absolute; top:4px; left:6px; font-size:9px; color:var(--text-4); font-family:var(--mono); background:rgba(0,0,0,0.5); padding:1px 5px; border-radius:3px;" data-i18n="ui.canvasPreview.label">Preview</div>
+        <button id="canvasPreviewClose" style="display:none; position:absolute; top:4px; right:6px; background:rgba(0,0,0,0.5); border:none; color:var(--text-3); cursor:pointer; font-size:14px; line-height:1; padding:2px 6px; border-radius:3px;" data-i18n-title="ui.canvasPreview.close" title="Close preview">✕</button>
       </div>
 
       <div class="canvas-status" id="canvasStatus">768 &times; 768 &ensp; 100%</div>
@@ -440,10 +440,10 @@
     </div>
 
     <!-- Resizable divider for right panel -->
-    <div class="panel-divider" id="panelDivider" title="Drag to resize · Double-click to reset"></div>
+    <div class="panel-divider" id="panelDivider" data-i18n-title="ui.panel.divider" title="Drag to resize · Double-click to reset"></div>
 
     <!-- Panel collapse toggle -->
-    <button class="panel-collapse-btn" id="panelCollapseBtn" title="Toggle side panel (\\)">
+    <button class="panel-collapse-btn" id="panelCollapseBtn" data-i18n-title="ui.panel.toggle" title="Toggle side panel (\\)">
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline id="collapseChevron" points="3,1 7,5 3,9"/></svg>
     </button>
 
@@ -472,7 +472,7 @@
           <!-- Prompt -->
           <div class="prompt-section">
             <div class="prompt-box" data-block="prompt">
-              <textarea class="prompt-text" id="paramPrompt" rows="3" placeholder="Describe what to generate..."></textarea>
+              <textarea class="prompt-text" id="paramPrompt" rows="3" data-i18n-placeholder="ui.prompt.placeholder" placeholder="Describe what to generate..."></textarea>
               <div class="prompt-token-bar" id="tokenBar">
                 <span class="anima-emphasis-chip" id="animaEmphasisChip" hidden></span>
                 <span class="token-count" id="tokenCount"></span>
@@ -482,8 +482,8 @@
               <div class="lora-stack-header">
                 <span class="lora-stack-label" data-i18n="loraStack.label">LoRAs</span>
                 <div class="lora-stack-actions">
-                  <button type="button" class="lora-stack-btn" id="loraStackImportBtn" data-i18n-title="loraStack.import.tooltip" title="Move &lt;lora:…&gt; tags from positive prompt into this stack">Import</button>
-                  <button type="button" class="lora-stack-btn" id="loraStackPreviewBtn" data-i18n-title="loraStack.preview.tooltip" title="Toggle compiled prompt preview">Preview</button>
+                  <button type="button" class="lora-stack-btn" id="loraStackImportBtn" data-i18n-title="loraStack.import.tooltip" title="Move &lt;lora:…&gt; tags from positive prompt into this stack" data-i18n="ui.loraStack.import">Import</button>
+                  <button type="button" class="lora-stack-btn" id="loraStackPreviewBtn" data-i18n-title="loraStack.preview.tooltip" title="Toggle compiled prompt preview" data-i18n="ui.loraStack.preview">Preview</button>
                   <button type="button" class="lora-stack-btn lora-stack-add-btn" id="loraStackAddBtn" data-i18n="loraStack.add" data-i18n-title="loraStack.add.tooltip" title="Browse LoRAs to add to the stack (Ctrl+L)">+ LoRAs</button>
                 </div>
               </div>
@@ -494,7 +494,7 @@
               <input type="hidden" id="paramLoraStack" value="">
             </div>
             <div class="prompt-box" data-block="negative">
-              <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" placeholder="Negative prompt..."></textarea>
+              <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" data-i18n-placeholder="ui.negative.placeholder" placeholder="Negative prompt..."></textarea>
             </div>
             <div data-block="generate">
               <div class="gen-row">
@@ -534,10 +534,10 @@
             </div>
 
             <div class="ar-row canvas-load-reset-row">
-              <button class="ar-btn" id="loadImageBtn" title="Load image to canvas"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span data-i18n="actions.loadImage">Load Image</span></button>
+              <button class="ar-btn" id="loadImageBtn" data-i18n-title="ui.canvas.loadImage" title="Load image to canvas"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span data-i18n="actions.loadImage">Load Image</span></button>
               <input type="file" id="loadImageInput" accept="image/*,.psd" style="display:none;">
               <span style="flex:1;"></span>
-              <button class="ar-btn ar-clear canvas-reset-accent" id="clearCanvas" title="Clear canvas" data-i18n="actions.resetCanvas">Reset Canvas</button>
+              <button class="ar-btn ar-clear canvas-reset-accent" id="clearCanvas" data-i18n-title="ui.canvas.clear" title="Clear canvas" data-i18n="actions.resetCanvas">Reset Canvas</button>
             </div>
 
             <!-- Live Painting Panel — visible when Live is active -->
@@ -585,21 +585,21 @@
             <div class="collapse-section">
               <div class="collapse-header">
                 <div class="collapse-check" id="checkSoftInpaint"></div>
-                <span class="collapse-title">Soft Inpainting</span>
+                <span class="collapse-title" data-i18n="ui.softInpaint.title">Soft Inpainting</span>
                 <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
               </div>
               <div class="collapse-body" id="panelSoftInpaint">
                 <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Schedule Bias</label><input class="param-val" id="paramSoftBias" value="1" step="0.1" min="0" max="8"></div>
-                  <div class="param-cell"><label>Preservation</label><input class="param-val" id="paramSoftPreserve" value="0.5" step="0.05" min="0" max="8"></div>
+                  <div class="param-cell"><label data-i18n="ui.softInpaint.scheduleBias">Schedule Bias</label><input class="param-val" id="paramSoftBias" value="1" step="0.1" min="0" max="8"></div>
+                  <div class="param-cell"><label data-i18n="ui.softInpaint.preservation">Preservation</label><input class="param-val" id="paramSoftPreserve" value="0.5" step="0.05" min="0" max="8"></div>
                 </div>
                 <div class="param-grid cols-2" style="margin-top:5px;">
-                  <div class="param-cell"><label>Contrast Boost</label><input class="param-val" id="paramSoftContrast" value="4" step="0.5" min="1" max="32"></div>
-                  <div class="param-cell"><label>Mask Influence</label><input class="param-val" id="paramSoftMaskInf" value="0" step="0.05" min="0" max="1"></div>
+                  <div class="param-cell"><label data-i18n="ui.softInpaint.contrastBoost">Contrast Boost</label><input class="param-val" id="paramSoftContrast" value="4" step="0.5" min="1" max="32"></div>
+                  <div class="param-cell"><label data-i18n="ui.softInpaint.maskInfluence">Mask Influence</label><input class="param-val" id="paramSoftMaskInf" value="0" step="0.05" min="0" max="1"></div>
                 </div>
                 <div class="param-grid cols-2" style="margin-top:5px;">
-                  <div class="param-cell"><label>Diff Threshold</label><input class="param-val" id="paramSoftDiffThresh" value="0.5" step="0.05" min="0" max="8"></div>
-                  <div class="param-cell"><label>Diff Contrast</label><input class="param-val" id="paramSoftDiffContrast" value="2" step="0.25" min="0" max="16"></div>
+                  <div class="param-cell"><label data-i18n="ui.softInpaint.diffThreshold">Diff Threshold</label><input class="param-val" id="paramSoftDiffThresh" value="0.5" step="0.05" min="0" max="8"></div>
+                  <div class="param-cell"><label data-i18n="ui.softInpaint.diffContrast">Diff Contrast</label><input class="param-val" id="paramSoftDiffContrast" value="2" step="0.25" min="0" max="16"></div>
                 </div>
               </div>
             </div>
@@ -626,25 +626,25 @@
             <div class="section-header">
               <span class="section-label" data-i18n="panels.jobs">Jobs</span>
               <div class="section-actions">
-                <span class="studio-stage-chip" id="studioStageChip" data-stage="idle">Idle</span>
+                <span class="studio-stage-chip" id="studioStageChip" data-stage="idle" data-i18n="ui.jobs.idle">Idle</span>
               </div>
             </div>
             <div class="studio-job-running" id="studioRunningJob" hidden></div>
             <div class="studio-queue-section" id="studioQueuedSection" hidden>
               <div class="studio-queue-heading">
-                <span id="studioQueuedHeading">Queued</span>
-                <button class="cn-upload-btn studio-queue-action" type="button" id="studioClearQueueBtn">Clear queued</button>
+                <span id="studioQueuedHeading" data-i18n="ui.jobs.queued">Queued</span>
+                <button class="cn-upload-btn studio-queue-action" type="button" id="studioClearQueueBtn" data-i18n="ui.jobs.clearQueued">Clear queued</button>
               </div>
               <div class="studio-queue-list" id="studioQueueList"></div>
             </div>
             <details class="studio-recent" id="studioRecentDisclosure" hidden>
-              <summary><span id="studioRecentSummary">Recent</span></summary>
+              <summary><span id="studioRecentSummary" data-i18n="ui.jobs.recent">Recent</span></summary>
               <div class="studio-recent-list" id="studioRecentList"></div>
             </details>
             <div class="studio-session-note" id="studioSessionNote"></div>
             <div class="studio-session-error" id="studioSessionError"></div>
             <div class="param-grid cols-1" style="margin-top:6px;">
-              <div class="param-cell"><button class="cn-upload-btn" type="button" id="studioUnloadBtn" disabled>Unload model</button></div>
+              <div class="param-cell"><button class="cn-upload-btn" type="button" id="studioUnloadBtn" disabled data-i18n="ui.jobs.unload">Unload model</button></div>
             </div>
           </div>
 
@@ -652,35 +652,35 @@
           <div class="param-section" style="padding-bottom:6px;" data-block="model">
             <div class="param-grid cols-1">
               <div class="param-cell">
-                <label>Model</label>
+                <label data-i18n="ui.model.checkpoint">Model</label>
                 <div style="display:flex;gap:4px;">
                   <select class="param-select" id="paramModel" style="flex:1;">
-                    <option>Loading models...</option>
+                    <option data-i18n="ui.model.loading">Loading models...</option>
                   </select>
                   <button class="cn-upload-btn" id="browseModelsBtn" data-i18n-title="ckpt.browse.tooltip" title="Browse checkpoints" style="padding:4px 6px;font-size:12px;">&#x25a6;</button>
-                  <button class="cn-upload-btn" id="refreshModelsBtn" title="Refresh model list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                  <button class="cn-upload-btn" id="refreshModelsBtn" data-i18n-title="ui.model.refreshModels" title="Refresh model list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
                 </div>
               </div>
             </div>
             <div class="param-grid cols-1" style="margin-top:4px;">
               <div class="param-cell">
-                <label>VAE</label>
+                <label data-i18n="ui.model.vae">VAE</label>
                 <div style="display:flex;gap:4px;">
                   <select class="param-select" id="paramVAE" style="flex:1;">
-                    <option value="Automatic">Automatic</option>
+                    <option value="Automatic" data-i18n="ui.model.automatic">Automatic</option>
                   </select>
-                  <button class="cn-upload-btn" id="refreshVAEBtn" title="Refresh VAE list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                  <button class="cn-upload-btn" id="refreshVAEBtn" data-i18n-title="ui.model.refreshVae" title="Refresh VAE list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
                 </div>
               </div>
             </div>
             <div class="param-grid cols-1" id="textEncoderRow" style="margin-top:4px;display:none;">
               <div class="param-cell">
-                <label>Text Encoder</label>
+                <label data-i18n="ui.model.textEncoder">Text Encoder</label>
                 <div style="display:flex;gap:4px;">
                   <select class="param-select" id="paramTextEncoder" style="flex:1;">
-                    <option value="None">None (bundled)</option>
+                    <option value="None" data-i18n="ui.model.bundled">None (bundled)</option>
                   </select>
-                  <button class="cn-upload-btn" id="refreshTEBtn" title="Refresh text encoder list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                  <button class="cn-upload-btn" id="refreshTEBtn" data-i18n-title="ui.model.refreshTextEncoders" title="Refresh text encoder list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
                 </div>
               </div>
             </div>
@@ -689,28 +689,28 @@
           <!-- Sampling (FR-022: collapsible, open by default) -->
           <div class="collapse-section" data-block="sampling">
             <div class="collapse-header">
-              <span class="collapse-title">Sampling</span>
+              <span class="collapse-title" data-i18n="ui.sampling.title">Sampling</span>
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelSampling">
             <div class="param-grid cols-2">
               <div class="param-cell" data-help="help.sampling.sampler">
-                <label>Sampler</label>
+                <label data-i18n="ui.sampling.sampler">Sampler</label>
                 <select class="param-select" id="paramSampler">
-                  <option value="">Loading…</option>
+                  <option value="" data-i18n="ui.common.loading">Loading…</option>
                 </select>
               </div>
               <div class="param-cell" data-help="help.sampling.scheduler">
-                <label>Scheduler</label>
+                <label data-i18n="ui.sampling.scheduler">Scheduler</label>
                 <select class="param-select" id="paramScheduler">
-                  <option value="">Loading…</option>
+                  <option value="" data-i18n="ui.common.loading">Loading…</option>
                 </select>
               </div>
             </div>
             <div class="param-grid cols-3 field-group">
-              <div class="param-cell" data-help="help.sampling.steps"><label>Steps</label><input class="param-val" id="paramSteps" data-min="1" data-step="1" value="30"></div>
-              <div class="param-cell" data-help="help.sampling.cfg"><label>CFG</label><input class="param-val" id="paramCFG" data-min="1" data-max="30" data-step="0.5" value="5.0"></div>
-              <div class="param-cell" data-help="help.sampling.denoise"><label>Denoise</label><input class="param-val" id="paramDenoise" data-min="0" data-max="1" data-step="0.01" value="0.81"></div>
+              <div class="param-cell" data-help="help.sampling.steps"><label data-i18n="ui.sampling.steps">Steps</label><input class="param-val" id="paramSteps" data-min="1" data-step="1" value="30"></div>
+              <div class="param-cell" data-help="help.sampling.cfg"><label data-i18n="ui.sampling.cfg">CFG</label><input class="param-val" id="paramCFG" data-min="1" data-max="30" data-step="0.5" value="5.0"></div>
+              <div class="param-cell" data-help="help.sampling.denoise"><label data-i18n="ui.sampling.denoise">Denoise</label><input class="param-val" id="paramDenoise" data-min="0" data-max="1" data-step="0.01" value="0.81"></div>
             </div>
             <!-- Clip Skip. Its own row rather than a fourth column, so the
                  three controls above keep their width and app.css needs no new
@@ -721,7 +721,7 @@
                  infotext, and the PNG-import path wrote to a #paramClipSkip
                  that did not exist. -->
             <div class="param-grid cols-2 field-group">
-              <div class="param-cell" data-help="help.sampling.clipSkip"><label>Clip Skip</label><input class="param-val" id="paramClipSkip" data-min="1" data-max="12" data-step="1" value="2"></div>
+              <div class="param-cell" data-help="help.sampling.clipSkip"><label data-i18n="ui.sampling.clipSkip">Clip Skip</label><input class="param-val" id="paramClipSkip" data-min="1" data-max="12" data-step="1" value="2"></div>
             </div>
             </div>
           </div>
@@ -729,14 +729,14 @@
           <!-- Canvas (FR-022: collapsible, open by default) -->
           <div class="collapse-section" data-deck-span="2" data-block="frame">
             <div class="collapse-header">
-              <span class="collapse-title">Canvas</span>
+              <span class="collapse-title" data-i18n="ui.dims.title">Canvas</span>
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelCanvas">
             <div class="size-row-wrap field-group">
               <div class="param-grid cols-2" style="flex:1;min-width:0;">
-                <div class="param-cell"><label>Width</label><input class="param-val" id="paramWidth" data-min="8" data-step="64" value="768"></div>
-                <div class="param-cell"><label>Height</label><input class="param-val" id="paramHeight" data-min="8" data-step="64" value="768"></div>
+                <div class="param-cell"><label data-i18n="ui.dims.width">Width</label><input class="param-val" id="paramWidth" data-min="8" data-step="64" value="768"></div>
+                <div class="param-cell"><label data-i18n="ui.dims.height">Height</label><input class="param-val" id="paramHeight" data-min="8" data-step="64" value="768"></div>
               </div>
               <button id="swapWH" class="size-swap-btn" data-i18n-title="actions.swapDimensions.tooltip" title="Swap width and height" aria-label="Swap width and height"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 8 16 13"/><line x1="21" y1="8" x2="4" y2="8"/><polyline points="8 21 3 16 8 11"/><line x1="3" y1="16" x2="20" y2="16"/></svg></button>
             </div>
@@ -757,10 +757,10 @@
               <button class="ar-btn" data-ar="2.39:1">2.39:1</button>
             </div>
             <div class="ar-row ar-randomize-row" id="arRandomizeRow">
-              <span class="ar-rand-label">Randomize:</span>
-              <label class="ar-rand-check"><input type="checkbox" id="arRandBase"> Base</label>
-              <label class="ar-rand-check"><input type="checkbox" id="arRandRatio"> Ratio</label>
-              <label class="ar-rand-check"><input type="checkbox" id="arRandOrientation"> Orientation</label>
+              <span class="ar-rand-label" data-i18n="ui.dims.randomize">Randomize:</span>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandBase"> <span data-i18n="ui.dims.base">Base</span></label>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandRatio"> <span data-i18n="ui.dims.ratio">Ratio</span></label>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandOrientation"> <span data-i18n="ui.dims.orientation">Orientation</span></label>
             </div>
             <input type="hidden" id="arBasePoolData" value="[512,640,768,896,1024]">
             <input type="hidden" id="arRatioPoolData" value='["1:1","5:4","4:3","3:2","16:9","2:1","2.39:1"]'>
@@ -776,27 +776,27 @@
                Evidence/source-review/AR5.1-batch-removal.md -->
           <div class="collapse-section" data-block="seedbatch">
             <div class="collapse-header">
-              <span class="collapse-title">Seed</span>
+              <span class="collapse-title" data-i18n="ui.seed.title">Seed</span>
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelSeedBatch">
             <div class="seed-row field-group">
-              <div class="param-cell"><label>Seed</label><input class="param-val" id="paramSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
-              <button class="seed-btn" id="seedRandom" title="Random">&#x1f3b2;</button>
-              <button class="seed-btn" id="seedRecycle" title="Recycle last">&#x1f501;</button>
+              <div class="param-cell"><label data-i18n="ui.seed.seed">Seed</label><input class="param-val" id="paramSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
+              <button class="seed-btn" id="seedRandom" data-i18n-title="ui.seed.random" title="Random">&#x1f3b2;</button>
+              <button class="seed-btn" id="seedRecycle" data-i18n-title="ui.seed.recycle" title="Recycle last">&#x1f501;</button>
               <label class="extra-seed-toggle" data-help="help.seed.extra" style="margin:0;">
-                <input type="checkbox" id="checkExtra"> Extra
+                <input type="checkbox" id="checkExtra"> <span data-i18n="ui.seed.extra">Extra</span>
               </label>
             </div>
             <div id="extraSeedSection" class="extra-seed-section" style="display:none;">
               <div class="seed-row" style="margin-top:4px;">
-                <div class="param-cell"><label>Variation seed</label><input class="param-val" id="paramVarSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
-                <button class="seed-btn" id="varSeedRandom" title="Random">&#x1f3b2;</button>
-                <button class="seed-btn" id="varSeedRecycle" title="Recycle last">&#x1f501;</button>
+                <div class="param-cell"><label data-i18n="ui.seed.variationSeed">Variation seed</label><input class="param-val" id="paramVarSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
+                <button class="seed-btn" id="varSeedRandom" data-i18n-title="ui.seed.random" title="Random">&#x1f3b2;</button>
+                <button class="seed-btn" id="varSeedRecycle" data-i18n-title="ui.seed.recycle" title="Recycle last">&#x1f501;</button>
               </div>
               <div class="param-grid cols-2" style="margin-top:4px;">
                 <div class="param-cell">
-                  <label>Variation strength</label>
+                  <label data-i18n="ui.seed.variationStrength">Variation strength</label>
                   <input type="range" class="param-range" id="paramVarStrength" min="0" max="1" step="0.01" value="0">
                 </div>
                 <div class="param-cell">
@@ -804,8 +804,8 @@
                 </div>
               </div>
               <div class="param-grid cols-2" style="margin-top:4px;">
-                <div class="param-cell"><label>Resize seed from width</label><input class="param-val" id="paramResizeSeedW" data-min="0" data-max="2048" data-step="8" value="0"></div>
-                <div class="param-cell"><label>Resize seed from height</label><input class="param-val" id="paramResizeSeedH" data-min="0" data-max="2048" data-step="8" value="0"></div>
+                <div class="param-cell"><label data-i18n="ui.seed.resizeWidth">Resize seed from width</label><input class="param-val" id="paramResizeSeedW" data-min="0" data-max="2048" data-step="8" value="0"></div>
+                <div class="param-cell"><label data-i18n="ui.seed.resizeHeight">Resize seed from height</label><input class="param-val" id="paramResizeSeedH" data-min="0" data-max="2048" data-step="8" value="0"></div>
               </div>
             </div>
             <div class="param-grid cols-2 field-group">
@@ -817,21 +817,21 @@
           <div class="collapse-section" data-block="hires">
             <div class="collapse-header">
               <div class="collapse-check" id="checkHires"></div>
-              <span class="collapse-title">Hires Fix</span>
+              <span class="collapse-title" data-i18n="ui.hires.title">Hires Fix</span>
               <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body" id="panelHires">
               <div class="param-grid cols-2" style="margin-top:4px;">
-                <div class="param-cell" data-help="help.hires.upscaler"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option value="">Loading…</option></select></div>
-                <div class="param-cell" data-help="help.hires.scale"><label>Scale</label><input class="param-val" id="paramHrScale" data-min="1" data-step="0.05" value="2.0"></div>
+                <div class="param-cell" data-help="help.hires.upscaler"><label data-i18n="ui.hires.upscaler">Upscaler</label><select class="param-select" id="paramHrUpscaler"><option value="" data-i18n="ui.common.loading">Loading…</option></select></div>
+                <div class="param-cell" data-help="help.hires.scale"><label data-i18n="ui.hires.scale">Scale</label><input class="param-val" id="paramHrScale" data-min="1" data-step="0.05" value="2.0"></div>
               </div>
               <div class="param-grid cols-2 field-group">
-                <div class="param-cell" data-help="help.hires.steps"><label>Steps</label><input class="param-val" id="paramHrSteps" data-min="0" data-step="1" value="0"></div>
-                <div class="param-cell" data-help="help.hires.denoise"><label>Denoise</label><input class="param-val" id="paramHrDenoise" data-min="0" data-max="1" data-step="0.01" value="0.30"></div>
+                <div class="param-cell" data-help="help.hires.steps"><label data-i18n="ui.hires.steps">Steps</label><input class="param-val" id="paramHrSteps" data-min="0" data-step="1" value="0"></div>
+                <div class="param-cell" data-help="help.hires.denoise"><label data-i18n="ui.hires.denoise">Denoise</label><input class="param-val" id="paramHrDenoise" data-min="0" data-max="1" data-step="0.01" value="0.30"></div>
               </div>
               <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
               <div class="param-grid cols-2 field-group secondary param-advanced">
-                <div class="param-cell" data-help="help.hires.cfg"><label>CFG</label><input class="param-val" id="paramHrCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
+                <div class="param-cell" data-help="help.hires.cfg"><label data-i18n="ui.hires.cfg">CFG</label><input class="param-val" id="paramHrCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
                 <!-- Hires checkpoint override. HIDDEN: this select is filled
                      from the REAL model list, so it looks more functional than
                      anything else on this panel, and choosing a checkpoint here
@@ -840,7 +840,7 @@
                      TO RESTORE: Hires needs temporary checkpoint/component
                      override and restoration -- open P0.7 scope, per the
                      planner handoff's P0.7 correction. -->
-                <div class="param-cell" data-help="help.hires.checkpoint" hidden><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
+                <div class="param-cell" data-help="help.hires.checkpoint" hidden><label data-i18n="ui.hires.checkpoint">Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option data-i18n="ui.hires.same">Same</option></select></div>
               </div>
             </div>
           </div>
@@ -849,7 +849,7 @@
           <div class="collapse-section" data-block="adetailer">
             <div class="collapse-header">
               <div class="collapse-check" id="checkAD"></div>
-              <span class="collapse-title">ADetailer</span>
+              <span class="collapse-title" data-i18n="ui.ad.title">ADetailer</span>
               <span class="ad-live-warning" id="adLiveWarning" style="display:none;">Disabled during Live — use Apply → Generate</span>
               <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
@@ -857,20 +857,20 @@
               <div style="margin-top:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
                   <div class="collapse-check ad-slot-check checked" id="checkAD1"></div>
-                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 1 — Face</span>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;" data-i18n="ui.ad.slot1">Slot 1 — Face</span>
                 </div>
                 <div class="param-grid cols-2">
-                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
-                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD1Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label data-i18n="ui.ad.model">Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label data-i18n="ui.ad.confidence">Confidence</label><input class="param-val" id="paramAD1Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-1" id="paramAD1WordsRow" style="display:none;"><div class="param-cell" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label>Words</label><input class="param-val" id="paramAD1Words" type="text" spellcheck="false" placeholder="candle, eyes" style="text-align:left;"></div></div>
+                <div class="param-grid cols-1" id="paramAD1WordsRow" style="display:none;"><div class="param-cell" data-i18n-title="ui.ad.words.tooltip" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label data-i18n="ui.ad.words">Words</label><input class="param-val" id="paramAD1Words" type="text" spellcheck="false" data-i18n-placeholder="ui.ad.words.placeholder" placeholder="candle, eyes" style="text-align:left;"></div></div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
-                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label data-i18n="ui.ad.denoise">Denoise</label><input class="param-val" id="paramAD1Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label data-i18n="ui.ad.maskBlur">Mask Blur</label><input class="param-val" id="paramAD1Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label data-i18n="ui.ad.prompt">Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="1" style="margin-top:4px;">
                   <div class="param-cell">
@@ -884,21 +884,21 @@
               <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
                   <div class="collapse-check ad-slot-check" id="checkAD2"></div>
-                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 2</span>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;" data-i18n="ui.ad.slot2">Slot 2</span>
                 </div>
                 <div class="enable-gated" data-gate="checkAD2" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
-                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD2Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label data-i18n="ui.ad.model">Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label data-i18n="ui.ad.confidence">Confidence</label><input class="param-val" id="paramAD2Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-1" id="paramAD2WordsRow" style="display:none;"><div class="param-cell" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label>Words</label><input class="param-val" id="paramAD2Words" type="text" spellcheck="false" placeholder="candle, eyes" style="text-align:left;"></div></div>
+                <div class="param-grid cols-1" id="paramAD2WordsRow" style="display:none;"><div class="param-cell" data-i18n-title="ui.ad.words.tooltip" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label data-i18n="ui.ad.words">Words</label><input class="param-val" id="paramAD2Words" type="text" spellcheck="false" data-i18n-placeholder="ui.ad.words.placeholder" placeholder="candle, eyes" style="text-align:left;"></div></div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
-                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label data-i18n="ui.ad.denoise">Denoise</label><input class="param-val" id="paramAD2Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label data-i18n="ui.ad.maskBlur">Mask Blur</label><input class="param-val" id="paramAD2Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label data-i18n="ui.ad.prompt">Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="2" style="margin-top:4px;">
                   <div class="param-cell">
@@ -913,21 +913,21 @@
               <div>
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
                   <div class="collapse-check ad-slot-check" id="checkAD3"></div>
-                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 3</span>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;" data-i18n="ui.ad.slot3">Slot 3</span>
                 </div>
                 <div class="enable-gated" data-gate="checkAD3" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
-                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD3Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label data-i18n="ui.ad.model">Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label data-i18n="ui.ad.confidence">Confidence</label><input class="param-val" id="paramAD3Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-1" id="paramAD3WordsRow" style="display:none;"><div class="param-cell" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label>Words</label><input class="param-val" id="paramAD3Words" type="text" spellcheck="false" placeholder="candle, eyes" style="text-align:left;"></div></div>
+                <div class="param-grid cols-1" id="paramAD3WordsRow" style="display:none;"><div class="param-cell" data-i18n-title="ui.ad.words.tooltip" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label data-i18n="ui.ad.words">Words</label><input class="param-val" id="paramAD3Words" type="text" spellcheck="false" data-i18n-placeholder="ui.ad.words.placeholder" placeholder="candle, eyes" style="text-align:left;"></div></div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
-                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label data-i18n="ui.ad.denoise">Denoise</label><input class="param-val" id="paramAD3Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label data-i18n="ui.ad.maskBlur">Mask Blur</label><input class="param-val" id="paramAD3Blur" data-min="0" data-max="64" data-step="1" value="4"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label data-i18n="ui.ad.prompt">Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="3" style="margin-top:4px;">
                   <div class="param-cell">
@@ -945,12 +945,12 @@
           <div class="collapse-section" data-block="upscale">
             <div class="collapse-header" id="upscaleHeader">
               <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
-              <span class="collapse-title">Upscale</span>
+              <span class="collapse-title" data-i18n="ui.upscale.title">Upscale</span>
             </div>
             <div class="collapse-body" id="panelUpscale">
               <div class="param-grid cols-2" style="margin-top:4px;">
-                <div class="param-cell" data-help="help.upscale.upscaler"><label>Upscaler</label><select class="param-select" id="paramUpscaleModel"><option value="">Loading…</option></select></div>
-                <div class="param-cell" data-help="help.upscale.scale"><label>Scale</label><input class="param-val" id="paramUpscaleScale" data-min="1" data-max="8" data-step="0.05" value="2.0"></div>
+                <div class="param-cell" data-help="help.upscale.upscaler"><label data-i18n="ui.upscale.upscaler">Upscaler</label><select class="param-select" id="paramUpscaleModel"><option value="" data-i18n="ui.common.loading">Loading…</option></select></div>
+                <div class="param-cell" data-help="help.upscale.scale"><label data-i18n="ui.upscale.scale">Scale</label><input class="param-val" id="paramUpscaleScale" data-min="1" data-max="8" data-step="0.05" value="2.0"></div>
               </div>
               <!-- SHOWN since NG-4. These were hidden under D8 -- an absent
                    service is hidden -- because `/studio/upscale_and_refine`
@@ -970,7 +970,7 @@
                    The service is present, so the controls are visible. -->
               <div style="margin-top:6px;display:flex;align-items:center;gap:6px;" data-help="help.upscale.refine">
                 <div class="collapse-check" id="checkUpscaleRefine"></div>
-                <span style="font-size:10px;color:var(--text-3);">Refine after upscale (img2img pass)</span>
+                <span style="font-size:10px;color:var(--text-3);" data-i18n="ui.upscale.refine">Refine after upscale (img2img pass)</span>
               </div>
               <!-- NG-4: Auto Detail is a SIBLING of refine, not a child of it.
                    It was gated on `checkUpscaleRefine`, so "sharpen the faces
@@ -980,11 +980,11 @@
                    asked for at all. The panel now runs it at denoise 0. -->
               <div style="margin-top:4px;display:flex;align-items:center;gap:6px;" id="upscaleADRow" data-help="help.upscale.runAD">
                 <div class="collapse-check" id="checkUpscaleAD"></div>
-                <span style="font-size:10px;color:var(--text-3);">Run ADetailer</span>
+                <span style="font-size:10px;color:var(--text-3);" data-i18n="ui.upscale.runAd">Run ADetailer</span>
               </div>
               <div class="param-grid cols-2 field-group enable-gated" id="upscaleRefineParams" data-gate="checkUpscaleRefine" style="display:none;">
-                <div class="param-cell" data-help="help.upscale.steps"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" data-min="1" data-max="150" data-step="1" value="20"></div>
-                <div class="param-cell" data-help="help.upscale.denoise"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" data-min="0" data-max="1" data-step="0.01" value="0.3"></div>
+                <div class="param-cell" data-help="help.upscale.steps"><label data-i18n="ui.upscale.steps">Steps</label><input class="param-val" id="paramUpscaleSteps" data-min="1" data-max="150" data-step="1" value="20"></div>
+                <div class="param-cell" data-help="help.upscale.denoise"><label data-i18n="ui.upscale.denoise">Denoise</label><input class="param-val" id="paramUpscaleDenoise" data-min="0" data-max="1" data-step="0.01" value="0.3"></div>
               </div>
               <button class="gen-btn" id="upscaleBtn" style="margin-top:8px;background:var(--bg-raised);border:1px solid var(--border);color:var(--text-2);font-size:11px;height:30px;" data-i18n="actions.upscaleCanvas">UPSCALE CANVAS</button>
             </div>
@@ -1180,7 +1180,7 @@
         <!-- ===== EXTENSIONS TAB ===== -->
         <div class="panel-page" id="page-extensions">
           <div class="extensions-content" id="extensionsContent">
-            <div class="ext-loading" id="extLoading">Loading extensions...</div>
+            <div class="ext-loading" id="extLoading" data-i18n="ui.extensions.loading">Loading extensions...</div>
           </div>
         </div>
 
@@ -1471,15 +1471,15 @@
                       </span>
                     </div>
                     <div id="sessionAccordionBody" style="display:none;" class="session-accordion-body">
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="prompts" checked> Prompts</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="gen" checked> Generation params &amp; AR pools</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="hires" checked> Hires Fix</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="ad" checked> ADetailer</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="upscale" checked> Upscale</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="canvas" checked> Canvas settings</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="brush" checked> Brush settings</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="format" checked> Output format</label>
-                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="inpaint" checked> Inpaint settings</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="prompts" checked> <span data-i18n="ui.session.prompts">Prompts</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="gen" checked> <span data-i18n="ui.session.params">Generation params &amp; AR pools</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="hires" checked> <span data-i18n="ui.session.hires">Hires Fix</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="ad" checked> <span data-i18n="ui.session.adetailer">ADetailer</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="upscale" checked> <span data-i18n="ui.session.upscale">Upscale</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="canvas" checked> <span data-i18n="ui.session.canvas">Canvas settings</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="brush" checked> <span data-i18n="ui.session.brush">Brush settings</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="format" checked> <span data-i18n="ui.session.output">Output format</span></label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="inpaint" checked> <span data-i18n="ui.session.inpaint">Inpaint settings</span></label>
                     </div>
                   </div>
 
@@ -1646,7 +1646,7 @@
                       <button class="defaults-btn" id="layoutDeleteBtn" data-i18n="layout.delete">Delete</button>
                     </div>
                   </div>
-                  <p class="settings-card-note" data-i18n="settings.layout.shareHint">Layouts are JSON files in the extension's studio_layouts/ folder — copy a file there to import a shared layout.</p>
+                  <p class="settings-card-note" data-i18n="settings.layout.shareHint">Layouts are JSON files in Studio’s studio_layouts/ folder — copy a file there to import a shared layout.</p>
                 </div>
               </section>
 
@@ -1660,9 +1660,9 @@
                     <div class="settings-item-control">
                       <select class="param-select settings-select" id="settingColorblind">
                         <option value="" data-i18n="common.none">None</option>
-                        <option value="deutan">Deuteranopia (red-green)</option>
-                        <option value="protan">Protanopia (red-green)</option>
-                        <option value="tritan">Tritanopia (blue-yellow)</option>
+                        <option value="deutan" data-i18n="ui.a11y.deuteranopia">Deuteranopia (red-green)</option>
+                        <option value="protan" data-i18n="ui.a11y.protanopia">Protanopia (red-green)</option>
+                        <option value="tritan" data-i18n="ui.a11y.tritanopia">Tritanopia (blue-yellow)</option>
                       </select>
                     </div>
                   </div>
@@ -1817,27 +1817,27 @@
                   </span>
                 </div>
                 <div class="settings-card-body">
-                  <div class="settings-item" data-setting-key="toggleStudioDynPrompts" data-setting-search="studio dynamic prompts wildcards variants expand __wildcard__" title="Expand __wildcard__ and {a|b|c} prompts inside Studio without relying on Dynamic Prompts.">
+                  <div class="settings-item" data-setting-key="toggleStudioDynPrompts" data-setting-search="studio dynamic prompts wildcards variants expand __wildcard__" data-i18n-title="ui.dynPrompts.enable.tooltip" title="Expand __wildcard__ and {a|b|c} prompts inside Studio without relying on Dynamic Prompts.">
                     <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.dynamicPrompts.enabled">Studio dynamic prompts</span></div>
                     <div class="settings-item-control"><div class="toggle-track on" id="toggleStudioDynPrompts"><div class="toggle-knob"></div></div></div>
                   </div>
-                  <div class="settings-item" id="dynPromptsFolderRow" data-setting-key="dynPromptsFolderRow" data-setting-search="wildcard folder txt files location" data-setting-depends="toggleStudioDynPrompts" title="Choose the folder Studio uses for wildcard .txt files.">
+                  <div class="settings-item" id="dynPromptsFolderRow" data-setting-key="dynPromptsFolderRow" data-setting-search="wildcard folder txt files location" data-setting-depends="toggleStudioDynPrompts" data-i18n-title="ui.dynPrompts.folder.tooltip" title="Choose the folder Studio uses for wildcard .txt files.">
                     <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.dynamicPrompts.folder">Wildcard folder</span></div>
-                    <div class="settings-item-control"><span class="dyn-prompts-folder-display settings-mono-value" id="dynPromptsFolderDisplay">Default folders</span></div>
+                    <div class="settings-item-control"><span class="dyn-prompts-folder-display settings-mono-value" id="dynPromptsFolderDisplay" data-i18n="ui.dynPrompts.defaultFolders">Default folders</span></div>
                   </div>
                   <div class="settings-item settings-item-actions" id="dynPromptsFolderControls" data-setting-depends="toggleStudioDynPrompts">
                     <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="dynPromptsFolderBrowse">Browse...</button>
-                      <button class="defaults-btn" id="dynPromptsFolderReset">Reset</button>
+                      <button class="defaults-btn" id="dynPromptsFolderBrowse" data-i18n="ui.dynPrompts.browse">Browse...</button>
+                      <button class="defaults-btn" id="dynPromptsFolderReset" data-i18n="ui.dynPrompts.reset">Reset</button>
                     </div>
                   </div>
                   <div class="settings-item settings-item-actions" id="dynPromptsFolderManualRow" style="display:none;">
                     <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <input type="text" id="dynPromptsFolderInput" class="settings-text-input" placeholder="Custom wildcards folder path">
-                      <button class="defaults-btn" id="dynPromptsFolderSet">Set</button>
+                      <input type="text" id="dynPromptsFolderInput" class="settings-text-input" data-i18n-placeholder="ui.dynPrompts.folder.placeholder" placeholder="Custom wildcards folder path">
+                      <button class="defaults-btn" id="dynPromptsFolderSet" data-i18n="ui.dynPrompts.set">Set</button>
                     </div>
                   </div>
-                  <p class="dyn-prompts-dp-note settings-card-note" id="dynPromptsDpNote" style="display:none;">Dynamic Prompts detected. Studio suppresses it during Studio-native expansion to avoid double processing.</p>
+                  <p class="dyn-prompts-dp-note settings-card-note" id="dynPromptsDpNote" style="display:none;" data-i18n="ui.dynPrompts.dpNote">Dynamic Prompts detected. Studio suppresses it during Studio-native expansion to avoid double processing.</p>
                 </div>
               </section>
 
@@ -1925,7 +1925,7 @@
                   <div class="settings-item settings-item-stacked" data-setting-key="settingGalleryFolder" data-setting-search="gallery folder save destination path directory">
                     <div class="settings-item-copy">
                       <span class="settings-item-title" data-i18n="settings.gallery.folder">Gallery folder</span>
-                      <p class="settings-item-description" data-i18n="settings.gallery.hint">Where “Save to Gallery” writes. This folder lives on the machine running Forge/Studio — the Browse dialog opens there, not on your browser. Leave blank to use the default output folder.</p>
+                      <p class="settings-item-description" data-i18n="settings.gallery.hint">Where “Save to Gallery” writes. This folder is on the machine running Studio. Leave blank to use the default output folder.</p>
                     </div>
                     <div class="settings-item-control settings-item-control-wide">
                       <input type="text" class="param-val settings-text-input" id="settingGalleryFolder" data-i18n-placeholder="settings.gallery.placeholder" placeholder="Leave blank for the default output folder">
@@ -1961,10 +1961,10 @@
                   <div class="settings-item settings-item-stacked" data-setting-key="settingSaveDir" data-setting-search="auto save folder directory path output destination">
                     <div class="settings-item-copy">
                       <span class="settings-item-title" data-i18n="settings.saveDir.folder">Auto-save folder</span>
-                      <p class="settings-item-description" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder is on the machine running Forge Studio. If you’re using Studio remotely, type a path visible to the server/VM, then click <b>Trust folder</b>. Leave blank for Forge’s default output folder.</p>
+                      <p class="settings-item-description" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder is on the machine running Studio. Type a path or press Browse…; a folder outside Studio’s trusted places needs <b>Trust folder</b>. Leave blank to use Studio’s results folder.</p>
                     </div>
                     <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for the default Forge output folder">
+                      <input type="text" class="param-val settings-text-input" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for Studio’s results folder">
                     </div>
                   </div>
                   <div class="settings-item settings-item-actions">
@@ -2033,7 +2033,7 @@
                   <svg class="settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
                 </button>
                 <div class="settings-card-body" id="settingsCardBody-watermark" hidden>
-                  <div class="settings-item" data-setting-key="toggleWatermark" data-setting-search="auto watermark stamp logo overlay export" title="Composite a watermark image onto every generated image as the final step. Drop PNG/WebP files (transparency recommended) into the watermarks folder.">
+                  <div class="settings-item" data-setting-key="toggleWatermark" data-setting-search="auto watermark stamp logo overlay export" data-i18n-title="ui.watermark.tooltip" title="Composite a watermark image onto every generated image as the final step. Drop PNG/WebP files (transparency recommended) into the watermarks folder.">
                     <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.enable">Auto watermark</span></div>
                     <div class="settings-item-control"><div class="toggle-track" id="toggleWatermark"><div class="toggle-knob"></div></div></div>
                   </div>
@@ -2053,7 +2053,7 @@
                     <div class="settings-item" data-setting-key="settingWatermark" data-setting-search="watermark image file select">
                       <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.image">Image</span></div>
                       <div class="settings-item-control">
-                        <select class="param-select settings-select" id="settingWatermark"><option value="">— None —</option></select>
+                        <select class="param-select settings-select" id="settingWatermark"><option value="" data-i18n="ui.watermark.none">— None —</option></select>
                       </div>
                     </div>
                     <div class="settings-item settings-item-actions">
@@ -2067,15 +2067,15 @@
                       <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.position">Position</span></div>
                       <div class="settings-item-control">
                         <select class="param-select settings-select" id="settingWatermarkPosition">
-                          <option value="top-left">Top left</option>
-                          <option value="top-center">Top center</option>
-                          <option value="top-right">Top right</option>
-                          <option value="center-left">Center left</option>
-                          <option value="center">Center</option>
-                          <option value="center-right">Center right</option>
-                          <option value="bottom-left">Bottom left</option>
-                          <option value="bottom-center">Bottom center</option>
-                          <option value="bottom-right" selected>Bottom right</option>
+                          <option value="top-left" data-i18n="ui.position.topLeft">Top left</option>
+                          <option value="top-center" data-i18n="ui.position.topCenter">Top center</option>
+                          <option value="top-right" data-i18n="ui.position.topRight">Top right</option>
+                          <option value="center-left" data-i18n="ui.position.centerLeft">Center left</option>
+                          <option value="center" data-i18n="ui.position.center">Center</option>
+                          <option value="center-right" data-i18n="ui.position.centerRight">Center right</option>
+                          <option value="bottom-left" data-i18n="ui.position.bottomLeft">Bottom left</option>
+                          <option value="bottom-center" data-i18n="ui.position.bottomCenter">Bottom center</option>
+                          <option value="bottom-right" selected data-i18n="ui.position.bottomRight">Bottom right</option>
                         </select>
                       </div>
                     </div>
@@ -2086,7 +2086,7 @@
                         <span id="settingWatermarkOpacityVal" class="settings-range-val">100%</span>
                       </div>
                     </div>
-                    <div class="settings-item" data-setting-key="settingWatermarkScale" data-setting-search="watermark size scale" title="Size as a percent of the image's shorter edge — keeps the watermark optically consistent across aspect ratios.">
+                    <div class="settings-item" data-setting-key="settingWatermarkScale" data-setting-search="watermark size scale" data-i18n-title="ui.watermark.size.tooltip" title="Size as a percent of the image's shorter edge — keeps the watermark optically consistent across aspect ratios.">
                       <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.size">Size</span></div>
                       <div class="settings-item-control settings-range">
                         <input type="range" id="settingWatermarkScale" min="1" max="50" value="15">
@@ -2331,7 +2331,7 @@
      ═══════════════════════════════════════════ -->
 
 <div class="statusbar">
-  <span id="statusUpdate" class="update-indicator" style="display:none;" title="Update available" onclick="UpdateBanner._showDetails()">&#x2B06; Update</span>
+  <span id="statusUpdate" class="update-indicator" style="display:none;" data-i18n-title="ui.status.updateAvailable" title="Update available" onclick="UpdateBanner._showDetails()" data-i18n="ui.status.update">&#x2B06; Update</span>
   <span id="statusDims">768 &times; 768</span>
   <span class="spacer"></span>
   <span id="statusVRAM" class="vram-readout" data-help="help.status.vram"></span>

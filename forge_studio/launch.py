@@ -477,6 +477,22 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
                     "Compute runtime: %s was requested but is not available "
                     "on this machine.", refusal,
                 )
+            # MAC1. The device the ENGINE chose, as reported by the backend --
+            # never guessed from the operating system here.
+            device = effective.get("device") or {}
+            kind = device.get("device_type", "unknown")
+            if kind == "cpu":
+                logger.warning(
+                    "Compute device: none usable. Studio found no NVIDIA GPU "
+                    "(CUDA) and no Apple Silicon GPU (MPS). The interface works, "
+                    "but Generate will refuse with this explanation.")
+            else:
+                extra = ""
+                if kind == "mps":
+                    extra = ", macOS {}, bf16 {}".format(
+                        device.get("macos", "?"), device.get("bf16", "?"))
+                logger.info("Compute device: %s (attention %s%s)", kind,
+                            device.get("attention_backend", "?"), extra)
         else:
             # Studio still serves. The menus stay honestly empty rather than
             # showing names the engine cannot dispatch, which is the same rule

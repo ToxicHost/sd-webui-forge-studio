@@ -259,14 +259,16 @@ def _read_upscalers() -> tuple[tuple[str, ...], tuple[str, ...]]:
     elif not shared.sd_upscalers and not _UPSCALER_SCAN_DONE:
         try:
             # UP1. Neo's `load_upscalers()`, pointed at the owner's upscaler
-            # folders (`upscaler_roots`); it restores the old list itself if
-            # the scan fails, so a failure here leaves a retryable state.
+            # folders (`upscaler_roots`). It puts the previous list back on a
+            # failure and says whether a retry could work: FINAL is the
+            # died-after-its-own-`del` case above, latched like it.
             from . import upscaler_roots
 
-            scanned = upscaler_roots.scan()
+            outcome = upscaler_roots.scan()
+            latch = outcome in (upscaler_roots.SCANNED, upscaler_roots.FINAL)
         except BaseException:  # noqa: BLE001 - a UI list is never fatal
-            scanned = False
-        if scanned:
+            latch = False
+        if latch:
             # Latch on SUCCESS only. Setting it before the try meant one early
             # call -- /api/registries against a server whose engine had not
             # finished coming up -- latched the scan as done after it had
@@ -298,7 +300,7 @@ def rescan_upscalers() -> bool:
     try:
         from . import upscaler_roots
 
-        return upscaler_roots.scan()
+        return upscaler_roots.scan() == upscaler_roots.SCANNED
     except BaseException:  # noqa: BLE001 - a UI list is never fatal
         return False
 
