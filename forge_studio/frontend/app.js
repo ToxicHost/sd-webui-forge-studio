@@ -514,6 +514,7 @@ const State = {
   saveLossless: false,     // WebP lossless mode
   galleryFolder: "",       // optional absolute server-side folder for "Save to Gallery" (empty = output/studio/)
   saveDir: "",             // optional absolute server-side folder for auto-save on generate (empty = Forge output dir)
+  namePattern: "",         // NM1: file name pattern for saved results (empty = Studio-[number]-[seed])
   livePreview: true,       // show preview thumbnail during generation
   livePreviewQuality: "auto", // preview decode mode: auto (full-res, safe) | fast (experimental) | legacy
   promptCleanup: true,     // tidy the payload copy of prompts on generate
@@ -780,7 +781,67 @@ function _saveLocationFields(purpose) {
   if (dir) fields.save_dir = dir;
   if (tree === "neo") fields.save_tree = "neo";
   if (purpose === "upscaled") fields.purpose = "upscaled";
+  // NM1. The owner's file name pattern; the server validates it and says why
+  // a bad one is refused.
+  const pattern = (document.getElementById("settingNamePattern")?.value ?? State.namePattern ?? "")
+    .trim();
+  if (pattern) fields.name_pattern = pattern;
   return Object.keys(fields).length ? fields : null;
+}
+
+// NM1. Settings > Save folder > File name: a preview of the pattern with
+// sample values, and the same refusals the server makes
+// (forge_headless/name_pattern.py), so a typo shows before Generate.
+const NAME_PATTERN_SAMPLE = {
+  number: "00012", seed: "1234567890", steps: "28", cfg: "5", shift: "3",
+  sampler: "Euler a", scheduler: "Normal", width: "1024", height: "1024",
+  model_name: "model", mode: "create", prompt: "a_cat_on_a_windowsill",
+  prompt_spaces: "a cat on a windowsill", prompt_words: "a cat on a windowsill",
+  prompt_hash: "3f2a9c1b", denoising: "",
+};
+function _namePatternPreview(pattern) {
+  const text = String(pattern || "").trim();
+  if (!text) return { ok: true, name: "Studio-00012-1234567890.png" };
+  if (text.length > 200) return { ok: false, message: "The pattern is longer than 200 characters." };
+  const now = new Date();
+  const two = (n) => String(n).padStart(2, "0");
+  const date = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
+  const stamp = `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}`
+    + `${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  let out = "";
+  const unknown = [];
+  const re = /(.*?)(?:\[([^\[\]]+)\]|$)/gy;
+  let m;
+  while ((m = re.exec(text)) && re.lastIndex <= text.length) {
+    const literal = m[1] || "";
+    if (/[<>:"/\\|?*\x00-\x1f]/.test(literal)) {
+      return { ok: false, message: "A file name cannot contain < > : \" / \\ | ? *" };
+    }
+    if (m[2] === undefined) { out += literal; if (m[0] === "") break; continue; }
+    const token = m[2].replace(/<[^>]*>/g, "").toLowerCase();
+    let value;
+    if (token === "date") value = date;
+    else if (token === "datetime") {
+      // The common strftime codes; the server formats the real name.
+      const fmt = (m[2].match(/<([^>]*)>/) || [])[1];
+      const codes = { Y: now.getFullYear(), y: two(now.getFullYear() % 100), m: two(now.getMonth() + 1),
+        d: two(now.getDate()), H: two(now.getHours()), M: two(now.getMinutes()), S: two(now.getSeconds()) };
+      value = fmt ? fmt.replace(/%([YymdHMS%])/g, (_, c) => (c === "%" ? "%" : codes[c])) : stamp;
+    }
+    else if (Object.prototype.hasOwnProperty.call(NAME_PATTERN_SAMPLE, token)) value = NAME_PATTERN_SAMPLE[token];
+    else { unknown.push(`[${m[2]}]`); continue; }
+    if (token === "denoising") continue;   // txt2img writes nothing, as Neo does
+    out += literal + value;
+  }
+  if (unknown.length) return { ok: false, message: `Unknown token ${unknown.join(", ")}.` };
+  return { ok: true, name: `${out.trim() || "Studio"}.png` };
+}
+function _renderNamePatternPreview() {
+  const el = document.getElementById("settingNamePatternPreview");
+  if (!el) return;
+  const result = _namePatternPreview(document.getElementById("settingNamePattern")?.value);
+  el.textContent = result.ok ? `Example: ${result.name}` : result.message;
+  el.style.color = result.ok ? "" : "var(--error, #e06c75)";
 }
 
 // OF1. The format and folder an ESRGAN-only upscale is saved with -- the same
@@ -7029,6 +7090,17 @@ function bindUI() {
   };
   _saveDirInput?.addEventListener("input", _syncSaveDir);
   _saveDirInput?.addEventListener("change", _syncSaveDir);
+
+  // ===== File name pattern (NM1) =====
+  const _namePatternInput = document.getElementById("settingNamePattern");
+  const _syncNamePattern = () => {
+    State.namePattern = (_namePatternInput?.value || "").trim();
+    window.Prefs?.set("name_pattern", State.namePattern);
+    _renderNamePatternPreview();
+  };
+  _namePatternInput?.addEventListener("input", _syncNamePattern);
+  _namePatternInput?.addEventListener("change", _syncNamePattern);
+  _renderNamePatternPreview();
   document.getElementById("saveDirBrowse")?.addEventListener("click", async () => {
     // Blank opens in Studio's own output folder: the server knows where that is.
     const path = await _studioPickFolder({ purpose: "save", start: _saveDirInput?.value });
@@ -7097,6 +7169,7 @@ function bindUI() {
     { role: "lora",         input: "modelRootLora",        status: "modelRootStatusLora",        browse: "modelRootBrowseLora" },
     { role: "adetailer",    input: "modelRootAdetailer",   status: "modelRootStatusAdetailer",   browse: "modelRootBrowseAdetailer" },
     { role: "embedding",    input: "modelRootEmbedding",   status: "modelRootStatusEmbedding",   browse: "modelRootBrowseEmbedding" },
+    { role: "upscaler",     input: "modelRootUpscaler",    status: "modelRootStatusUpscaler",    browse: "modelRootBrowseUpscaler" },
   ];
   // Held per process by the server and never persisted; refreshed on each read.
   let _modelRootToken = "";
@@ -7303,6 +7376,9 @@ function bindUI() {
       if (typeof window.populateDropdowns === "function") {
         await window.populateDropdowns();
       }
+      // UP1. The server rescanned the upscaler folders; refill the Hires and
+      // Upscale menus, which `_refreshRegistries` no longer touches once live.
+      _loadRegistries().catch(() => {});
     } catch (e) {
       _setModelFoldersState("error", _i18n("settings.modelFolders.saveUnreachable", "Studio could not be reached. Folders were not changed."));
     }
@@ -8081,6 +8157,7 @@ function bindUI() {
     State.galleryFolder = document.getElementById("settingGalleryFolder")?.value?.trim() || "";
     State.saveDir = document.getElementById("settingSaveDir")?.value?.trim() || "";
     State.saveTree = document.getElementById("settingSaveTree")?.value === "neo" ? "neo" : "studio";
+    State.namePattern = document.getElementById("settingNamePattern")?.value?.trim() || "";
     // Read format + both independent qualities + lossless from the restored
     // DOM authoritatively (also updates slider labels and row visibility).
     syncOutputSettingsFromDOM();
@@ -10895,6 +10972,13 @@ async function init() {
       const el = document.getElementById("settingSaveTree");
       if (el) el.value = tree;
       State.saveTree = tree;
+    }
+    const _np = window.Prefs?.get("name_pattern");
+    if (_np != null) {
+      const el = document.getElementById("settingNamePattern");
+      if (el) el.value = _np;
+      State.namePattern = String(_np).trim();
+      _renderNamePatternPreview();
     }
     const _gf = window.Prefs?.get("gallery_folder");
     if (_gf != null) {

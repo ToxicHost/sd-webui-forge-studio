@@ -212,6 +212,9 @@ class OutputOptions:
     save_tree: str = "studio"
     #: OF1. `upscaled` for the Upscale panel's refine leg, else "".
     purpose: str = ""
+    #: NM1. The owner's file name pattern (`name_pattern.py`), already
+    #: validated, or "" for Studio's own `Studio-<NNNNN>-<seed>`.
+    name_pattern: str = ""
 
 
 @dataclass(frozen=True)

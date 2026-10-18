@@ -1415,6 +1415,25 @@
                       <button class="defaults-btn" id="modelRootBrowseEmbedding" data-role="embedding" data-i18n="settings.modelFolders.browse">Browse…</button>
                     </div>
                   </div>
+                  <!-- UP1. Image upscalers (ESRGAN, DAT, SwinIR...) for Hires
+                       and the Upscale panel. Studio's own models/ESRGAN stays
+                       listed too, for the bundled upscaler. -->
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootUpscaler" data-setting-search="model folder upscaler upscalers esrgan dat swinir hires upscale directory path">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.upscaler">Upscaler folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusUpscaler" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootUpscaler" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListUpscaler"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddUpscaler" data-role="Upscaler" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseUpscaler" data-role="upscaler" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
                   <div class="settings-item-description" id="modelRootDetectorSummary"></div>
 
                   <div class="settings-action-row" data-setting-key="modelFoldersSave" data-setting-search="save model folders apply directories">
@@ -1930,7 +1949,7 @@
                   <div class="settings-item" data-setting-key="settingSaveTree" data-setting-search="save tree studio neo output folders structure">
                     <div class="settings-item-copy">
                       <span class="settings-item-title" data-i18n="settings.saveDir.tree">Save tree</span>
-                      <p class="settings-item-description" data-i18n="settings.saveDir.treeHint">With Neo output folders, new images save into Neo’s own txt2img / img2img folders (using Studio’s filenames and metadata); existing images stay where they are and remain visible in Gallery.</p>
+                      <p class="settings-item-description" data-i18n="settings.saveDir.treeHint">With Neo output folders, new images save into Neo’s own txt2img / img2img folders (named by the File name setting, with Studio’s metadata); existing images stay where they are and remain visible in Gallery.</p>
                     </div>
                     <div class="settings-item-control">
                       <select class="param-select settings-select-wide" id="settingSaveTree">
@@ -1956,6 +1975,16 @@
                     </div>
                   </div>
                   <div id="trustedRootsList" class="settings-trusted-roots"></div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="settingNamePattern" data-setting-search="file name pattern naming convention filename tokens seed date">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.saveDir.name">File name</span>
+                      <p class="settings-item-description" data-i18n="settings.saveDir.nameHint">How new images are named. Mix your own text with tokens such as [number] [seed] [date] [datetime] [model_name] [prompt_words] [steps] [cfg] [sampler] [width] [height] [mode]. Leave blank for Studio-[number]-[seed]. Existing names are never overwritten.</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="settingNamePattern" maxlength="200" spellcheck="false" data-i18n-placeholder="settings.saveDir.namePlaceholder" placeholder="Studio-[number]-[seed]">
+                      <p class="settings-item-description" id="settingNamePatternPreview" aria-live="polite"></p>
+                    </div>
+                  </div>
                 </div>
               </section>
 

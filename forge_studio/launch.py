@@ -87,7 +87,8 @@ def load_config(path: Path) -> dict[str, Any]:
     if not isinstance(port, int) or isinstance(port, bool) or not (
         0 <= port <= 65535
     ):
-        raise _fail("port must be an integer between 0 and 65535 (0=ephemeral).")
+        raise _fail("port must be an integer between 0 and 65535 "
+                    "(0 = Studio's own port, 7865 or the next free one).")
 
     onboarding = raw.get("onboarding", "default")
     if onboarding not in ("default", "suppressed"):
@@ -399,22 +400,6 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
         config["studio_state_root"],
         config["studio_state_root_source"],
     )
-    if config["port"] == 0:
-        # Stated because it is otherwise undetectable. A browser scopes its
-        # own storage to an origin, and an origin includes the port -- so a
-        # launch on a fresh ephemeral port reads none of the settings the last
-        # one wrote, and then rewrites several of them from defaults. The next
-        # session does not look damaged; it looks new. Proven in a browser:
-        # Evidence/r1-d1-origin-scope/.
-        #
-        # Preferences and saved defaults are unaffected. They live on the state
-        # root above and are served to whatever origin asks.
-        logger.info(
-            "This launch uses an ephemeral port, so the browser treats it as a "
-            "new site: theme, layout, panel sizes, tool settings and tour "
-            "progress start from defaults. Settings kept on the state root are "
-            "not affected. Set a fixed port to keep the rest between launches."
-        )
     logger.info("Log file: %s", log_path)
 
     # R1.5 Phase D: Studio initialises its own backend, on purpose, here.
@@ -648,20 +633,24 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
     # signal for the migration that follows this stage.
     server = None
     try:
-        server = _StudioHTTPServer(
-            (config["host"], config["port"]),
-            presentation,
-            model_root_settings=settings,
-            filesystem_service=filesystem_service,
-            preferences=preferences,
-            defaults=defaults,
-            state_root=config["studio_state_root"],
-            result_root=config["result_root"],
-            # U1. Settings > Check for Updates runs the documented
-            # `git pull --ff-only` on this checkout.
-            updater=UpdateService(APP_ROOT),
+        server = _bind_studio_server(
+            lambda port: _StudioHTTPServer(
+                (config["host"], port),
+                presentation,
+                model_root_settings=settings,
+                filesystem_service=filesystem_service,
+                preferences=preferences,
+                defaults=defaults,
+                state_root=config["studio_state_root"],
+                result_root=config["result_root"],
+                # U1. Settings > Check for Updates runs the documented
+                # `git pull --ff-only` on this checkout.
+                updater=UpdateService(APP_ROOT),
+            ),
+            config["port"],
         )
         actual_port = int(server.server_address[1])
+        _log_port_choice(config["port"], actual_port)
         # The machine-readable ready line. Emitted exactly once, only AFTER
         # the bind above succeeded (a bind failure raises before this line),
         # and flushed so a piped consumer reads it promptly without -u.
@@ -691,6 +680,62 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
         composition.shutdown()
         logger.info("Studio internal alpha stopped cooperatively.")
     return 0
+
+
+#: P2. Studio's own port, and the ones after it, for a config that says 0.
+STUDIO_PORT = 7865
+STUDIO_PORTS = tuple(range(STUDIO_PORT, STUDIO_PORT + 15))
+
+
+def _studio_ports(configured: int) -> tuple[int, ...]:
+    """The ports to try, in order.
+
+    P2. A browser scopes its storage to an origin, and an origin includes the
+    port, so a new port each launch reads none of what the last launch saved
+    in the browser -- theme, layout, panel sizes, tool settings, tours -- and
+    every start looks like a first start (Evidence/r1-d1-origin-scope/). The
+    tester launcher writes `"port": 0`, and 0 used to mean "any free port",
+    so every tester lost those settings at every launch. 0 now means
+    Studio's own port: 7865, or the first free one after it, which is the
+    same port launch after launch. Any free port is the last resort. A port
+    the owner set is used as it is, and a clash with it still fails.
+    """
+
+    return (configured,) if configured else (*STUDIO_PORTS, 0)
+
+
+def _bind_studio_server(make: Any, configured: int) -> Any:
+    """`make(port)` on the first port of `_studio_ports` that binds.
+
+    The server sets `allow_reuse_address = False`, so a port another program
+    is listening on refuses the bind instead of being shared.
+    """
+
+    candidates = _studio_ports(configured)
+    for index, port in enumerate(candidates):
+        try:
+            return make(port)
+        except OSError:
+            if index == len(candidates) - 1:
+                raise
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _log_port_choice(configured: int, actual: int) -> None:
+    if configured or actual == STUDIO_PORT:
+        return
+    if actual in STUDIO_PORTS:
+        logger.info(
+            "Port %d is in use, so Studio is on port %d. The browser keeps "
+            "theme, layout and tool settings per port, so those from port %d "
+            "are not shown on this one. Settings kept on the state root are "
+            "not affected.", STUDIO_PORT, actual, STUDIO_PORT)
+        return
+    logger.warning(
+        "Ports %d-%d are all in use, so this launch uses port %d. The browser "
+        "treats it as a new site: theme, layout, panel sizes, tool settings "
+        "and tour progress start from defaults. Settings kept on the state "
+        "root are not affected.", STUDIO_PORTS[0], STUDIO_PORTS[-1], actual)
 
 
 def _runtime_from(arguments: Any) -> dict[str, Any]:

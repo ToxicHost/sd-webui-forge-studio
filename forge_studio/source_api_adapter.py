@@ -1135,13 +1135,19 @@ class SourceFrontendAdapter:
         options = settings
         try:
             encoder, extension, _media = resolve_output_format(options)
+            picture = decode_canvas(image_b64)
             path = write_result(
-                decode_canvas(image_b64),
+                picture,
                 output_folder(root, save_dir=decision.folder, layout=settings.save_tree,
                               operation="img2img", purpose=PURPOSE_UPSCALED),
                 # An upscale has no seed of its own; the Extension writes 0.
                 seed=0, extension=extension, encoder_format=encoder,
                 save_kwargs=output_save_kwargs(options, encoder),
+                # NM1. The owner's pattern; an upscale knows its size and mode
+                # and nothing about a prompt, so those tokens write nothing.
+                name_pattern=settings.name_pattern,
+                name_context={"mode": PURPOSE_UPSCALED,
+                              "width": picture.size[0], "height": picture.size[1]},
             )
         except (HeadlessError, ValueError) as error:
             return {"save_error": getattr(error, "message", str(error))}

@@ -273,6 +273,18 @@ class ModelRootRegistry:
         except Exception:  # noqa: BLE001 - a model root is not worth a crash
             pass
 
+        # UP1: the upscaler roots, and a rescan when they changed after the
+        # engine already listed its upscalers (the Hires and Upscale menus).
+        try:
+            from . import neo_registries, upscaler_roots
+
+            wanted = tuple(self._engine_roots("upscaler"))
+            if wanted != upscaler_roots.roots():
+                upscaler_roots.set_roots(wanted)
+                neo_registries.rescan_upscalers()
+        except Exception:  # noqa: BLE001 - a model root is not worth a crash
+            pass
+
         shared = sys.modules.get("modules.shared")
         if shared is None:
             # NOT imported on purpose. Doing so here would drag the engine into

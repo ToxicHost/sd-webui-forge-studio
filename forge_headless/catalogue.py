@@ -129,6 +129,7 @@ MODEL_ROLE_VAE = "vae"
 MODEL_ROLE_ADETAILER = "adetailer"
 MODEL_ROLE_LORA = "lora"
 MODEL_ROLE_EMBEDDING = "embedding"
+MODEL_ROLE_UPSCALER = "upscaler"
 
 #: Every role with a configurable ROOT DIRECTORY, in presentation order.
 #:
@@ -155,6 +156,12 @@ MODEL_ROLES: tuple[str, ...] = (
     #: and read by the engine's CLIP text encoders when a model loads -- the
     #: same standing as a LoRA: a root, never part of the resident session.
     MODEL_ROLE_EMBEDDING,
+    #: UP1 (2026-10-18). Image upscalers (ESRGAN and the other Spandrel
+    #: architectures) for Hires and the Upscale panel. Neo reads ONE folder,
+    #: `cmd_opts.esrgan_models_path` (`modules/modelloader.py`
+    #: `load_upscalers`); `upscaler_roots` hands it the first and adds the
+    #: rest. A root, never part of the resident session.
+    MODEL_ROLE_UPSCALER,
 )
 
 #: Retained name for the checkpoint role. ``model_kind`` on a candidate is the
@@ -198,6 +205,15 @@ EMBEDDING_FORMAT_SUPPORT: dict[str, LoadSupport] = {
     ".bin": LoadSupport.LOAD_PLUMBED,
 }
 
+#: What an image upscaler may be: Neo's own filter
+#: (`modules/esrgan_model.py` `UpscalerESRGAN`, `ext_filter=[".pt", ".pth",
+#: ".safetensors"]`), so a folder already prepared for Forge lists unchanged.
+UPSCALER_FORMAT_SUPPORT: dict[str, LoadSupport] = {
+    ".pth": LoadSupport.LOAD_PLUMBED,
+    ".pt": LoadSupport.LOAD_PLUMBED,
+    ".safetensors": LoadSupport.LOAD_PLUMBED,
+}
+
 ROLE_FORMAT_SUPPORT: dict[str, dict[str, LoadSupport]] = {
     MODEL_ROLE_CHECKPOINT: FORMAT_SUPPORT,
     MODEL_ROLE_TEXT_ENCODER: MODULE_FORMAT_SUPPORT,
@@ -205,6 +221,7 @@ ROLE_FORMAT_SUPPORT: dict[str, dict[str, LoadSupport]] = {
     MODEL_ROLE_ADETAILER: DETECTOR_FORMAT_SUPPORT,
     MODEL_ROLE_LORA: LORA_FORMAT_SUPPORT,
     MODEL_ROLE_EMBEDDING: EMBEDDING_FORMAT_SUPPORT,
+    MODEL_ROLE_UPSCALER: UPSCALER_FORMAT_SUPPORT,
 }
 
 #: The checkpoint blacklist exists to keep VAE files out of the *checkpoint*
@@ -217,6 +234,7 @@ ROLE_BLACKLISTED_SUFFIXES: dict[str, tuple[str, ...]] = {
     MODEL_ROLE_ADETAILER: (),
     MODEL_ROLE_LORA: (),
     MODEL_ROLE_EMBEDDING: (),
+    MODEL_ROLE_UPSCALER: (),
 }
 
 #: Bounds on a single scan. A root is now owner-supplied and may be outside the

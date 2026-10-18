@@ -4978,6 +4978,7 @@ function _showCtxMenu(x, y) {
         { type: "sep" },
         { label: "Zoom to Fit", shortcut: "F", action: () => { C.zoomFit(); updateStatus(); _redraw(); } },
         { type: "sep" },
+        { label: "Open in New Tab", action: _ctxOpenCanvasInNewTab },
         { label: "Save as PNG", action: () => _ctxSaveCanvas("png") },
         { label: "Save as JPEG", action: () => _ctxSaveCanvas("jpeg") },
         { label: "Save as WebP", action: () => _ctxSaveCanvas("webp") },
@@ -5060,6 +5061,33 @@ function _showLayerCtxMenu(x, y) {
     menu.style.left = Math.min(x, window.innerWidth - 220) + "px";
     menu.style.top = Math.min(y, window.innerHeight - 240) + "px";
     menu.style.display = "block";
+}
+
+// NM1. Right-click › Open in New Tab: the picture as Save as PNG flattens it,
+// shown in a browser tab and written nowhere. Everything happens inside the
+// click, so the popup blocker treats the tab as the click's own; a blob URL
+// (CSP img-src allows blob:) instead of a data URL, which Chrome refuses to
+// open at the top level. The last few stay alive so a reload of the tab works.
+const _openedCanvasUrls = [];
+function _ctxOpenCanvasInNewTab() {
+    const C = window.StudioCore;
+    let url;
+    try {
+        const dataUrl = C.exportFlattened("image/png");
+        const bytes = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
+        const buffer = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) buffer[i] = bytes.charCodeAt(i);
+        url = URL.createObjectURL(new Blob([buffer], { type: "image/png" }));
+    } catch (e) {
+        console.error("[StudioUI] Open in New Tab failed:", e);
+        if (window.showToast) window.showToast("Could not open the picture in a new tab", "error");
+        return;
+    }
+    _openedCanvasUrls.push(url);
+    while (_openedCanvasUrls.length > 5) URL.revokeObjectURL(_openedCanvasUrls.shift());
+    if (!window.open(url, "_blank") && window.showToast) {
+        window.showToast("The browser blocked the new tab -- allow pop-ups for Studio", "info");
+    }
 }
 
 async function _ctxSaveCanvas(fmt, applyWm) {

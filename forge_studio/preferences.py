@@ -105,6 +105,8 @@ PREFERENCE_KEYS = frozenset({
     "gpu_device",
     "gpu_tile_compositing",
     "layout_preset",
+    # NM1. Settings > Save folder > File name.
+    "name_pattern",
     # CT9. Outpaint's "Refine new area": off unless the owner chose it.
     "outpaint_refine",
     "panel_ui",
@@ -149,6 +151,9 @@ PREFERENCE_SHAPES: dict[str, Any] = {
     "gpu_device": str,
     "gpu_tile_compositing": bool,
     "layout_preset": str,
+    # Text only here; whether it is a usable pattern is decided where it is
+    # used (`_validated_output`), so a typo is said at Generate, not lost.
+    "name_pattern": str,
     "outpaint_refine": bool,
     "panel_ui": dict,
     "remember_session": bool,

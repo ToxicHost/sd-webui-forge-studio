@@ -224,10 +224,55 @@ def result_folder(result_root: Path | str, request: object) -> Path:
     )
 
 
+def name_context(request: object, processing: object, image: Any) -> dict[str, Any]:
+    """NM1. What the owner's file name pattern can say about this result.
+
+    Neo's sources for the same tokens (`images.py:390-428`): the prompt is the
+    one the engine actually ran (`all_prompts`, after wildcards and comment
+    removal), the model is the loaded checkpoint's `name_for_extra`, and the
+    size is the written picture's. Each falls back to the request.
+    """
+
+    from .output_layout import mode_folder
+
+    output = getattr(request, "output", None)
+    operation = getattr(request, "operation", "") or "txt2img"
+    operation = str(getattr(operation, "value", operation))
+    prompts = list(getattr(processing, "all_prompts", None) or [])
+    prompt = prompts[0] if prompts else (getattr(processing, "prompt", None)
+                                         or getattr(request, "positive_prompt", ""))
+    checkpoint = getattr(getattr(processing, "sd_model", None), "sd_checkpoint_info", None)
+    model = getattr(checkpoint, "name_for_extra", None) or Path(
+        str(getattr(request, "model_id", "") or "")).stem
+    sampler = getattr(getattr(processing, "sampler", None), "name", None) or getattr(
+        processing, "sampler_name", None) or getattr(request, "sampler", "")
+    scheduler = getattr(processing, "scheduler", None) or getattr(request, "scheduler", "")
+    width, height = getattr(image, "size", (getattr(request, "width", 0),
+                                            getattr(request, "height", 0)))
+    return {
+        "prompt": str(prompt or ""),
+        "model_name": str(model or ""),
+        "steps": getattr(request, "steps", ""),
+        "cfg": getattr(request, "cfg_scale", ""),
+        "shift": getattr(request, "distilled_cfg_scale", ""),
+        "sampler": str(sampler or ""),
+        "scheduler": str(scheduler or ""),
+        "width": width,
+        "height": height,
+        "mode": mode_folder(operation, str(getattr(output, "purpose", "") or "")),
+        # Neo writes nothing (and drops the text before it) for txt2img.
+        "denoising": (getattr(request, "denoising_strength", None)
+                      if operation != "txt2img" else None),
+    }
+
+
 def write_result(image: Any, folder: Path, *, seed: Any, extension: str,
                  encoder_format: str = "PNG",
-                 save_kwargs: dict[str, Any] | None = None) -> Path:
-    """Write one result as `Studio-NNNNN-<seed>.<ext>` in `folder`.
+                 save_kwargs: dict[str, Any] | None = None,
+                 name_pattern: str = "",
+                 name_context: dict[str, Any] | None = None) -> Path:
+    """Write one result as `Studio-NNNNN-<seed>.<ext>` in `folder`, or under
+    the owner's `name_pattern` (NM1, `name_pattern.py`) when one is set.
 
     Exclusive at every name: a name another writer took between the counter
     scan and the create moves on to the next number, as the Extension's probe
@@ -235,6 +280,7 @@ def write_result(image: Any, folder: Path, *, seed: Any, extension: str,
     """
 
     from .contracts import HeadlessError
+    from .name_pattern import write_patterned
     from .output_layout import write_numbered
 
     def write(target: Path) -> None:
@@ -247,6 +293,10 @@ def write_result(image: Any, folder: Path, *, seed: Any, extension: str,
             raise
 
     try:
+        if name_pattern:
+            return write_patterned(Path(folder), pattern=name_pattern,
+                                   context={"seed": seed, **(name_context or {})},
+                                   extension=extension, write=write)
         return write_numbered(Path(folder), seed=seed, extension=extension, write=write)
     except FileExistsError:
         raise HeadlessError(
@@ -2139,6 +2189,8 @@ class StudioLiveGenerationPort:
                 # containers, and nothing above emits either.
                 **metadata_save_kwargs(infotext, encoder_format, output),
             },
+            name_pattern=str(getattr(output, "name_pattern", "") or ""),
+            name_context=name_context(request, processing, image),
         )
         width, height = image.size
 

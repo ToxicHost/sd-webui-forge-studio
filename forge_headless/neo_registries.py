@@ -258,12 +258,15 @@ def _read_upscalers() -> tuple[tuple[str, ...], tuple[str, ...]]:
             _UPSCALER_SCAN_DONE.append(True)
     elif not shared.sd_upscalers and not _UPSCALER_SCAN_DONE:
         try:
-            from modules import modelloader
+            # UP1. Neo's `load_upscalers()`, pointed at the owner's upscaler
+            # folders (`upscaler_roots`); it restores the old list itself if
+            # the scan fails, so a failure here leaves a retryable state.
+            from . import upscaler_roots
 
-            modelloader.load_upscalers()
+            scanned = upscaler_roots.scan()
         except BaseException:  # noqa: BLE001 - a UI list is never fatal
-            pass
-        else:
+            scanned = False
+        if scanned:
             # Latch on SUCCESS only. Setting it before the try meant one early
             # call -- /api/registries against a server whose engine had not
             # finished coming up -- latched the scan as done after it had
@@ -277,6 +280,27 @@ def _read_upscalers() -> tuple[tuple[str, ...], tuple[str, ...]]:
         for entry in (getattr(shared, "sd_upscalers", None) or ())
     )
     return latent, image
+
+
+def rescan_upscalers() -> bool:
+    """UP1. Re-read the image upscalers after the owner changed the folders.
+
+    Only when a scan has already run in this process: before that, the first
+    registry read scans with the new folders anyway, and calling Neo here
+    would import it into a Studio that had not imported it yet. True when the
+    list was rebuilt.
+    """
+
+    import sys
+
+    if "modules.shared" not in sys.modules or not _UPSCALER_SCAN_DONE:
+        return False
+    try:
+        from . import upscaler_roots
+
+        return upscaler_roots.scan()
+    except BaseException:  # noqa: BLE001 - a UI list is never fatal
+        return False
 
 
 def is_known_sampler(name: str, registries: Registries) -> bool:

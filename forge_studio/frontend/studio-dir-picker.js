@@ -36,10 +36,10 @@
   // Must stay equal to `catalogue.MODEL_ROLES` -- a guard asserts it,
   // because the two drifting is how a root becomes configurable on one
   // side and invisible on the other.
-  const ROLES = ["checkpoint", "text_encoder", "vae", "adetailer", "lora", "embedding"];
+  const ROLES = ["checkpoint", "text_encoder", "vae", "adetailer", "lora", "embedding", "upscaler"];
   const ROLE_SUFFIX = {
     checkpoint: "Checkpoint", text_encoder: "TextEncoder", vae: "Vae",
-    adetailer: "Adetailer", lora: "Lora", embedding: "Embedding",
+    adetailer: "Adetailer", lora: "Lora", embedding: "Embedding", upscaler: "Upscaler",
   };
 
   const state = {

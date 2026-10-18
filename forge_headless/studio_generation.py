@@ -654,6 +654,8 @@ def translate_request(
             save_dir=str(getattr(_output_settings, "save_dir", "") or ""),
             save_tree=str(getattr(_output_settings, "save_tree", "") or "studio"),
             purpose=str(getattr(_output_settings, "purpose", "") or ""),
+            # NM1. The same seam a fourth time; guarded with the others.
+            name_pattern=str(getattr(_output_settings, "name_pattern", "") or ""),
         )
 
     headless = FirstImageRequest(

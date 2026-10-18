@@ -67,6 +67,7 @@ TITLES = {
     "vae": "Select VAE folder",
     "lora": "Select LoRA folder",
     "embedding": "Select embeddings folder",
+    "upscaler": "Select upscaler folder",
     "adetailer": "Select detector folder",
     "save": "Select save folder",
     "gallery": "Select image folder",

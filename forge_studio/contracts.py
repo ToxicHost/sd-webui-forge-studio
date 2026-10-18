@@ -542,6 +542,9 @@ class OutputSettings(Contract):
     #: OF1. `upscaled` for the Upscale panel's refine leg, which the Extension
     #: saves under `upscaled` (`studio_api.py:4524`); "" for a generation.
     purpose: str = ""
+    #: NM1. Settings > Save folder > File name: a pattern of Neo's tokens
+    #: (`forge_headless/name_pattern.py`), or "" for `Studio-<NNNNN>-<seed>`.
+    name_pattern: str = ""
 
 
 @dataclass(frozen=True)

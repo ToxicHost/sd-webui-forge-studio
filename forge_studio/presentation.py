@@ -1355,7 +1355,7 @@ def _validated_output(value: Any) -> Any:
         raise PresentationError("output settings must be a JSON object.")
     unknown = sorted(str(k) for k in value if k not in
                      ("format", "quality", "lossless", "embed_metadata", "watermark",
-                      "save_dir", "save_tree", "purpose"))
+                      "save_dir", "save_tree", "purpose", "name_pattern"))
     if unknown:
         raise PresentationError(
             f"Unknown output settings: {', '.join(unknown)}.")
@@ -1397,13 +1397,22 @@ def _validated_output(value: Any) -> Any:
     purpose = value.get("purpose", "")
     if purpose not in ("", "upscaled"):
         raise PresentationError("output purpose must be '' or 'upscaled'.")
+    # NM1. Refused with the reason (an unknown token, a path character), not
+    # cleaned: the owner typed it and should see what is wrong with it.
+    from forge_headless.name_pattern import validated_pattern
+
+    try:
+        name_pattern = validated_pattern(value.get("name_pattern", ""))
+    except ValueError as error:
+        raise PresentationError(str(error)) from None
 
     from .contracts import OutputSettings
 
     return OutputSettings(format=fmt, quality=quality, lossless=lossless,
                           embed_metadata=embed_metadata,
                           watermark=_validated_watermark(value.get("watermark")),
-                          save_dir=save_dir, save_tree=save_tree, purpose=purpose)
+                          save_dir=save_dir, save_tree=save_tree, purpose=purpose,
+                          name_pattern=name_pattern)
 
 
 def _validated_watermark(value: Any) -> Any:

@@ -3,6 +3,31 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Settings kept between launches, upscaler folder, file names, Open in New Tab — 2026-10-18 (third update)
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again.
+
+- **Studio keeps your settings between launches.** It used to start on a new
+  port each time, and the browser keeps theme, layout, panel sizes, tool
+  settings and tour progress per port, so every start looked like a first
+  start. Studio now uses port 7865 every time (or the next free one if
+  something else has 7865). Settings lost on earlier launches cannot be
+  brought back. Choose them once more and they stay.
+- **Upscaler folder** (Settings > Model folders): point Studio at the folder
+  where you keep upscalers (ESRGAN, Remacri, 4x-UltraSharp and the like),
+  for example Forge's `models/ESRGAN`, with Browse… and Save folders. You can
+  add several folders. Studio's own bundled upscaler stays listed, and the
+  Hires and Upscale menus update when you save.
+- **File name** (Settings > Save folder): name new images with a pattern,
+  for example `[date]_[model_name]_[number]`. The tokens are `[number]`
+  `[seed]` `[date]` `[datetime]` `[model_name]` `[prompt_words]` `[steps]`
+  `[cfg]` `[sampler]` `[width]` `[height]` `[mode]` and more, with a preview
+  as you type. Leave it blank for the usual `Studio-[number]-[seed]`.
+  Existing files are never overwritten.
+- **Open in New Tab** on the Canvas right-click menu shows the picture in a
+  browser tab without saving it.
+
 ## Whole graphics card, updater fix — 2026-10-18 (second update)
 
 Update with `git pull --ff-only` in your Studio folder, then close Studio and
