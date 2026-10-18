@@ -84,6 +84,9 @@ const REFUSE_ALIASED = "aliased-and-pixel-perfect-stay-on-legacys-pixel-walk";
 //: `begin` and never re-read, because re-resolving mid-stroke is how a stroke
 //: ends up half on one layer and half on another.
 let _stroke = null;
+//: CT10 Paint Mixer: the Canvas's `mixDab` while a mixing stroke is down,
+//: otherwise null -- and then nothing here differs from before.
+let _mixHook = null;
 
 const _stats = {
     contacts: 0, refusals: [], samples: 0, marks: 0,
@@ -459,22 +462,35 @@ function _mirror(T, p) {
 //: which a copy still has to turn.
 function _stamp(st, at, r, dep, angle, j, arc) {
     V.stamp(st.buffer, at, r, dep, angle, j, arc);
+    if (_mixHook) _mixHook(at.x, at.y, r * 2, true);   // CT10 Paint Mixer
     const sym = st.symmetry;
     if (!sym) return;
     const base = typeof angle === "number" ? angle : (dep.tip ? dep.tip.angle : 0);
     for (let i = 0; i < sym.length; i++) {
         V.stamp(st.buffer, _mirror(sym[i], at), r, dep, sym[i].s * base + sym[i].k, j, arc);
+        if (_mixHook) { const m = _mirror(sym[i], at); _mixHook(m.x, m.y, r * 2, false); }
     }
 }
 
 //: `V.sweep` and its copies. A sweep is round, so there is no angle to turn.
 function _sweep(st, from, to, r, dep, depTo, j, arc) {
     V.sweep(st.buffer, from, to, r, dep, depTo, j, arc);
+    //: CT10 Paint Mixer: a sweep is a continuous dab train, so the mixer is
+    //: told about it one brush radius at a time along it.
+    const mixAt = _mixHook ? _sweepPoints(from, to, r) : null;
+    if (mixAt) for (const p of mixAt) _mixHook(p.x, p.y, r * 2, true);
     const sym = st.symmetry;
     if (!sym) return;
     for (let i = 0; i < sym.length; i++) {
         V.sweep(st.buffer, _mirror(sym[i], from), _mirror(sym[i], to), r, dep, depTo, j, arc);
+        if (mixAt) for (const p of mixAt) { const m = _mirror(sym[i], p); _mixHook(m.x, m.y, r * 2, false); }
     }
+}
+function _sweepPoints(from, to, r) {
+    const n = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / Math.max(1, r)));
+    const pts = [];
+    for (let k = 1; k <= n; k++) pts.push({ x: from.x + (to.x - from.x) * k / n, y: from.y + (to.y - from.y) * k / n });
+    return pts;
 }
 
 // ───────────────────────────────────────────────────────── the contact
@@ -518,7 +534,9 @@ function _takeOwnership(S) {
 
 function begin(S, C, event, toDoc) {
     const refusal = refusalFor(S, event);
+    _mixHook = null;
     if (refusal) { _stroke = null; return _note(refusal); }
+    if (S.stroke && S.stroke.mix && C && C.mixDab) _mixHook = C.mixDab;
 
     const spec = describeStroke(S, C);
     const radius = spec.sizePx / 2;
@@ -1594,6 +1612,7 @@ function finish(S, event, toDoc) {
                       lanesInContact: st.lanes ? st.lanes.filter(L => L.th < st.spec.density).length : 0,
                       puffs: st.puffs };
     _stroke = null;
+    _mixHook = null;
     return summary;
 }
 
@@ -1604,6 +1623,7 @@ function finish(S, event, toDoc) {
  */
 function cancel() {
     _stroke = null;
+    _mixHook = null;
 }
 
 window.StudioBrushV2Adapter = {

@@ -29,6 +29,7 @@ from typing import Any
 
 from forge_headless.contracts import HeadlessError
 from forge_headless.model_roots import (
+    ALLOW_NETWORK_KEY,
     CONFIG_KEY,
     ModelRootRegistry,
     normalize_roots,
@@ -173,6 +174,7 @@ class ModelRootSettings:
             "roles": [statuses[role].to_dict() for role in sorted(statuses)],
             "roots": configured,
             "persistable": self.persistable,
+            ALLOW_NETWORK_KEY: bool(getattr(self._registry, "allow_network", False)),
             # Three opaque catalogue ids, or fewer. The page pre-selects its
             # dropdowns from these. Nothing else may read them: the moment
             # something loads from this value it stops being a preference and
@@ -223,11 +225,24 @@ class ModelRootSettings:
                         f"{where} path contains a null byte.",
                     )
 
+        # "Allow network model folders". Absent keeps the current value, so a
+        # page that predates the checkbox cannot switch it off by omission.
+        # Only a real boolean is accepted: this opens a path that touches
+        # other machines, and "false" (a string) is truthy.
+        allow_network = payload.get(ALLOW_NETWORK_KEY)
+        if allow_network is not None and not isinstance(allow_network, bool):
+            raise SettingsError(
+                "STUDIO_SETTINGS_MALFORMED",
+                f"{ALLOW_NETWORK_KEY} must be true or false.",
+            )
+
         with self._lock:
             # All-or-nothing. A refusal on any root leaves the previous
-            # configuration serving, and propagates its stable code.
-            self._registry.configure(roots)
-            persisted = self._persist(roots)
+            # configuration serving, and propagates its stable code. The
+            # opt-in changes in the SAME transaction: a refused save leaves
+            # it as it was.
+            self._registry.configure(roots, allow_network=allow_network)
+            persisted = self._persist(roots, self._registry.allow_network)
         # AFTER the lock and only on success. A refused write changed nothing,
         # so invalidating handles for it would cost the owner their place in a
         # directory tree for no reason.
@@ -286,10 +301,18 @@ class ModelRootSettings:
 
         return {SELECTION_KEY: dict(selection), "persisted": persisted}
 
-    def _persist(self, roots) -> bool:
-        return self._persist_key(CONFIG_KEY, _storable_roots(roots))
+    def _persist(self, roots, allow_network: bool = False) -> bool:
+        # One read-modify-write for both keys, so the roots and the switch
+        # they were validated under can never be saved half each.
+        return self._persist_keys({
+            CONFIG_KEY: _storable_roots(roots),
+            ALLOW_NETWORK_KEY: bool(allow_network),
+        })
 
     def _persist_key(self, key: str, value: Any) -> bool:
+        return self._persist_keys({key: value})
+
+    def _persist_keys(self, values: dict[str, Any]) -> bool:
         """Read-modify-write ONE key. Every other key is carried through.
 
         Including the retired ones. `profiles`, `selected_profile_id` and
@@ -316,7 +339,7 @@ class ModelRootSettings:
                 "The Studio configuration file could not be read, so the "
                 "change was applied but not saved.",
             ) from None
-        existing[key] = value
+        existing.update(values)
         try:
             write_config_atomically(self._config_path, existing)
         except OSError:

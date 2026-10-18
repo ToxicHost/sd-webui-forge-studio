@@ -229,15 +229,31 @@ def levelled(map_: Any, levels: tuple[float, float] = LEVELS) -> Any:
     return np.clip((map_ - low) / (high - low), 0.0, 1.0) if high - low > 1e-6 else map_ * 0
 
 
-def build(header: dict[str, Any], arrays: dict[str, Any], picture: Any = None,
-          snaps: dict[str, tuple[str, int, float]] | None = None,
-          levels: tuple[float, float] | None = LEVELS) -> dict[str, Any]:
-    """The viewer's answer from a sidecar's header and arrays.
+def _crop(header: dict[str, Any]) -> tuple[int, int, int, int, int, int] | None:
+    """`(x, y, w, h, frame_w, frame_h)` for a capture of Neo's "Only masked"
+    crop, or None for a capture of the whole picture.
 
-    `picture` is the Gallery picture as a Pillow image (any size), or None;
-    `snaps` replaces `SNAP`, for trying a setting; `levels` replaces
-    `LEVELS`, and None sends each map scaled over its own range only.
+    That pass samples `crop` of the init picture (`frame`, its own pixels)
+    scaled to the generation size (`modules/processing.py:1767-1773`,
+    `:1838-1844`), so its maps describe the box alone, and the delivered
+    picture is the whole frame with the box pasted back.
     """
+    crop, frame = header.get("crop"), header.get("frame")
+    try:
+        x, y, w, h = (int(v) for v in crop)
+        frame_w, frame_h = (int(v) for v in frame)
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0 or frame_w <= 0 or frame_h <= 0:
+        return None
+    return x, y, w, h, frame_w, frame_h
+
+
+def content_maps(header: dict[str, Any], arrays: dict[str, Any]) -> tuple[str, Any, list[tuple[str, Any, float]]]:
+    """`(family, maps, words)` from a sidecar: the family's map stack (Anima
+    blocks 2-8, else all blocks; SDXL's levels), or None when it has none,
+    and each content word with its summed grid and that grid's p99, in
+    prompt order. The viewer's words and, for word masks (M2), the same."""
     import numpy as np
 
     from forge_studio.attention_view import content_words
@@ -251,14 +267,8 @@ def build(header: dict[str, Any], arrays: dict[str, Any], picture: Any = None,
     else:
         maps = arrays.get("sdxl")
     if maps is None:
-        return {"available": False}
+        return family, None, []
     maps = np.asarray(maps, dtype=np.float32)
-    width, height = int(header.get("width") or 0), int(header.get("height") or 0)
-    sharp = family in LEVELLED and width > 0 and height > 0
-    out_w, out_h = display_size(width, height) if sharp else (int(maps.shape[2]), int(maps.shape[1]))
-    setting = (SNAP if snaps is None else snaps).get(family) if sharp else None
-    guide = _snapper(picture, header, out_w, out_h, setting) if setting else None
-
     words = []
     for word, positions in content_words(family, pieces):
         usable = [p for p in positions if p < maps.shape[0]]
@@ -266,14 +276,78 @@ def build(header: dict[str, Any], arrays: dict[str, Any], picture: Any = None,
             continue
         summed = maps[usable].sum(axis=0)
         words.append((word, summed, float(np.percentile(summed, 99))))
+    return family, maps, words
+
+
+def strengths(words: list[tuple[str, Any, float]]) -> list[float]:
+    """Each word's p99 as a multiple of the picture's median word's (FINDINGS
+    4.1/4.4, within the picture), rounded as the viewer sends it."""
+    import numpy as np
+
     median = float(np.median([w[2] for w in words])) if words else 0.0
+    return [round(p99 / median, 3) if median > 0 else 0.0 for _word, _summed, p99 in words]
+
+
+def build(header: dict[str, Any], arrays: dict[str, Any], picture: Any = None,
+          snaps: dict[str, tuple[str, int, float]] | None = None,
+          levels: tuple[float, float] | None = LEVELS) -> dict[str, Any]:
+    """The viewer's answer from a sidecar's header and arrays.
+
+    `picture` is the Gallery picture as a Pillow image (any size), or None;
+    `snaps` replaces `SNAP`, for trying a setting; `levels` replaces
+    `LEVELS`, and None sends each map scaled over its own range only.
+    """
+    import numpy as np
+
+    family, maps, words = content_maps(header, arrays)
+    if maps is None:
+        return {"available": False}
+    width, height = int(header.get("width") or 0), int(header.get("height") or 0)
+    sharp = family in LEVELLED and width > 0 and height > 0
+    crop = _crop(header) if width > 0 and height > 0 else None
+    if crop is not None:
+        # The maps fill the crop's box inside the whole picture and nothing
+        # else: every family, because a grid stretched over the frame would
+        # put the crop's words across the whole picture.
+        x, y, w, h, frame_w, frame_h = crop
+        out_w, out_h = display_size(frame_w, frame_h)
+        sx, sy = out_w / frame_w, out_h / frame_h
+        box = (round(x * sx), round(y * sy), max(1, round(w * sx)), max(1, round(h * sy)))
+        map_w, map_h = box[2], box[3]
+        region = None
+        if picture is not None:
+            pic_w, pic_h = picture.size
+            region = picture.crop((round(x * pic_w / frame_w), round(y * pic_h / frame_h),
+                                   round((x + w) * pic_w / frame_w), round((y + h) * pic_h / frame_h)))
+    else:
+        box = None
+        out_w, out_h = display_size(width, height) if sharp else (int(maps.shape[2]), int(maps.shape[1]))
+        map_w, map_h = out_w, out_h
+        region = picture
+    setting = (SNAP if snaps is None else snaps).get(family) if sharp else None
+    guide = _snapper(region, header, map_w, map_h, setting) if setting else None
+
+    def placed(values: Any) -> Any:
+        """A map of the box -> the whole frame, zero outside the box."""
+        if box is None:
+            return values
+        frame = np.zeros((out_h, out_w), dtype=np.float32)
+        bx, by = box[0], box[1]
+        part = values[:max(0, out_h - by), :max(0, out_w - bx)]
+        frame[by:by + part.shape[0], bx:bx + part.shape[1]] = part
+        return frame
 
     def drawn(grid: Any) -> str:
         if not sharp:
-            return _encode(grid)                    # viewer v0's map: the grid over its peak
-        up = upsample(grid, width, height, out_w, out_h)
+            if box is None:
+                return _encode(grid)                # viewer v0's map: the grid over its peak
+            # v0's map, placed: the grid over its peak, stretched over the box.
+            return _encode(placed(upsample(grid, width, height, map_w, map_h)))
+        up = upsample(grid, width, height, map_w, map_h)
         shaped = sharpen(up, guide) if guide is not None else unit(up)
-        return _encode(shaped if levels is None else levelled(shaped, levels))
+        # Levelled over the box alone: the empty frame around it is not part
+        # of the word's spread.
+        return _encode(placed(shaped if levels is None else levelled(shaped, levels)))
 
     reply: dict[str, Any] = {
         "available": True, "family": family,
@@ -281,14 +355,17 @@ def build(header: dict[str, Any], arrays: dict[str, Any], picture: Any = None,
         "display": "levelled" if sharp else "peak", "snapped": guide is not None,
         "width": width, "height": height,
         "prompt": str(header.get("prompt") or ""),
-        "words": [{"word": word, "strength": round(p99 / median, 3) if median > 0 else 0.0,
-                   "map": drawn(summed)} for word, summed, p99 in words],
+        "words": [{"word": word, "strength": strength, "map": drawn(summed)}
+                  for (word, summed, _p99), strength in zip(words, strengths(words))],
     }
+    if crop is not None:
+        reply["crop"], reply["frame"] = list(crop[:4]), list(crop[4:])
     pad = arrays.get("anima_pad")
     if family == "anima" and pad is not None:
-        # "Text used" is a coarse, whole-picture map: upsampled, never snapped.
-        used = upsample(1.0 - np.asarray(pad, dtype=np.float32), width, height, out_w, out_h)
-        reply["text_used"] = _encode(used)
+        # "Text used" is a coarse map: upsampled, never snapped; inside the
+        # crop's box when there is one.
+        used = upsample(1.0 - np.asarray(pad, dtype=np.float32), width, height, map_w, map_h)
+        reply["text_used"] = _encode(placed(used))
     return reply
 
 
@@ -312,4 +389,5 @@ def view(path: Path, picture: Any = None) -> dict[str, Any]:
         return {"available": False}
 
 
-__all__ = ("GuidedFilter", "build", "display_size", "levelled", "read", "sharpen", "unit", "upsample", "view")
+__all__ = ("GuidedFilter", "build", "content_maps", "display_size", "levelled", "read", "sharpen", "strengths",
+           "unit", "upsample", "view")

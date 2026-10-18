@@ -1,9 +1,9 @@
-"""Install the six approved auxiliary weights before Studio starts.
+"""Install the seven approved auxiliary weights before Studio starts.
 
 Generation and catalogue code never call this installer. Completed local assets
 are verified and reused offline. Downloads are bounded and hash checked before
 publication, and existing files are never replaced. --from-directory accepts a
-flat offline cache containing the six exact filenames, not an arbitrary tree.
+flat offline cache containing the seven exact filenames, not an arbitrary tree.
 """
 from __future__ import annotations
 import argparse

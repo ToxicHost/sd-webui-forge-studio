@@ -124,13 +124,23 @@ function _describePixels(doc, pixels) {
     return Object.assign({
       id: L.id, name: L.name, type: L.type,
       visible: L.visible, opacity: L.opacity,
-      blendMode: L.blendMode, locked: L.locked
+      blendMode: L.blendMode, locked: L.locked,
+      // M2: the picture this layer shows, for word masks.
+      source: L.source ? JSON.parse(JSON.stringify(L.source)) : null
     }, pixels(L.ctx));
   });
 
   var mask = pixels(S.mask.ctx);
   doc.maskData = mask.imageData;
   if (mask.ctx) doc.maskCtx = mask.ctx;
+
+  // M1. The named masks, as the layers: described, pixels as `pixels` says.
+  doc.masks = (S.masks || []).map(function (m) {
+    return Object.assign({
+      id: m.id, name: m.name, visible: m.visible, opacity: m.opacity,
+      origin: JSON.parse(JSON.stringify(m.origin || { kind: "painted" })), color: m.color
+    }, pixels(m.ctx));
+  });
 
   doc.regions = S.regions.map(function (r) {
     return Object.assign({
@@ -163,6 +173,8 @@ function _saveDocState(doc) {
   // Mask
   doc.maskVisible = S.mask.visible;
   doc.maskOpacity = S.mask.opacity;
+  doc.maskTarget = S.maskTarget;
+  doc._nextMaskId = S._nextMaskId;
 
   // Regions
   doc.activeRegionId = S.activeRegionId;
@@ -175,6 +187,14 @@ function _saveDocState(doc) {
   doc.maskReturnTool = S._maskReturnTool;
   doc._userMaskMode = S._userMaskMode;
   doc._canvasDirty = S._canvasDirty;
+
+  // CT4 (owner, 2026-10-16: "Yes" to the selection-lifetime decision). The
+  // committed selection belongs to its document: it goes with the tab and
+  // comes back with it, and crash recovery carries it. Unnamed, as before;
+  // a copy, so the live selection cannot reach into a document put away.
+  var C0 = window.StudioCore;
+  doc.selection = (S.selection && S.selection.active && S.selection.mask && C0.selectionSnapshot)
+    ? C0.selectionSnapshot() : null;
 
   // Zoom/pan
   doc.zoom = { scale: S.zoom.scale, ox: S.zoom.ox, oy: S.zoom.oy };
@@ -214,7 +234,7 @@ function _loadDoc(idx) {
       document_id: doc.documentId, revision: doc.canvasRevision || 0 });
   }
 
-  // Clear selection
+  // Clear the selection; this document's own is restored below (CT4).
   C.selectionClear();
 
   // Dimensions
@@ -253,6 +273,7 @@ function _loadDoc(idx) {
       id: saved.id, name: saved.name, type: saved.type,
       visible: saved.visible, opacity: saved.opacity,
       blendMode: saved.blendMode, locked: saved.locked,
+      source: saved.source ? JSON.parse(JSON.stringify(saved.source)) : null,
       canvas: c, ctx: ctx
     };
   });
@@ -266,6 +287,22 @@ function _loadDoc(idx) {
   if (doc.maskData) S.mask.ctx.putImageData(doc.maskData, 0, 0);
   S.mask.visible = doc.maskVisible !== undefined ? doc.maskVisible : true;
   S.mask.opacity = doc.maskOpacity !== undefined ? doc.maskOpacity : 0.5;
+
+  // M1. Named masks. A document that predates them has none.
+  S.masks = (doc.masks || []).map(function (saved) {
+    var c = C.createLayerCanvas();
+    var ctx = c.getContext("2d", { colorSpace: "srgb" });
+    if (saved.imageData) ctx.putImageData(saved.imageData, 0, 0);
+    return {
+      id: saved.id, name: saved.name, canvas: c, ctx: ctx,
+      visible: saved.visible !== undefined ? saved.visible : true,
+      opacity: saved.opacity !== undefined ? saved.opacity : 0.5,
+      origin: saved.origin || { kind: "painted" },
+      color: saved.color || S.maskColor
+    };
+  });
+  S._nextMaskId = doc._nextMaskId || (S.masks.reduce(function (n, m) { return Math.max(n, m.id); }, 0) + 1);
+  S.maskTarget = S.masks.some(function (m) { return m.id === doc.maskTarget; }) ? doc.maskTarget : null;
 
   // Regions
   S.regions = doc.regions.map(function (saved) {
@@ -290,6 +327,7 @@ function _loadDoc(idx) {
   doc.layers = doc.layers.map(_withoutPixels);
   doc.maskData = null;
   doc.regions = doc.regions.map(_withoutPixels);
+  doc.masks = (doc.masks || []).map(_withoutPixels);
 
   // BE10. Paper. Defaulted rather than left alone for documents that predate
   // the field: leaving `S.paper` untouched would hand the previous tab's
@@ -317,6 +355,13 @@ function _loadDoc(idx) {
     S.zoom.scale = doc.zoom.scale;
     S.zoom.ox = doc.zoom.ox;
     S.zoom.oy = doc.zoom.oy;
+  }
+
+  // CT4: this document's own selection back (cleared above), if it still
+  // fits -- a document older than the field, or a mismatched size, has none.
+  if (doc.selection && doc.selection.mask && doc.selection.mask.length === S.W * S.H && C.restoreSelection) {
+    C.restoreSelection(doc.selection);
+    if (window.StudioUI && window.StudioUI.startMarchingAnts) window.StudioUI.startMarchingAnts();
   }
 
   // Undo/redo
@@ -418,6 +463,7 @@ function _createBlankDoc(name) {
       ? Object.assign({}, C.DEFAULT_PAPER)
       : { texture: "none", scale: 1, depth: 0 },
     maskData: null, maskVisible: true, maskOpacity: 0.5,
+    masks: [], maskTarget: null, _nextMaskId: 1,
     regions: [], activeRegionId: null, regionMode: false, _nextRegionId: 1,
     canvasTool: "brush", maskReturnTool: "brush",
     editingMask: false, _userMaskMode: false, _canvasDirty: false,

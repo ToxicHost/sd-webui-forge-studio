@@ -531,6 +531,17 @@ class OutputSettings(Contract):
     embed_metadata: bool = True
     #: P11. Generation-time watermark, or None (the default "export" mode).
     watermark: WatermarkSettings | None = None
+    #: OF1. Settings > Save folder. On the way IN this is what the owner
+    #: typed; admission replaces it with the resolved folder when it is
+    #: trusted and with "" (the default folder, plus a notice) when it is not
+    #: -- the Extension's rule (`studio_api.py:3071-3095`). "" is the default.
+    save_dir: str = ""
+    #: OF1. Settings > Save tree: `studio` (the Extension's tree, the
+    #: owner's default) or `neo` (Neo's per-mode folders).
+    save_tree: str = "studio"
+    #: OF1. `upscaled` for the Upscale panel's refine leg, which the Extension
+    #: saves under `upscaled` (`studio_api.py:4524`); "" for a generation.
+    purpose: str = ""
 
 
 @dataclass(frozen=True)
@@ -583,6 +594,27 @@ class InpaintSettings(Contract):
     #: `variation` and `aspect` are -- so an omitted group leaves the engine's
     #: own behaviour untouched rather than asserting a default over it.
     soft: "SoftInpainting | None" = None
+    #: A second, light pass over the masked area at about 1:1 after the
+    #: first, or None. Outpaint's "Refine new area" (owner, 2026-10-16:
+    #: "Refine optional"); absent means absent.
+    refine: "InpaintRefine | None" = None
+
+
+@dataclass(frozen=True)
+class InpaintRefine(Contract):
+    """Outpaint's optional refine pass (CT9).
+
+    The outpaint job generates the whole canvas at the model's own size and
+    pastes the masked area back at full size; this re-denoises that area
+    lightly at `width` x `height` -- the page sizes it so the crop around the
+    new strip is worked on at about 1:1 -- for crisper detail. Measured: +8 s
+    on a 1792 x 1536 Anima outpaint (gpu-proof-2026-10-16/op-run2.txt).
+    """
+
+    width: int = 1024
+    height: int = 1024
+    #: Light: the first pass decided what is there; this one sharpens it.
+    denoising_strength: float = 0.35
 
 
 @dataclass(frozen=True)
@@ -776,6 +808,11 @@ class AutoDetailSlot(Contract):
     #: `hr_second_pass_steps` rather than inventing a second spelling.
     steps: int = 0
     cfg: float = 0.0
+    #: Word Detail (owner, 2026-10-16): prompt words to detail INSTEAD of a
+    #: detector -- the region is found from this job's own heatmap capture
+    #: (Masks › From word's Object view). A slot has a detector or words,
+    #: never both.
+    words: tuple[str, ...] = ()
 
 
 #: Three, because the BOOK fixes the pipeline at

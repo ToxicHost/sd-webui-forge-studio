@@ -364,9 +364,15 @@ class FilesystemService:
         admitted: list[Path] = []
         for candidate in candidates:
             try:
+                # Classified BEFORE `exists()`. The other order stat'd every
+                # drive letter -- a mapped network drive included -- and only
+                # then asked whether it was one, which is the hang the volume
+                # rule exists to prevent. `GetDriveTypeW` answers from the
+                # local mount table, and a letter with nothing behind it is
+                # refused as unclassifiable without being touched.
+                _refuse_by_volume(candidate)
                 if not candidate.exists():
                     continue
-                _refuse_by_volume(candidate)
             except (HeadlessError, OSError):
                 continue
             admitted.append(candidate)

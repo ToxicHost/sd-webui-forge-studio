@@ -10,8 +10,9 @@ Lookup is an exact dictionary match against that registry. No handle is ever
 joined onto a directory, so traversal, absolute paths, encoded separators, and
 alias tricks cannot reach a file that was never registered. Registration
 additionally requires the resolved file to live beneath one injected result
-root, and every read re-resolves and re-checks containment so a symlink or
-reparse point swapped in after registration fails closed.
+root -- or, since OF1, beneath one of the owner's trusted save folders -- and
+every read re-resolves and re-checks containment so a symlink or reparse point
+swapped in after registration fails closed.
 """
 
 from __future__ import annotations
@@ -158,6 +159,11 @@ class ResultRegistry:
         self._entries: OrderedDict[str, tuple[Path, str]] = OrderedDict()
         self._evicted: OrderedDict[str, None] = OrderedDict()
         self._lock = Lock()
+        #: OF1. A callable naming the owner's trusted save folders, or None.
+        #: Asked on every registration AND every read, so a folder the owner
+        #: untrusts stops being served at once rather than at restart.
+        self._extra_roots = None
+        self._extra_policies: dict[str, CasePolicy] = {}
 
     @property
     def root(self) -> Path:
@@ -166,6 +172,17 @@ class ResultRegistry:
     @property
     def case_policy(self) -> CasePolicy:
         return self._case_policy
+
+    def allow_roots(self, roots) -> None:
+        """OF1. Also contain results within the folders `roots()` names.
+
+        The owner's trusted save folders (`forge_studio/save_roots.py`). Only
+        files Studio wrote are ever registered, and containment is still
+        checked on every read; this widens WHERE a registered file may live,
+        never what a browser may name.
+        """
+
+        self._extra_roots = roots if callable(roots) else None
 
     def register(self, path: Path, *, media_type: str) -> ResultAsset:
         """Register one owned file and return its opaque handle."""
@@ -279,16 +296,43 @@ class ResultRegistry:
     def _within_root(self, resolved: Path) -> bool:
         """Containment under the resolved case policy, never under os.name."""
 
+        if self._contained_in(resolved, self._root, self._case_policy):
+            return True
+        provider = self._extra_roots
+        if provider is None:
+            return False
         try:
-            resolved.relative_to(self._root)
+            extra = list(provider() or ())
+        except Exception:  # noqa: BLE001 - an unreadable policy serves nothing extra
+            return False
+        for root in extra:
+            try:
+                root_path = Path(root).resolve()
+            except (OSError, RuntimeError, ValueError):
+                continue
+            key = str(root_path)
+            policy = self._extra_policies.get(key)
+            if policy is None:
+                # Probed once per folder, as the result root is at
+                # construction; never re-derived from `os.name`.
+                policy = detect_case_policy(root_path)
+                self._extra_policies[key] = policy
+            if self._contained_in(resolved, root_path, policy):
+                return True
+        return False
+
+    @staticmethod
+    def _contained_in(resolved: Path, root: Path, policy: CasePolicy) -> bool:
+        try:
+            resolved.relative_to(root)
             return True
         except ValueError:
             pass
-        if self._case_policy is not CasePolicy.CASE_INSENSITIVE:
+        if policy is not CasePolicy.CASE_INSENSITIVE:
             return False
         # On a case-insensitive volume two spellings name the same path, so a
         # case-differing prefix is genuine containment rather than an escape.
-        root_parts = [part.casefold() for part in self._root.parts]
+        root_parts = [part.casefold() for part in root.parts]
         candidate_parts = [part.casefold() for part in resolved.parts]
         return (
             len(candidate_parts) > len(root_parts)

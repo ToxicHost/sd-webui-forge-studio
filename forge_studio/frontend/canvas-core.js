@@ -159,6 +159,18 @@ const S = {
     // Inpaint mask — separate from layer stack
     mask: { canvas: null, ctx: null, visible: true, opacity: 0.5 },
 
+    // NAMED MASKS (M1, Evidence/NAMED-MASKS-SPEC.md), Photoshop-style channels
+    // BESIDE the Inpaint mask above. The Inpaint mask stays where it is, so
+    // export, the overlay toggle, recovery and every inpaint path still read
+    // `S.mask`. Each entry: {id, name, canvas, ctx, visible, opacity, origin};
+    // coverage is the alpha, as on the Inpaint mask.
+    masks: [],
+    _nextMaskId: 1,
+    // What the Mask tool paints: null for the Inpaint mask, else a mask id.
+    // ... and, since M3, what the next inpaint sends (the owner, 2026-10-15:
+    // the selected mask inpaints).
+    maskTarget: null,
+
     // Live painting — AI preview, separate from layer stack and undo
     livePreview: { canvas: null, ctx: null, active: false },
 
@@ -188,6 +200,11 @@ const S = {
     //
     // Default false, because false is what shipped.
     brushBuildup: false,
+    // CT10 Paint Mixer (owner: "a separate toggle for the Brush tool"). On,
+    // the brush's colour mixes with the paint already under it; `brushMix`
+    // is how much (0 = the brush colour, 1 = only what it picked up).
+    brushMixOn: false,
+    brushMix: 0.5,
     brushHardness: 1.0,
     brushPreset: "round", // "round" | "flat" | "marker" | "scatter" | "custom"
     brushRatio: 1.0,      // 0.1-1.0 — ellipse ratio (1.0 = circle)
@@ -384,6 +401,9 @@ const S = {
 
     // Dodge/burn sub-mode
     _dodgeMode: "dodge",
+    // CT10: Blur's Blur/Sharpen and Clone's Clone/Heal sub-modes
+    _blurMode: "blur",
+    _cloneMode: "clone",
 
     // Gradient/shape sub-modes
     _gradientMode: "linear",
@@ -1941,9 +1961,538 @@ function activeLayer() {
 }
 function findLayerIdx(id) { return S.layers.findIndex(l => l.id === id); }
 
+// ---- named masks (M1) -----------------------------------------------------
+function maskById(id) { return S.masks.find(m => m.id === id) || null; }
+/** The mask the Mask tool paints: a named mask, or the Inpaint mask. */
+function maskTargetEntry() {
+    const m = S.maskTarget != null ? maskById(S.maskTarget) : null;
+    return m || S.mask;
+}
+/** Painting the Inpaint mask, which stays hard (decision 2). Named masks
+ *  take the brush's hardness and opacity (owner, 2026-10-15, spec Q6). */
+function paintingInpaintMask() { return !!S.editingMask && maskTargetEntry() === S.mask; }
+/** The mask on show: the Mask tool's target while it is painting, else the
+ *  Inpaint mask. The overlay and the live stroke preview draw this one. */
+function shownMask() { return S.editingMask ? maskTargetEntry() : S.mask; }
+
+//: Extras (spec 2.1 "overlay: colour"): each new named mask takes the next
+//: of these, never the Inpaint mask's red. The colour is written into the
+//: mask's own pixels (coverage is the alpha), so the overlay draws it as is.
+const MASK_COLORS = ["#3e9bf5", "#30c06c", "#f5a524", "#b46ef0", "#14b8a6", "#f0569a", "#d4c41a"];
+function _maskColorFor(id) { return MASK_COLORS[(Math.max(1, id | 0) - 1) % MASK_COLORS.length]; }
+/** The colour a mask paints in: its own, or the Inpaint mask's. */
+function maskColorOf(m) { return (m && m !== S.mask && m.color) || S.maskColor; }
+/** A live mask entry from a description; `data` (ImageData) fills it. */
+function _makeMask(d) {
+    const canvas = createLayerCanvas();
+    const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
+    if (d.data) ctx.putImageData(d.data, 0, 0);
+    return {
+        id: d.id, name: d.name || ("Mask " + d.id), canvas, ctx,
+        visible: d.visible !== undefined ? !!d.visible : true,
+        opacity: d.opacity !== undefined ? d.opacity : 0.5,
+        origin: d.origin ? JSON.parse(JSON.stringify(d.origin)) : { kind: "painted" },
+        // A mask made before colours keeps the red its pixels hold.
+        color: d.color || S.maskColor,
+    };
+}
+function _snapshotMasks() {
+    return S.masks.map(m => ({
+        id: m.id, name: m.name, visible: m.visible, opacity: m.opacity,
+        origin: JSON.parse(JSON.stringify(m.origin || { kind: "painted" })), color: m.color,
+        data: m.ctx.getImageData(0, 0, S.W, S.H),
+    }));
+}
+/** 0..255 coverage, one byte per document pixel (the alpha). */
+function maskCoverage(id) {
+    const m = id == null ? S.mask : maskById(id);
+    if (!m || !m.ctx) return null;
+    const d = m.ctx.getImageData(0, 0, S.W, S.H).data;
+    const out = new Uint8Array(S.W * S.H);
+    for (let i = 0; i < out.length; i++) out[i] = d[i * 4 + 3];
+    return out;
+}
+/** Coverage -> the mask's pixels, painted in the mask colour as the brush does. */
+function _writeCoverage(ctx, coverage, color) {
+    const img = ctx.createImageData ? ctx.createImageData(S.W, S.H) : new ImageData(S.W, S.H);
+    const d = img.data, rgb = hexRgb(color || S.maskColor);
+    for (let i = 0; i < coverage.length; i++) {
+        if (!coverage[i]) continue;
+        const j = i * 4;
+        d[j] = rgb.r; d[j + 1] = rgb.g; d[j + 2] = rgb.b; d[j + 3] = coverage[i];
+    }
+    ctx.putImageData(img, 0, 0);
+}
+/** A new named mask (one structural undo step); returns it. `coverage` is an
+ *  optional 0..255 Uint8Array at document size; `origin` says where it came
+ *  from ({kind: "painted" | "selection" | "word", ...}). */
+function createMask(name, opts = {}) {
+    if (_strokeTransaction) abortStroke();
+    saveStructuralUndo(opts.undoLabel || "New mask");
+    const id = S._nextMaskId++;
+    // Every mask records when it was made (its row's tooltip says so).
+    const origin = Object.assign({ kind: "painted" }, opts.origin || {});
+    if (!origin.created) origin.created = new Date().toISOString();
+    const m = _makeMask({ id, name: name || ("Mask " + id), origin, color: opts.color || _maskColorFor(id) });
+    if (opts.coverage) _writeCoverage(m.ctx, opts.coverage, m.color);
+    S.masks.push(m);
+    if (opts.target !== false) { S.maskTarget = id; S._userMaskMode = hasInpaintCoverage(); }
+    markCompositeDirty();
+    return m;
+}
+function duplicateMask(id) {
+    const src = id == null ? S.mask : maskById(id);
+    if (!src) return null;
+    const name = (id == null ? "Inpaint" : src.name) + " copy";
+    return createMask(name, { coverage: maskCoverage(id), undoLabel: "Duplicate mask",
+                              origin: id == null ? { kind: "painted" } : src.origin });
+}
+function deleteMask(id) {
+    const i = S.masks.findIndex(m => m.id === id);
+    if (i < 0) return false;
+    if (_strokeTransaction) abortStroke();
+    saveStructuralUndo("Delete mask");
+    S.masks.splice(i, 1);
+    if (S.maskTarget === id) S.maskTarget = null;
+    if (S.maskTarget === null) S._userMaskMode = hasInpaintCoverage();
+    markCompositeDirty();
+    return true;
+}
+function renameMask(id, name) {
+    const m = maskById(id), n = String(name || "").trim();
+    if (!m || !n || n === m.name) return false;
+    saveStructuralUndo("Rename mask");
+    m.name = n;
+    return true;
+}
+/** What the Mask tool paints from now on: a named mask's id, or null for the
+ *  Inpaint mask. */
+function setMaskTarget(id) {
+    if (_strokeTransaction) abortStroke();
+    const next = id != null && maskById(id) ? id : null;
+    // M3: choosing a different mask chooses what inpaints; armed by what it
+    // covers (at the cut, for a named mask).
+    if (next !== S.maskTarget) { S.maskTarget = next; S._userMaskMode = hasInpaintCoverage(); }
+    markCompositeDirty();
+}
+function invertMask(id) {
+    const m = id == null ? S.mask : maskById(id);
+    if (!m) return false;
+    const cov = maskCoverage(id);
+    for (let i = 0; i < cov.length; i++) cov[i] = 255 - cov[i];
+    saveStructuralUndo("Invert mask");
+    _writeCoverage(m.ctx, cov, maskColorOf(m));
+    if (m === S.mask && cov.some(v => v)) S._userMaskMode = true;
+    markCompositeDirty();
+    return true;
+}
+/** "Save selection as mask" (decision 6): a new mask holding the selection,
+ *  soft edges and all. Null with no selection. */
+function saveSelectionAsMask(name) {
+    if (!S.selection.active || !S.selection.mask) return null;
+    return createMask(name || ("Selection " + S._nextMaskId),
+                      { coverage: Uint8Array.from(S.selection.mask), origin: { kind: "selection" },
+                        undoLabel: "Save selection as mask" });
+}
+/** "Load as selection": the mask's coverage into the selection. `mode` is
+ *  "replace", "add" (the larger), "subtract" (cleared where the mask has any)
+ *  or "intersect" (the smaller), as the selection tools' own modifiers. */
+function loadMaskAsSelection(id, mode = "replace") {
+    const cov = maskCoverage(id);
+    if (!cov) return false;
+    if (mode === "intersect" && !(S.selection.active && S.selection.mask)) return false;
+    // CT4: the selection tools' own rule (`applySelection`), so Subtract with
+    // nothing selected leaves nothing, as Intersect does.
+    applySelection(cov, mode, { maskBased: true });
+    return true;
+}
+
+// ---- layer source (M2, Evidence/NAMED-MASKS-SPEC.md 6.1, 6.4, 6.5) ----------
+// A layer Studio placed a picture on records which picture: `L.source =
+// {content_hash, width, height, matrix, exact, placed, _base}`. `matrix` is
+// the affine [a, b, c, d, e, f] taking the picture's pixels to the
+// document's (canvas `transform` order): identity when placed, then composed
+// by every whole-layer move Studio can follow -- a canvas resize, a crop, the
+// Transform tool on the whole layer -- so a word mask lands where the layer
+// now is (spec Q7). A warp, a perspective or a transform of part of the layer
+// cannot be followed: `exact` goes false. `_base` is what the layer held when
+// last placed or followed: OB2's write count on its context, and a hash of its
+// pixels for when the context is not the same one (undo rebuilds canvases).
+const _IDENTITY = [1, 0, 0, 1, 0, 0];
+/** a ∘ b: apply b, then a. */
+function _mulAffine(a, b) {
+    return [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
+            a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
+            a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
+}
+function _invAffine(m) {
+    const det = m[0] * m[3] - m[1] * m[2];
+    if (!det) return null;
+    return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det,
+            (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det];
+}
+/** A hash of a context's pixels (FNV-1a over 32-bit words). */
+function _pixelHash(ctx) {
+    const d = ctx.getImageData(0, 0, S.W, S.H).data;
+    const words = new Uint32Array(d.buffer, d.byteOffset, d.byteLength >> 2);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < words.length; i++) h = Math.imul(h ^ words[i], 0x01000193);
+    return (h >>> 0).toString(16) + ":" + words.length;
+}
+/** OB2's write count for a context (installs the counter), or null. */
+function _writeStamp(ctx) {
+    const R = (typeof window !== "undefined") ? window.StudioRecovery : null;
+    return R && typeof R.writeState === "function" ? R.writeState(ctx) : null;
+}
+function _baselineSource(L) {
+    if (!L.source || !L.ctx) return;
+    L.source._base = { stamp: _writeStamp(L.ctx), hash: _pixelHash(L.ctx), w: S.W, h: S.H };
+}
+/** Record (or, with no hash, clear) the picture a layer now shows. */
+function setLayerSource(L, src) {
+    if (!L || L.type === "adjustment") return;
+    const digest = src && typeof src.content_hash === "string" ? src.content_hash.trim().toLowerCase() : "";
+    if (!/^[0-9a-f]{64}$/.test(digest) || !L.ctx) { L.source = null; return; }
+    L.source = { content_hash: digest, width: src.width | 0, height: src.height | 0,
+                 matrix: (src.matrix || _IDENTITY).slice(), exact: true, placed: Date.now() };
+    _baselineSource(L);
+}
+/** A whole-document move (resize, crop): `m` maps old document pixels to
+ *  new ones, for every layer with a source; then each is re-baselined. */
+function followLayerSources(m) {
+    for (const L of S.layers) {
+        if (!L.source) continue;
+        L.source.matrix = _mulAffine(m, L.source.matrix);
+        if (L.source.exact) _baselineSource(L);
+    }
+}
+/** One layer moved by `m` (old document pixels -> new); null = a move that
+ *  cannot be followed. */
+function followLayerSource(L, m) {
+    if (!L || !L.source) return;
+    if (!m) { L.source.exact = false; return; }
+    L.source.matrix = _mulAffine(m, L.source.matrix);
+    if (L.source.exact) _baselineSource(L);
+}
+/** Does the layer still show its picture as placed (or as followed)? The
+ *  write count answers when the context is the same; else the pixels do. */
+function layerSourceFresh(L) {
+    const src = L && L.source, base = src && src._base;
+    if (!base || !src.exact || base.w !== S.W || base.h !== S.H) return false;
+    const now = _writeStamp(L.ctx), was = base.stamp;
+    if (now && was && now.exact && was.exact && now.id === was.id) {
+        if (now.writes === was.writes) return true;
+    }
+    return _pixelHash(L.ctx) === base.hash;
+}
+/** A mask at the picture's size (0..255, `pw` x `ph`) -> document coverage
+ *  through the layer's matrix, bilinear, empty where the picture is not. */
+function pictureMaskToDocument(L, cov, pw, ph) {
+    const m = (L && L.source && L.source.matrix) || _IDENTITY;
+    const inv = _invAffine(m);
+    const out = new Uint8Array(S.W * S.H);
+    if (!inv) return out;
+    for (let y = 0; y < S.H; y++) {
+        const cy = y + 0.5;
+        for (let x = 0; x < S.W; x++) {
+            const cx = x + 0.5;
+            const px = inv[0] * cx + inv[2] * cy + inv[4] - 0.5;
+            const py = inv[1] * cx + inv[3] * cy + inv[5] - 0.5;
+            if (px <= -1 || py <= -1 || px >= pw || py >= ph) continue;
+            const x0 = Math.floor(px), y0 = Math.floor(py), fx = px - x0, fy = py - y0;
+            const at = (xx, yy) => (xx < 0 || yy < 0 || xx >= pw || yy >= ph) ? 0 : cov[yy * pw + xx];
+            const v = (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy)
+                    + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy;
+            out[y * S.W + x] = Math.round(v);
+        }
+    }
+    return out;
+}
+// ---- grow and feather (M2b: the owner's ask, 2026-10-15) --------------------
+// On 0..255 coverage, `w` x `h`, in the picture's own pixels. Grow takes each
+// pixel's largest value within a disc of radius `r` (shrink, r < 0, the
+// smallest), so a soft mask keeps its softness. Feather is a Gaussian of
+// sigma r / 2, as three box blurs.
+/** Sliding maximum of width 2k+1 along one line (van Herk / Gil-Werman). */
+function _lineMax(src, dst, n, k) {
+    if (k <= 0) { dst.set(src.subarray(0, n)); return; }
+    const w = 2 * k + 1, g = new Uint8Array(n + w), h = new Uint8Array(n + w);
+    const at = (i) => (i >= 0 && i < n ? src[i] : 0);
+    for (let b = 0; b < n + w; b += w) {
+        let m = 0;
+        for (let i = b; i < b + w && i < n + w; i++) { m = Math.max(m, at(i - k)); g[i] = m; }
+        m = 0;
+        for (let i = Math.min(b + w, n + w) - 1; i >= b; i--) { m = Math.max(m, at(i - k)); h[i] = m; }
+    }
+    // position x covers source x-k .. x+k, i.e. padded indices x .. x+2k
+    for (let x = 0; x < n; x++) dst[x] = Math.max(h[x], g[x + 2 * k]);
+}
+function _discMax(cov, w, h, r) {
+    const out = new Uint8Array(w * h);
+    const widths = [];
+    for (let dy = -r; dy <= r; dy++) widths.push(Math.floor(Math.sqrt(r * r - dy * dy)));
+    const distinct = [...new Set(widths)];
+    const row = new Uint8Array(w);
+    // rows[k][y] = the row y's sliding max of half-width k
+    const rows = new Map(distinct.map(k => [k, new Uint8Array(w * h)]));
+    for (let y = 0; y < h; y++) {
+        const line = cov.subarray(y * w, y * w + w);
+        for (const k of distinct) { _lineMax(line, row, w, k); rows.get(k).set(row, y * w); }
+    }
+    for (let y = 0; y < h; y++) {
+        for (let i = 0; i < widths.length; i++) {
+            const yy = y + i - r;
+            if (yy < 0 || yy >= h) continue;
+            const src = rows.get(widths[i]);
+            const so = yy * w, o = y * w;
+            for (let x = 0; x < w; x++) if (src[so + x] > out[o + x]) out[o + x] = src[so + x];
+        }
+    }
+    return out;
+}
+function growCoverage(cov, w, h, r) {
+    r = Math.round(r);
+    if (!r) return Uint8Array.from(cov);
+    if (r > 0) return _discMax(cov, w, h, r);
+    const inv = new Uint8Array(cov.length);
+    for (let i = 0; i < cov.length; i++) inv[i] = 255 - cov[i];
+    const grown = _discMax(inv, w, h, -r);
+    for (let i = 0; i < grown.length; i++) grown[i] = 255 - grown[i];
+    return grown;
+}
+function _boxBlur(src, dst, w, h, k, horizontal) {
+    const n = horizontal ? w : h, lines = horizontal ? h : w, step = horizontal ? 1 : w;
+    for (let l = 0; l < lines; l++) {
+        const base = horizontal ? l * w : l;
+        let sum = 0;
+        for (let i = -k; i <= k; i++) sum += src[base + Math.min(n - 1, Math.max(0, i)) * step];
+        for (let i = 0; i < n; i++) {
+            dst[base + i * step] = sum / (2 * k + 1);
+            const add = Math.min(n - 1, i + k + 1), drop = Math.max(0, i - k);
+            sum += src[base + add * step] - src[base + drop * step];
+        }
+    }
+}
+function featherCoverage(cov, w, h, r) {
+    if (!(r > 0)) return Uint8Array.from(cov);
+    // Three box passes of these radii approximate a Gaussian of sigma r / 2.
+    const sigma = r / 2, ideal = Math.sqrt(12 * sigma * sigma / 3 + 1);
+    let wl = Math.floor(ideal); if (wl % 2 === 0) wl--;
+    const m = Math.round((12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4 * wl - 4));
+    let a = Float32Array.from(cov), b = new Float32Array(cov.length);
+    for (let pass = 0; pass < 3; pass++) {
+        const k = ((pass < m ? wl : wl + 2) - 1) / 2;
+        if (k <= 0) continue;
+        _boxBlur(a, b, w, h, k, true);
+        _boxBlur(b, a, w, h, k, false);
+    }
+    const out = new Uint8Array(cov.length);
+    for (let i = 0; i < out.length; i++) out[i] = Math.max(0, Math.min(255, Math.round(a[i])));
+    return out;
+}
+/** Grow (or shrink) then feather, in the picture's pixels. */
+function shapeCoverage(cov, w, h, grow, feather) {
+    return featherCoverage(growCoverage(cov, w, h, grow || 0), w, h, feather || 0);
+}
+
+/** "From word..." (spec 6.2): a word mask from a picture-size preview, placed
+ *  through the layer's current transform. Returns {mask, stale}: `stale`
+ *  says the layer has changed since its picture was placed (6.5: warned,
+ *  still made). */
+function createWordMask(layerId, word, cov, pw, ph, info = {}) {
+    const L = S.layers.find(l => l.id === layerId);
+    if (!L || !L.source) return null;
+    const stale = !layerSourceFresh(L);
+    const mask = createMask(String(word || "word"), {
+        coverage: pictureMaskToDocument(L, cov, pw, ph),
+        undoLabel: "Mask from word",
+        origin: { kind: "word", word: String(word || ""), words: (info.words || [String(word || "")]).slice(),
+                  family: info.family || "", method: info.method || "",
+                  grow: info.grow || 0, feather: info.feather || 0,
+                  // S8a: the rest of the recipe -- which preview, which part step.
+                  view: info.view || "", part: info.part || 0,
+                  content_hash: L.source.content_hash, layer_id: L.id, created: new Date().toISOString() },
+    });
+    return { mask, stale };
+}
+/** S8a: a word mask remade from its own recipe on a layer's picture, IN
+ *  PLACE -- same id, name and colour, so whatever uses it (the inpaint, a
+ *  Develop local adjustment) follows. One structural undo step. Returns
+ *  {mask, stale} or null. */
+function remakeWordMask(id, layerId, cov, pw, ph) {
+    const m = maskById(id);
+    const L = S.layers.find(l => l.id === layerId);
+    if (!m || !L || !L.source || !m.origin || m.origin.kind !== "word") return null;
+    const stale = !layerSourceFresh(L);
+    if (_strokeTransaction) abortStroke();
+    saveStructuralUndo("Remake " + m.name);
+    m.origin = Object.assign({}, m.origin, {
+        content_hash: L.source.content_hash, layer_id: L.id, remade: new Date().toISOString() });
+    _writeCoverage(m.ctx, pictureMaskToDocument(L, cov, pw, ph), maskColorOf(m));
+    if (S.maskTarget === id) S._userMaskMode = hasInpaintCoverage();
+    markCompositeDirty();
+    return { mask: m, stale };
+}
+function _sourceCopy(L) {
+    return L.source ? JSON.parse(JSON.stringify(L.source)) : null;
+}
+
+// ---- CT5: range providers -- masks from the picture's light and colour --------
+// Evidence/canvas-ct5/SOURCE_REVIEW.md. Read from the canonical flatten (what
+// the preview and saves show) with Develop off, weighted by its alpha, so an
+// empty area is never in range. Soft ramps, so the three bands blend.
+const LUMA_BANDS = {
+    // Y (sRGB 0..255) -> 0..1
+    shadows:    y => y <= 64 ? 1 : y >= 128 ? 0 : (128 - y) / 64,
+    midtones:   y => Math.max(0, 1 - Math.abs(y - 128) / 64),
+    highlights: y => y <= 128 ? 0 : y >= 192 ? 1 : (y - 128) / 64,
+};
+/** 0..255 coverage for a range: {kind: "luminance", band} or {kind: "colour",
+ *  hex, fuzz} (fuzz 1..255: full within fuzz/2 of the colour, none at fuzz). */
+function rangeCoverage(spec) {
+    const d = getFlattenedImageData({ applyDevelop: false }).data;
+    const out = new Uint8Array(S.W * S.H);
+    let fn;
+    if (spec && spec.kind === "luminance" && LUMA_BANDS[spec.band]) {
+        const band = LUMA_BANDS[spec.band];
+        fn = (r, g, b) => band(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    } else if (spec && spec.kind === "colour") {
+        const c = hexRgb(spec.hex || "#000000"), fuzz = Math.max(1, Math.min(255, spec.fuzz || 40)), half = fuzz / 2;
+        fn = (r, g, b) => {
+            const dist = Math.hypot(r - c.r, g - c.g, b - c.b) / Math.sqrt(3);
+            return dist <= half ? 1 : dist >= fuzz ? 0 : (fuzz - dist) / half;
+        };
+    } else {
+        return null;
+    }
+    for (let i = 0; i < out.length; i++) {
+        const j = i * 4, a = d[j + 3];
+        if (!a) continue;
+        out[i] = Math.round(255 * fn(d[j], d[j + 1], d[j + 2]) * a / 255);
+    }
+    return out;
+}
+/** A named mask from a range (one undo step); null for an unknown range. */
+function createRangeMask(spec) {
+    const cov = rangeCoverage(spec);
+    if (!cov) return null;
+    const name = spec.kind === "luminance" ? spec.band.charAt(0).toUpperCase() + spec.band.slice(1)
+                                           : "Colour " + String(spec.hex || "").toLowerCase();
+    const origin = spec.kind === "luminance" ? { kind: "range", band: spec.band }
+                                             : { kind: "range", colour: String(spec.hex || "").toLowerCase(), fuzz: spec.fuzz };
+    return createMask(name, { coverage: cov, origin, undoLabel: "Mask from range" });
+}
+
+// ---- named masks in a PSD (S7) -----------------------------------------------
+// ag-psd writes 3 or 4 composite channels and no extra (alpha) channels, so a
+// named mask travels as a LAYER MASK: a hidden layer with no pixels in a
+// "Masks" group, its layer mask the coverage (white = covered). In Photoshop,
+// Ctrl-click the mask thumbnail loads it as a selection, as in Studio. The
+// name carries Studio's own fields as a tag, as adjustment layers do (`|ADJ|`).
+// The Inpaint mask stays out: it is generation state.
+const PSD_MASK_TAG = "|MASK|";
+const PSD_MASKS_GROUP = "Masks";
+/** The named masks as one PSD group for `savePSD`, or null when there are none. */
+function masksToPsdGroup() {
+    if (!S.masks.length) return null;
+    const children = S.masks.map(m => {
+        const cov = maskCoverage(m.id);
+        const canvas = createLayerCanvas();
+        const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
+        const img = ctx.createImageData(S.W, S.H), d = img.data;
+        for (let i = 0; i < cov.length; i++) {
+            const j = i * 4;
+            d[j] = d[j + 1] = d[j + 2] = cov[i]; d[j + 3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+        const meta = { c: m.color, o: m.opacity, v: m.visible ? 1 : 0, k: m.origin || { kind: "painted" } };
+        return {
+            name: m.name + " " + PSD_MASK_TAG + JSON.stringify(meta), hidden: true,
+            mask: { canvas, top: 0, left: 0, right: S.W, bottom: S.H, defaultColor: 0 },
+        };
+    });
+    return { name: PSD_MASKS_GROUP, opened: false, children };
+}
+/** A read PSD's named masks: every layer carrying the tag, and any layer in a
+ *  "Masks" group that has a layer mask and no pixels (one made in Photoshop).
+ *  Coverage is at the current document size (call after the resize). Returns
+ *  [{name, coverage, color, opacity, visible, origin}]. */
+function masksFromPsd(doc) {
+    const found = [];
+    const walk = (nodes, inGroup) => {
+        for (const node of nodes || []) {
+            if (node.children) { walk(node.children, inGroup || node.name === PSD_MASKS_GROUP); continue; }
+            const name = String(node.name || ""), tag = name.indexOf(PSD_MASK_TAG);
+            const lm = node.mask;
+            if (!lm || !(lm.canvas || lm.imageData)) continue;
+            if (tag < 0 && !(inGroup && !node.canvas)) continue;
+            let meta = {};
+            if (tag >= 0) { try { meta = JSON.parse(name.slice(tag + PSD_MASK_TAG.length)) || {}; } catch (_) { meta = {}; } }
+            const coverage = new Uint8Array(S.W * S.H).fill(lm.defaultColor || 0);
+            const src = lm.imageData || lm.canvas.getContext("2d").getImageData(0, 0, lm.canvas.width, lm.canvas.height);
+            const x0 = lm.left | 0, y0 = lm.top | 0;
+            for (let r = 0; r < src.height; r++) {
+                const y = y0 + r;
+                if (y < 0 || y >= S.H) continue;
+                for (let c = 0; c < src.width; c++) {
+                    const x = x0 + c;
+                    if (x < 0 || x >= S.W) continue;
+                    coverage[y * S.W + x] = src.data[(r * src.width + c) * 4];
+                }
+            }
+            found.push({
+                name: (tag >= 0 ? name.slice(0, tag) : name).trim() || "Mask",
+                coverage, color: typeof meta.c === "string" ? meta.c : null,
+                opacity: typeof meta.o === "number" ? meta.o : 0.5,
+                visible: meta.v !== undefined ? !!meta.v : true,
+                origin: meta.k && typeof meta.k === "object" ? meta.k : { kind: "psd" },
+            });
+        }
+    };
+    walk(doc && doc.children, false);
+    return found;
+}
+/** Opening a PSD replaces the document, so its named masks replace these (the
+ *  new-document reset clears them too). No undo of its own: `openPSD` takes
+ *  one before anything changes. */
+function replaceMasksFromPsd(list) {
+    if (_strokeTransaction) abortStroke();
+    S.masks = (list || []).map((d, i) => {
+        const id = i + 1, color = d.color || _maskColorFor(id);
+        const m = _makeMask({ id, name: d.name, visible: d.visible, opacity: d.opacity, origin: d.origin, color });
+        _writeCoverage(m.ctx, d.coverage, color);
+        return m;
+    });
+    S._nextMaskId = S.masks.length + 1;
+    S.maskTarget = null;
+    S._userMaskMode = hasInpaintCoverage();
+    markCompositeDirty();
+    return S.masks.length;
+}
+
+// ---- the selected mask inpaints (M3, spec 7.1, Q4) --------------------------
+// The owner, 2026-10-15, replacing the spec's "Use for inpainting" action:
+// the mask selected in the Masks panel (M1's `maskTarget`) is what the next
+// inpaint sends -- a word mask, once made, inpaints; the Inpaint row goes back.
+//: A named mask is cut to hard at 40 % before it is sent (the owner's Q4): a
+//: soft mask's faint tail would otherwise count as masked (`exportMask`'s
+//: alpha > 0 rule) and stretch Neo's "Only masked" crop, which is the mask's
+//: `getbbox()`. The Inpaint mask keeps alpha > 0, exactly as before.
+const INPAINT_CUT = 102;
+/** The mask the next inpaint sends: the selected one. */
+function inpaintSourceEntry() { return maskTargetEntry(); }
+/** Does the mask the next inpaint sends cover anything, after the cut? */
+function hasInpaintCoverage() {
+    const m = inpaintSourceEntry();
+    if (m === S.mask) return hasGenerationMask();
+    const d = m.ctx.getImageData(0, 0, S.W, S.H).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i] >= INPAINT_CUT) return true;
+    return false;
+}
+
 function drawTarget() {
     if (_strokeTransaction && S.drawing) return _strokeTransaction.target;
-    if (S.editingMask) return { canvas: S.mask.canvas, ctx: S.mask.ctx };
+    if (S.editingMask) { const m = maskTargetEntry(); return { canvas: m.canvas, ctx: m.ctx }; }
     const L = activeLayer();
     return { canvas: L.canvas, ctx: L.ctx };
 }
@@ -1952,7 +2501,19 @@ function strokeTool() {
     return S.tool === "mask" ? (S.maskOperation === "subtract" ? "eraser" : "brush") : S.tool;
 }
 
-function drawColor() { return S.editingMask ? S.maskColor : S.color; }
+function drawColor() { return S.editingMask ? maskColorOf(maskTargetEntry()) : S.color; }
+/** A named mask's colour, changed: its pixels repainted, coverage kept (one
+ *  structural undo step). */
+function setMaskColor(id, color) {
+    const m = maskById(id);
+    if (!m || !/^#[0-9a-f]{6}$/i.test(String(color || "")) || m.color === color) return false;
+    if (_strokeTransaction) abortStroke();
+    saveStructuralUndo("Mask colour");
+    m.color = color;
+    _writeCoverage(m.ctx, maskCoverage(id), color);
+    markCompositeDirty();
+    return true;
+}
 
 // ========================================================================
 // BRUSH SIZE CONVERSION
@@ -2190,7 +2751,7 @@ const MAX_AA_FRACTION = 0.25;
  */
 function effectiveHardness(hardness, radius) {
     const h = Math.min(1, Math.max(0, hardness));
-    if (S.editingMask) return h;
+    if (paintingInpaintMask()) return h;
     if (!(radius > 0)) return h;
     // THE BAND IS BOUNDED AS A FRACTION TOO, and this is not belt-and-braces.
     //
@@ -2715,6 +3276,207 @@ function stampAlphaMap(cx, cy, sz, opacity, stampAngle, dabStep, pivot) {
 }
 
 // Convert alpha map → ImageData with a flat color (only processes dirty region)
+// ---- CT10 Paint Mixer: pigment mixing (SOURCE_REVIEW.md, "Paint Mixer: pigment")
+// The owner, 2026-10-18, painting blue over yellow: "Do we expect that blue
+// and yellow should mix into green? ... the blue just overshadows it all".
+// Averaging RGB mixes LIGHT, so blue and yellow make grey. Paint subtracts:
+// each colour becomes a reflectance spectrum, the spectra are mixed by
+// Kubelka-Munk (absorption over scattering, K/S, adds by concentration) and
+// the result is seen again as sRGB. Written here from the published method,
+// no third-party code or data:
+//   - CIE 1931 2-degree colour-matching functions: the multi-lobe Gaussian
+//     fit of Wyman, Sloan & Shirley (2013), 380-730 nm in 10 nm steps;
+//   - RGB to spectrum: Smits-style (1999) split of linear RGB into white plus
+//     two of cyan/magenta/yellow/red/green/blue, over three smooth bands
+//     (edges 490 and 595 nm, width 8 nm -- chosen so blue and yellow make
+//     green while red and white stay pink, measured in km_prototype.js);
+//   - each colour's concentration weighted by its luminance, so a dark
+//     pigment does not swamp a light one (plain K/S averaging gave a dark
+//     teal for blue and yellow, the owner's "overshadows");
+//   - a round-trip correction, so mixing 0 % or 100 % returns the colour
+//     itself exactly.
+// One mix per dab, never per pixel.
+let _KM = null;
+function _kmTables() {
+    if (_KM) return _KM;
+    const NL = 36, lam = Array.from({ length: NL }, (_, i) => 380 + i * 10);
+    const g = (x, mu, s1, s2) => { const t = (x - mu) / (x < mu ? s1 : s2); return Math.exp(-0.5 * t * t); };
+    const xb = lam.map(l => 1.056 * g(l, 599.8, 37.9, 31.0) + 0.362 * g(l, 442.0, 16.0, 26.7) - 0.065 * g(l, 501.1, 20.4, 26.2));
+    const yb = lam.map(l => 0.821 * g(l, 568.8, 46.9, 40.5) + 0.286 * g(l, 530.9, 16.3, 31.1));
+    const zb = lam.map(l => 1.217 * g(l, 437.0, 11.8, 36.0) + 0.681 * g(l, 459.0, 26.0, 13.8));
+    const sig = v => 1 / (1 + Math.exp(-v));
+    const lo = lam.map(l => sig((490 - l) / 8)), hi = lam.map(l => sig((l - 595) / 8));
+    const mid = lam.map((l, i) => 1 - lo[i] - hi[i]);
+    const basis = {
+        w: lam.map(() => 1), r: hi, g: mid, b: lo,
+        c: lam.map((l, i) => lo[i] + mid[i]), m: lam.map((l, i) => lo[i] + hi[i]), y: lam.map((l, i) => mid[i] + hi[i]),
+    };
+    // XYZ to linear sRGB, then a per-channel scale so a perfect white
+    // reflector reads (1, 1, 1) under the equal-energy light used here.
+    const M = [[3.2406, -1.5372, -0.4986], [-0.9689, 1.8758, 0.0415], [0.0557, -0.2040, 1.0570]];
+    const xyz = R => { let X = 0, Y = 0, Z = 0; for (let i = 0; i < NL; i++) { X += R[i] * xb[i]; Y += R[i] * yb[i]; Z += R[i] * zb[i]; } return [X, Y, Z]; };
+    const raw = R => { const [X, Y, Z] = xyz(R); return M.map(m => m[0] * X + m[1] * Y + m[2] * Z); };
+    const white = raw(basis.w), whiteY = xyz(basis.w)[1];
+    _KM = { NL, basis, xyz, whiteY, lin: R => raw(R).map((v, k) => v / white[k]) };
+    return _KM;
+}
+const _kmToLin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+const _kmToSrgb = v => 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+function _kmReflectance(lin) {
+    const T = _kmTables(), B = T.basis, NL = T.NL, R = new Float64Array(NL);
+    const add = (curve, w) => { if (w > 0) for (let i = 0; i < NL; i++) R[i] += curve[i] * w; };
+    const [r, g, b] = lin;
+    if (r <= g && r <= b) { add(B.w, r); if (g <= b) { add(B.c, g - r); add(B.b, b - g); } else { add(B.c, b - r); add(B.g, g - b); } }
+    else if (g <= r && g <= b) { add(B.w, g); if (r <= b) { add(B.m, r - g); add(B.b, b - r); } else { add(B.m, b - g); add(B.r, r - b); } }
+    else { add(B.w, b); if (r <= g) { add(B.y, r - b); add(B.g, g - r); } else { add(B.y, g - b); add(B.r, r - g); } }
+    for (let i = 0; i < NL; i++) R[i] = Math.min(1, Math.max(1e-4, R[i]));
+    return R;
+}
+/** Pigment mix of two sRGB colours (0..255): `t` of `b` into `a`. Exact at
+ *  t = 0 and t = 1, and for a colour mixed with itself. */
+function _kmMix(a, b, t) {
+    if (t <= 0 || (a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) return a.slice();
+    if (t >= 1) return b.slice();
+    const T = _kmTables(), NL = T.NL;
+    const la = a.map(_kmToLin), lb = b.map(_kmToLin);
+    const Ra = _kmReflectance(la), Rb = _kmReflectance(lb);
+    let ca = (1 - t) * Math.max(1e-3, T.xyz(Ra)[1] / T.whiteY), cb = t * Math.max(1e-3, T.xyz(Rb)[1] / T.whiteY);
+    const sum = ca + cb; ca /= sum; cb /= sum;
+    const R = new Float64Array(NL);
+    for (let i = 0; i < NL; i++) {
+        const ka = (1 - Ra[i]) * (1 - Ra[i]) / (2 * Ra[i]), kb = (1 - Rb[i]) * (1 - Rb[i]) / (2 * Rb[i]);
+        const k = ca * ka + cb * kb;
+        R[i] = 1 + k - Math.sqrt(k * k + 2 * k);
+    }
+    const out = T.lin(R), fa = T.lin(Ra), fb = T.lin(Rb);
+    return out.map((v, k) => _kmToSrgb(Math.min(1, Math.max(0, v + (1 - t) * (la[k] - fa[k]) + t * (lb[k] - fb[k])))));
+}
+
+// ---- CT10 Paint Mixer (Evidence/canvas-ct10/SOURCE_REVIEW.md, "Paint Mixer")
+// After Krita's Color Smudge, with both of its rates: the brush lands mixed
+// with what is under it (the smudge), then -- as Krita's colour rate re-adds
+// paint at every dab -- recharges toward a much lighter steady mix as it
+// travels, so a stroke over earlier paint covers it. The carried colour
+// changes with DISTANCE travelled, dab by dab (both stroke engines space dabs
+// by distance), so the result does not depend on how often the pointer
+// reported. Each dab marks the colour of the pixels it covers, the last dab
+// over a pixel winning, as the brush's trailing edge does on a canvas; the
+// pixels take it when their coverage is converted, through whichever engine
+// produced it. Off, none of this exists and the stroke is the one colour it
+// always was.
+//: How far the carried colour moves toward its target per brush RADIUS
+//: travelled. Chosen, not derived: a colour fades to a quarter in about 1.6
+//: brush widths, a short wet drag.
+const MIX_PICKUP = 0.35;
+//: How much harder the brush recharges with its own paint than it picks up,
+//: at Amount 50 %. The steady mix over one colour is A / (A + k (1 - A)):
+//: with k = 3 that is 25 % at Amount 50, 50 % at 75 and all of it at 100.
+//: k = 1 would be the first build's model, which mixed at the full Amount
+//: for the whole stroke and so never covered (measured: 50 % over earlier
+//: paint at Amount 50, however long the stroke). Chosen, the owner's to tune.
+const MIX_RECHARGE = 3;
+/** A stroke's mixing state, or null when Mix is off or this is not a brush
+ *  stroke on a layer. */
+function _mixBegin() {
+    if (!S.brushMixOn || S.tool !== "brush" || S.editingMask || S.regionMode) return null;
+    const W = S.W, H = S.H;
+    const tc = getTempCanvas("mixBase", W, H), tctx = tc.getContext("2d", { colorSpace: "srgb" });
+    for (const L of S.layers) {
+        if (L.visible && L.canvas) { tctx.globalAlpha = L.opacity; tctx.drawImage(L.canvas, 0, 0); }
+    }
+    tctx.globalAlpha = 1;
+    const rgb = hexRgb(drawColor());
+    const amount = Math.max(0, Math.min(1, S.brushMix ?? 0.5));
+    return {
+        base: tctx.getImageData(0, 0, W, H).data,   // the visible picture as the stroke began
+        color: new Uint8ClampedArray(W * H * 3),     // each painted pixel's colour
+        pend: new Uint8ClampedArray(W * H * 3),      // the colour the last dab over it laid
+        fresh: new Uint8Array(W * H),                // a dab has marked it
+        done: new Uint8Array(W * H),                 // a mark no dab reached has been coloured
+        brush: [rgb.r, rgb.g, rgb.b],
+        amount,
+        // The steady share of the picked-up colour (see MIX_RECHARGE).
+        steady: amount >= 1 ? 1 : amount / (amount + MIX_RECHARGE * (1 - amount)),
+        carried: null, last: null,
+    };
+}
+// The mean colour of the picture under a dab: at most 9 x 9 samples over
+// its circle, weighted by alpha. null over nothing visible.
+function _mixSample(mix, x, y, r) {
+    const W = S.W, H = S.H, n = Math.max(1, Math.min(9, Math.ceil(r)));
+    let cr = 0, cg = 0, cb = 0, w = 0;
+    for (let iy = 0; iy < n; iy++) for (let ix = 0; ix < n; ix++) {
+        const ox = n === 1 ? 0 : (ix / (n - 1) * 2 - 1) * r, oy = n === 1 ? 0 : (iy / (n - 1) * 2 - 1) * r;
+        if (ox * ox + oy * oy > r * r) continue;
+        const px = Math.round(x + ox), py = Math.round(y + oy);
+        if (px < 0 || py < 0 || px >= W || py >= H) continue;
+        const j = (py * W + px) * 4, a = mix.base[j + 3] / 255;
+        cr += mix.base[j] * a; cg += mix.base[j + 1] * a; cb += mix.base[j + 2] * a; w += a;
+    }
+    return w > 1e-6 ? [cr / w, cg / w, cb / w] : null;
+}
+/** One dab of a mixing stroke at (x, y), `size` across. The primary dab
+ *  picks up and sets the colour; a symmetry copy lays the same colour. */
+function mixDab(x, y, size, primary = true) {
+    const mix = S.stroke.mix;
+    if (!mix) return;
+    const r = Math.max(0.5, size / 2), B = mix.brush;
+    if (primary) {
+        const s = _mixSample(mix, x, y, r);
+        if (!mix.carried) {
+            // Landing: the brush meets the paint and mixes at the full Amount.
+            mix.carried = s ? _kmMix(B, s, mix.amount) : B.slice();
+        } else {
+            // Travelling: toward the steady mix with what is under it (or,
+            // over nothing, its own paint), by distance. Both blends are
+            // pigment mixes (owner, 2026-10-18: blue and yellow make green).
+            const target = s ? _kmMix(B, s, mix.steady) : B;
+            const dist = mix.last ? Math.hypot(x - mix.last.x, y - mix.last.y) : 0;
+            const keep = Math.pow(1 - MIX_PICKUP, dist / r);
+            mix.carried = _kmMix(target, mix.carried, keep);
+        }
+        mix.last = { x, y };
+    }
+    const D = mix.carried || B, W = S.W, H = S.H;
+    const x0 = Math.max(0, Math.floor(x - r)), x1 = Math.min(W - 1, Math.ceil(x + r));
+    const y0 = Math.max(0, Math.floor(y - r)), y1 = Math.min(H - 1, Math.ceil(y + r));
+    for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) {
+        if ((px - x) * (px - x) + (py - y) * (py - y) > (r + 1) * (r + 1)) continue;
+        const i = py * W + px;
+        mix.pend[i * 3] = D[0]; mix.pend[i * 3 + 1] = D[1]; mix.pend[i * 3 + 2] = D[2];
+        mix.fresh[i] = 1;
+    }
+    // Repainted pixels may gain no coverage (a hard tip going back over its
+    // own stroke), so the region is owed a conversion either way.
+    for (const d of [S.stroke.dirty, S.stroke.frameDirty]) {
+        if (!d) continue;
+        if (x0 < d.x0) d.x0 = x0; if (y0 < d.y0) d.y0 = y0;
+        if (x1 > d.x1) d.x1 = x1; if (y1 > d.y1) d.y1 = y1;
+    }
+}
+/** Colour the painted pixels in `d`: each with the colour the last dab over
+ *  it laid, every time -- so the commit, which converts the whole stroke,
+ *  ends on the same pixels whether or not previews converted some earlier.
+ *  A mark no dab circle reached (a scatter speck) takes the brush's colour
+ *  of the moment, once. */
+function _mixColour(mix, d) {
+    const W = S.W, H = S.H, map = S.stroke.alphaMap;
+    if (!map) return;
+    const x0 = Math.max(0, d.x0), y0 = Math.max(0, d.y0), x1 = Math.min(W - 1, d.x1), y1 = Math.min(H - 1, d.y1);
+    const col = mix.color, pend = mix.pend, done = mix.done, fresh = mix.fresh;
+    const D = mix.carried || mix.brush;
+    for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+            const i = y * W + x, k = i * 3;
+            if (!map[i]) continue;
+            if (fresh[i]) { col[k] = pend[k]; col[k + 1] = pend[k + 1]; col[k + 2] = pend[k + 2]; continue; }
+            if (done[i]) continue;
+            col[k] = D[0]; col[k + 1] = D[1]; col[k + 2] = D[2];
+            done[i] = 1;
+        }
+    }
+}
+
 function alphaMapToImageData(color, rect) {
     const map = S.stroke.alphaMap;
     const w = S.W, h = S.H;
@@ -2783,6 +3545,10 @@ function alphaMapToImageData(color, rect) {
     // coverage fills the grain. Only where paper is on at all -- the gates
     // above still decide that -- and only for the stroke that built it.
     const gTbl = gTile && S.stroke.paperTable ? S.stroke.paperTable : null;
+    // CT10 Paint Mixer: each pixel's own colour, mixed as coverage arrives.
+    const mix = S.stroke.mix || null;
+    if (mix) _mixColour(mix, d);
+    const mc = mix ? mix.color : null;
     const dx0 = Math.max(0, d.x0), dy0 = Math.max(0, d.y0);
     const dx1 = Math.min(w - 1, d.x1), dy1 = Math.min(h - 1, d.y1);
     for (let py = dy0; py <= dy1; py++) {
@@ -2800,9 +3566,13 @@ function alphaMapToImageData(color, rect) {
                 a = gTbl ? gTbl[(a << 8) | gh] : (a * gLut[gh] + 0.5) | 0;
                 if (a === 0) { data[j + 3] = 0; continue; }
             }
-            data[j]     = rgb.r;
-            data[j + 1] = rgb.g;
-            data[j + 2] = rgb.b;
+            if (mc) {
+                data[j] = mc[i * 3]; data[j + 1] = mc[i * 3 + 1]; data[j + 2] = mc[i * 3 + 2];
+            } else {
+                data[j]     = rgb.r;
+                data[j + 1] = rgb.g;
+                data[j + 2] = rgb.b;
+            }
             // Same rounding as the accumulator above, so a fully selected
             // pixel is exactly unchanged rather than one short.
             data[j + 3] = sel ? (((a * sel[i] + 127) / 255) | 0) : a;
@@ -2988,9 +3758,14 @@ function stampWet(x, y, p, stampRot, mods, dabStep, pivot) {
     if (M.ratio !== 1) S.brushRatio = Math.max(0.05, Math.min(1, savedRatio * M.ratio));
     // In Edit > Inpaint: force hard round mask brush
     const savedPreset = S.brushPreset, savedHard = S.brushHardness;
-    if (S.editingMask) { S.brushPreset = "round"; S.brushHardness = 1.0; }
-    const finalOp = S.editingMask ? 1 : op;
+    const hardMask = paintingInpaintMask();
+    if (hardMask) { S.brushPreset = "round"; S.brushHardness = 1.0; }
+    const finalOp = hardMask ? 1 : op;
     stampAlphaMap(x, y, sz, finalOp, ang, dabStep, pivot);
+    if (S.stroke.mix) {   // CT10 Paint Mixer: this dab, then its symmetry copies
+        mixDab(x, y, sz, true);
+        for (const m of _symPoints(x, y).slice(1)) mixDab(m.x, m.y, sz, false);
+    }
     if (S.symmetry === "h" || S.symmetry === "both") stampAlphaMap(S.W - x, y, sz, finalOp, ang, dabStep, pivot);
     if (S.symmetry === "v" || S.symmetry === "both") stampAlphaMap(x, S.H - y, sz, finalOp, ang, dabStep, pivot);
     if (S.symmetry === "both") stampAlphaMap(S.W - x, S.H - y, sz, finalOp, ang, dabStep, pivot);
@@ -3005,7 +3780,7 @@ function stampWet(x, y, p, stampRot, mods, dabStep, pivot) {
             stampAlphaMap(rx, ry, sz, finalOp, ang + a, dabStep, pivot);
         }
     }
-    if (S.editingMask) { S.brushPreset = savedPreset; S.brushHardness = savedHard; }
+    if (hardMask) { S.brushPreset = savedPreset; S.brushHardness = savedHard; }
     S.brushRatio = savedRatio;
 }
 
@@ -3448,7 +4223,7 @@ function _advanceHeading(target) {
  * than one extra pointer event.
  */
 function dabIgnoresRotation() {
-    if (S.editingMask) return true;
+    if (paintingInpaintMask()) return true;
     if (!S.brushDynamics.followStroke) return true;
     const kind = S.brushPreset;
     if (kind === "custom") return false;
@@ -3664,6 +4439,7 @@ function beginStroke(x, y, p) {
     // this function returns. Cleared here so a Legacy stroke can never merge
     // through the table a V2 stroke left behind.
     S.stroke.paperTable = null;
+    S.stroke.mix = _mixBegin();   // CT10 Paint Mixer; null when it is off
     S.stroke.dirty = { x0: S.W, y0: S.H, x1: 0, y1: 0 };
     // BE8. What changed since the last COMPOSITE, as opposed to since the start
     // of the stroke. `dirty` accumulates because commit needs the total; using
@@ -3855,7 +4631,7 @@ function commitStroke() {
         // target is Flow x Opacity, so applying Opacity again here would
         // square it. Off -- which is thirteen of sixteen presets -- this
         // is byte-for-byte the line it replaced.
-        T.ctx.globalAlpha = wasMask ? 1 : (S.brushBuildup ? 1 : S.brushOpacity);
+        T.ctx.globalAlpha = (wasMask && T.ctx === S.mask.ctx) ? 1 : (S.brushBuildup ? 1 : S.brushOpacity);
         // THE ONE DIFFERENCE between painting and erasing.
         T.ctx.globalCompositeOperation =
             strokeTool() === "eraser" ? "destination-out" : "source-over";
@@ -3885,7 +4661,7 @@ function commitStroke() {
         markCompositeDirtyRegion(S.stroke.dirty.x0, S.stroke.dirty.y0,
                                  S.stroke.dirty.x1 + 1, S.stroke.dirty.y1 + 1);
     }
-    S.stroke.alphaMap = null;
+    S.stroke.alphaMap = null; S.stroke.mix = null;
     S.stroke.accum = null;
     S.stroke._accumFor = null;
     S.stroke._cachedImg = null;
@@ -3961,6 +4737,7 @@ function _smudgeDragAt(ctx, x, y, p, buffer) {
     const bufW = buffer.w, bufH = buffer.h;
     const bd = buffer.imageData.data;
     const ud = under.data;
+    const pre = _selectionPre(ud);   // CT4
     const cl = x - ix, ct = y - iy;
     for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) {
         const dist = Math.hypot(px - cl, py - ct) / r;
@@ -3977,6 +4754,7 @@ function _smudgeDragAt(ctx, x, y, p, buffer) {
         const blendedA = ud[i + 3] + (bd[bi + 3] - ud[i + 3]) * blend;
         if (blendedA > ud[i + 3]) ud[i + 3] = blendedA;
     }
+    _selectionWeigh(ud, pre, ix, iy, w, h);
     ctx.putImageData(under, ix, iy);
     // Refresh buffer
     const ns = ctx.getImageData(ix, iy, w, h), nd = ns.data;
@@ -4024,6 +4802,7 @@ function blurAt(ctx, x, y, p) {
     if (w < 3 || h < 3) return;
     const img = ctx.getImageData(ix, iy, w, h);
     const d = img.data;
+    const pre = _selectionPre(d);   // CT4
     const out = new Uint8ClampedArray(d.length);
     const kR = Math.max(1, ~~(S.toolStrength * 4));
     for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) {
@@ -4039,15 +4818,26 @@ function blurAt(ctx, x, y, p) {
         out[di] = rr / cnt; out[di + 1] = gg / cnt; out[di + 2] = bb / cnt; out[di + 3] = aa / cnt;
     }
     const cl = w / 2, ct = h / 2;
+    // CT10: Sharpen is the same kernel the other way round (an unsharp
+    // mask): each pixel moves AWAY from its neighbourhood's mean by half
+    // the difference, with the same falloff. Alpha is left alone.
+    const sharpen = S._blurMode === "sharpen";
     for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) {
         const dist = Math.hypot(px - cl, py - ct) / r;
         if (dist > 1) continue;
         const b = 1 - dist, di = (py * w + px) * 4;
+        if (sharpen) {
+            d[di] += (d[di] - out[di]) * b * 0.5;
+            d[di + 1] += (d[di + 1] - out[di + 1]) * b * 0.5;
+            d[di + 2] += (d[di + 2] - out[di + 2]) * b * 0.5;
+            continue;
+        }
         d[di] += (out[di] - d[di]) * b;
         d[di + 1] += (out[di + 1] - d[di + 1]) * b;
         d[di + 2] += (out[di + 2] - d[di + 2]) * b;
         d[di + 3] += (out[di + 3] - d[di + 3]) * b;
     }
+    _selectionWeigh(d, pre, ix, iy, w, h);
     ctx.putImageData(img, ix, iy);
 }
 
@@ -4066,6 +4856,7 @@ function pixelateAt(ctx, x, y, p) {
     const gy0 = iy - (((iy % blockSize) + blockSize) % blockSize);
     const img = ctx.getImageData(ix, iy, w, h);
     const d = img.data;
+    const pre = _selectionPre(d);   // CT4
     const cl = x - ix, ct = y - iy;
     for (let by = gy0; by < ey; by += blockSize) {
         for (let bx = gx0; bx < ex; bx += blockSize) {
@@ -4092,6 +4883,7 @@ function pixelateAt(ctx, x, y, p) {
             }
         }
     }
+    _selectionWeigh(d, pre, ix, iy, w, h);
     ctx.putImageData(img, ix, iy);
 }
 
@@ -4106,6 +4898,7 @@ function dodgeBurnAt(ctx, x, y, p) {
     const w = ex - ix, h = ey - iy;
     if (w < 2 || h < 2) return;
     const img = ctx.getImageData(ix, iy, w, h), d = img.data;
+    const pre = _selectionPre(d);   // CT4
     const isDodge = S._dodgeMode === "dodge";
     const cl = x - ix, ct = y - iy, hard = S.brushHardness;
     for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) {
@@ -4127,6 +4920,7 @@ function dodgeBurnAt(ctx, x, y, p) {
             d[i + 2] = Math.max(0, d[i + 2] - amount * d[i + 2]);
         }
     }
+    _selectionWeigh(d, pre, ix, iy, w, h);
     ctx.putImageData(img, ix, iy);
 }
 
@@ -4219,6 +5013,7 @@ function liquifyPush(ctx, cx, cy, dx, dy, pressure) {
             }
         }
     }
+    if (S.selection.active && S.selection.mask) _selectionWeigh(dd, sd, ix, iy, w, h);   // CT4
     ctx.putImageData(dst, ix, iy);
 }
 
@@ -4258,42 +5053,431 @@ function cloneStamp(x, y, p) {
         }
         sctx.putImageData(sd, 0, 0);
     }
-    T.ctx.save(); T.ctx.globalAlpha = pOpacity(p);
-    T.ctx.drawImage(stamp, x - r, y - r);
-    T.ctx.restore();
+    if (S._cloneMode === "heal") _healStamp(sctx, T.canvas, x - r, y - r, Math.ceil(sz));   // CT10
+    _withSelection(T.ctx, x - r, y - r, sz + 1, sz + 1, () => {   // CT4
+        T.ctx.save(); T.ctx.globalAlpha = pOpacity(p);
+        T.ctx.drawImage(stamp, x - r, y - r);
+        T.ctx.restore();
+    });
+}
+
+// CT10 Heal (Evidence/canvas-ct10/SOURCE_REVIEW.md): Clone's other mode. The
+// stamp keeps the SOURCE's detail and takes the DESTINATION's low
+// frequencies -- its local colour and light -- so a patch blends in instead
+// of carrying its own tone across: stamp + blur(destination) - blur(stamp),
+// each blur weighted by alpha, radius a sixth of the stamp. The stamp's
+// alpha (its shape and falloff) is untouched.
+function _alphaBoxMean(d, w, h, k) {
+    const W1 = w + 1, I = new Float64Array(W1 * (h + 1) * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4, a = d[i + 3] / 255;
+        const o = ((y + 1) * W1 + x + 1) * 4, up = (y * W1 + x + 1) * 4, left = ((y + 1) * W1 + x) * 4, diag = (y * W1 + x) * 4;
+        const v = [d[i] * a, d[i + 1] * a, d[i + 2] * a, a];
+        for (let c = 0; c < 4; c++) I[o + c] = v[c] + I[up + c] + I[left + c] - I[diag + c];
+    }
+    const out = new Float32Array(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const x0 = Math.max(0, x - k), x1 = Math.min(w, x + k + 1), y0 = Math.max(0, y - k), y1 = Math.min(h, y + k + 1);
+        const A = (y0 * W1 + x0) * 4, B = (y0 * W1 + x1) * 4, Cc = (y1 * W1 + x0) * 4, D = (y1 * W1 + x1) * 4;
+        const wsum = I[D + 3] - I[B + 3] - I[Cc + 3] + I[A + 3], o = (y * w + x) * 4;
+        out[o + 3] = wsum;
+        if (wsum <= 1e-6) continue;
+        for (let c = 0; c < 3; c++) out[o + c] = (I[D + c] - I[B + c] - I[Cc + c] + I[A + c]) / wsum;
+    }
+    return out;
+}
+function _healStamp(sctx, dstCanvas, dx, dy, n) {
+    if (n < 2) return;
+    const st = sctx.getImageData(0, 0, n, n), sd = st.data;
+    const tmp = getTempCanvas("healDst", n, n), tctx = tmp.getContext("2d", { colorSpace: "srgb" });
+    tctx.clearRect(0, 0, n, n);
+    tctx.drawImage(dstCanvas, Math.round(dx), Math.round(dy), n, n, 0, 0, n, n);
+    const dd = tctx.getImageData(0, 0, n, n).data;
+    const k = Math.max(2, Math.round(n / 6));
+    const lowS = _alphaBoxMean(sd, n, n, k), lowD = _alphaBoxMean(dd, n, n, k);
+    for (let p = 0; p < n * n; p++) {
+        const i = p * 4;
+        if (!sd[i + 3] || lowS[i + 3] <= 1e-6 || lowD[i + 3] <= 1e-6) continue;
+        for (let c = 0; c < 3; c++) sd[i + c] = sd[i + c] + lowD[i + c] - lowS[i + c];
+    }
+    sctx.putImageData(st, 0, 0);
+}
+
+// ========================================================================
+// SMART PATCH (CT10; Evidence/canvas-ct10/SOURCE_REVIEW.md, "Smart Patch")
+// ========================================================================
+// Fills an area from its surroundings without a model: Krita's Smart Patch
+// (plugins/tools/tool_smart_patch/kis_inpaint.cpp), which is PatchMatch
+// (Barnes et al. 2009) run coarse to fine with an EM-like rebuild. Ported
+// step for step; the divergences are named where they occur. Sampled from
+// the visible layers, written into the active layer -- as Clone is.
+const _SP_MAX_DIST = 65535, _SP_SSDMAX = 4 * 255 * 255;
+/** Masked pixels above this abandon the patch (the owner is told). */
+const SMART_PATCH_MAX_MASKED = 400000;
+let _spSim = null;
+// Krita's similarity curve: a patch distance -> its vote's weight.
+function _spSimilarity() {
+    if (_spSim) return _spSim;
+    const x = (0.999 - 0.5) * 2, coef = 0.5 * Math.log((1 + x) / (1 - x)) / 0.10;
+    _spSim = new Float32Array(_SP_MAX_DIST + 1);
+    for (let i = 0; i < _spSim.length; i++) _spSim[i] = 0.5 - 0.5 * Math.tanh(coef * (i / _spSim.length - 0.10));
+    return _spSim;
+}
+// Seeded (mulberry32), so one patch is one result; Krita uses rand().
+function _spRandom(seed) {
+    let a = seed >>> 0;
+    return () => {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = Math.imul(a ^ (a >>> 15), a | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+/** A pyramid level: RGBA floats, a mask, and the mask's integral image (so
+ *  "does this patch touch the mask" is four reads, not (2r+1)^2). */
+function _spLevel(w, h, img, mask) {
+    const W1 = w + 1, I = new Int32Array(W1 * (h + 1));
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++)
+        I[(y + 1) * W1 + x + 1] = (mask[y * w + x] ? 1 : 0) + I[y * W1 + x + 1] + I[(y + 1) * W1 + x] - I[y * W1 + x];
+    return { w, h, img, mask, integ: I };
+}
+function _spTouches(L, x, y, r) {
+    const W1 = L.w + 1;
+    const x0 = Math.max(0, x - r), x1 = Math.min(L.w, x + r + 1), y0 = Math.max(0, y - r), y1 = Math.min(L.h, y + r + 1);
+    if (x1 <= x0 || y1 <= y0) return false;
+    return L.integ[y1 * W1 + x1] - L.integ[y0 * W1 + x1] - L.integ[y1 * W1 + x0] + L.integ[y0 * W1 + x0] > 0;
+}
+// Half size. A coarse pixel stays masked only when all four children are
+// (Krita: its mask survives a bicubic shrink only at full strength). Its
+// colour is the mean of the UNMASKED children -- Krita's bicubic also blends
+// the masked pixels' own colour in, which carries the blemish into the
+// coarse levels the fill is built from.
+function _spDownsample(L) {
+    const w = L.w >> 1, h = L.h >> 1, img = new Float32Array(w * h * 4), mask = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        let n = 0, r = 0, g = 0, b = 0, a = 0;
+        for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+            const i = (2 * y + dy) * L.w + 2 * x + dx;
+            if (L.mask[i]) continue;
+            n++; r += L.img[i * 4]; g += L.img[i * 4 + 1]; b += L.img[i * 4 + 2]; a += L.img[i * 4 + 3];
+        }
+        const o = y * w + x;
+        if (!n) { mask[o] = 1; continue; }
+        img[o * 4] = r / n; img[o * 4 + 1] = g / n; img[o * 4 + 2] = b / n; img[o * 4 + 3] = a / n;
+    }
+    return _spLevel(w, h, img, mask);
+}
+// Nearest-neighbour enlargement of a target (which has no mask), as Krita's.
+function _spUpscale(T, w, h) {
+    const img = new Float32Array(w * h * 4);
+    for (let y = 0; y < h; y++) {
+        const ys = Math.floor(y * T.h / h);
+        for (let x = 0; x < w; x++) {
+            const s = (ys * T.w + Math.floor(x * T.w / w)) * 4, d = (y * w + x) * 4;
+            img[d] = T.img[s]; img[d + 1] = T.img[s + 1]; img[d + 2] = T.img[s + 2]; img[d + 3] = T.img[s + 3];
+        }
+    }
+    return { w, h, img };
+}
+// Patch distance in [0, 65535]: target patch at (x, y) against source patch
+// at (xp, yp). Off-image or masked source pixels count as the worst match.
+function _spDistance(T, Src, R, x, y, xp, yp) {
+    let dist = 0, wsum = 0;
+    const scale = _SP_MAX_DIST / 65025;
+    for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+            wsum += _SP_SSDMAX;
+            const xs = x + dx, ys = y + dy, xt = xp + dx, yt = yp + dy;
+            if (xs < 0 || xs >= T.w || ys < 0 || ys >= T.h || xt < 0 || xt >= Src.w || yt < 0 || yt >= Src.h) { dist += _SP_SSDMAX; continue; }
+            const ti = yt * Src.w + xt;
+            if (Src.mask[ti]) { dist += _SP_SSDMAX; continue; }
+            const a = (ys * T.w + xs) * 4, b = ti * 4;
+            const d0 = T.img[a] - Src.img[b], d1 = T.img[a + 1] - Src.img[b + 1], d2 = T.img[a + 2] - Src.img[b + 2], d3 = T.img[a + 3] - Src.img[b + 3];
+            dist += Math.round(Math.min(4 * _SP_MAX_DIST, (d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3) * scale));
+        }
+    }
+    return wsum ? Math.floor(_SP_MAX_DIST * (dist / wsum)) : 0;
+}
+function _spField(w, h) { return { w, h, fx: new Int32Array(w * h), fy: new Int32Array(w * h), fd: new Int32Array(w * h) }; }
+// Krita's `initialize()`: score every link; an "infinite" one gets up to 20
+// random retries.
+function _spScore(F, T, Src, R, rand) {
+    for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) {
+        const o = y * F.w + x;
+        F.fd[o] = _spDistance(T, Src, R, x, y, F.fx[o], F.fy[o]);
+        for (let k = 0; F.fd[o] === _SP_MAX_DIST && k < 20; k++) {
+            F.fx[o] = Math.floor(rand() * Src.w); F.fy[o] = Math.floor(rand() * Src.h);
+            F.fd[o] = _spDistance(T, Src, R, x, y, F.fx[o], F.fy[o]);
+        }
+    }
+}
+function _spRandomize(F, T, Src, R, rand) {
+    for (let o = 0; o < F.w * F.h; o++) { F.fx[o] = Math.floor(rand() * Src.w); F.fy[o] = Math.floor(rand() * Src.h); }
+    _spScore(F, T, Src, R, rand);
+}
+// From the coarser level's field, scaled up.
+function _spFromCoarser(F, P, T, Src, R, rand) {
+    const xs = F.w / P.w, ys = F.h / P.h;
+    for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) {
+        const xl = Math.min(Math.floor(x / xs), P.w - 1), yl = Math.min(Math.floor(y / ys), P.h - 1), p = yl * P.w + xl;
+        F.fx[y * F.w + x] = Math.trunc(P.fx[p] * xs); F.fy[y * F.w + x] = Math.trunc(P.fy[p] * ys);
+    }
+    _spScore(F, T, Src, R, rand);
+}
+// Propagation from the neighbour already visited, then a random search
+// whose window halves from the whole image.
+function _spLink(F, T, Src, R, x, y, dir, rand) {
+    const o = y * F.w + x;
+    let xp, yp, dp;
+    if (x - dir >= 0 && x - dir < F.w) {
+        xp = F.fx[o - dir] + dir; yp = F.fy[o - dir];
+        dp = _spDistance(T, Src, R, x, y, xp, yp);
+        if (dp < F.fd[o]) { F.fx[o] = xp; F.fy[o] = yp; F.fd[o] = dp; }
+    }
+    if (y - dir >= 0 && y - dir < F.h) {
+        xp = F.fx[o - dir * F.w]; yp = F.fy[o - dir * F.w] + dir;
+        dp = _spDistance(T, Src, R, x, y, xp, yp);
+        if (dp < F.fd[o]) { F.fx[o] = xp; F.fy[o] = yp; F.fd[o] = dp; }
+    }
+    const xpi = F.fx[o], ypi = F.fy[o];
+    for (let wi = Math.max(Src.w, Src.h); wi > 0; wi >>= 1) {
+        xp = Math.max(0, Math.min(Src.w - 1, xpi + Math.floor(rand() * 2 * wi) - wi));
+        yp = Math.max(0, Math.min(Src.h - 1, ypi + Math.floor(rand() * 2 * wi) - wi));
+        dp = _spDistance(T, Src, R, x, y, xp, yp);
+        if (dp < F.fd[o]) { F.fx[o] = xp; F.fy[o] = yp; F.fd[o] = dp; }
+    }
+}
+function _spMinimize(F, T, Src, R, passes, rand) {
+    for (let i = 0; i < passes; i++) {
+        for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) if (F.fd[y * F.w + x] > 0) _spLink(F, T, Src, R, x, y, 1, rand);
+        for (let y = F.h - 1; y >= 0; y--) for (let x = F.w - 1; x >= 0; x--) if (F.fd[y * F.w + x] > 0) _spLink(F, T, Src, R, x, y, -1, rand);
+    }
+}
+// Rebuild the target from the best source patches, each pixel the weighted
+// vote of every patch that covers it. Far from the mask it is a copy.
+function _spExpectation(F, Src, T, R0, upscaled) {
+    const sim = _spSimilarity(), R = upscaled ? R0 * 2 : R0;
+    for (let y = 0; y < T.h; y++) for (let x = 0; x < T.w; x++) {
+        const d = (y * T.w + x) * 4;
+        if (!_spTouches(Src, x, y, R + 4)) {
+            const s = (y * Src.w + x) * 4;
+            T.img[d] = Src.img[s]; T.img[d + 1] = Src.img[s + 1]; T.img[d + 2] = Src.img[s + 2]; T.img[d + 3] = Src.img[s + 3];
+            continue;
+        }
+        let wsum = 0, r = 0, g = 0, b = 0, a = 0;
+        for (let dx = -R; dx <= R; dx++) for (let dy = -R; dy <= R; dy++) {
+            const xpt = x + dx, ypt = y + dy;
+            let xst, yst, w;
+            if (!upscaled) {
+                if (xpt < 0 || xpt >= F.w || ypt < 0 || ypt >= F.h) continue;
+                const n = ypt * F.w + xpt;
+                xst = F.fx[n]; yst = F.fy[n]; w = sim[F.fd[n]];
+            } else {
+                if (xpt < 0 || (xpt >> 1) >= F.w || ypt < 0 || (ypt >> 1) >= F.h) continue;
+                const n = (ypt >> 1) * F.w + (xpt >> 1);
+                xst = 2 * F.fx[n] + (xpt % 2); yst = 2 * F.fy[n] + (ypt % 2); w = sim[F.fd[n]];
+            }
+            const xs = xst - dx, ys = yst - dy;
+            if (xs < 0 || xs >= Src.w || ys < 0 || ys >= Src.h) continue;
+            const si = ys * Src.w + xs;
+            if (Src.mask[si]) continue;
+            r += Src.img[si * 4] * w; g += Src.img[si * 4 + 1] * w; b += Src.img[si * 4 + 2] * w; a += Src.img[si * 4 + 3] * w;
+            wsum += w;
+        }
+        if (wsum < 1) continue;
+        T.img[d] = r / wsum; T.img[d + 1] = g / wsum; T.img[d + 2] = b / wsum; T.img[d + 3] = a / wsum;
+    }
+}
+function _spEM(F, T, level, R, pyramid, rand) {
+    const iterEM = Math.min(2 * level, 4), iterNNF = Math.min(5, 1 + level), Src = pyramid[level];
+    let target = T, next = null;
+    for (let em = 1; em <= iterEM; em++) {
+        if (next) { target = next; next = null; }
+        for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) {
+            if (!_spTouches(Src, x, y, R)) { const o = y * F.w + x; F.fx[o] = x; F.fy[o] = y; F.fd[o] = 0; }
+        }
+        _spMinimize(F, target, Src, R, iterNNF, rand);
+        // The last loop builds the next level's target straight from the
+        // finer source, so the result is not an enlarged blur (Krita, after
+        // "Space-Time Video Completion").
+        const up = level >= 1 && em === iterEM;
+        const newSource = up ? pyramid[level - 1] : Src;
+        next = up ? _spUpscale(target, newSource.w, newSource.h) : { w: target.w, h: target.h, img: Float32Array.from(target.img) };
+        _spExpectation(F, newSource, next, R, up);
+    }
+    return next;
+}
+/** PatchMatch inpaint of `rgba` (w x h, Uint8ClampedArray) where `mask` is
+ *  set. Returns the filled RGBA as floats, or null when nothing can be
+ *  rebuilt (no mask, or an area too small to have a coarser level). */
+function _spInpaint(rgba, mask, w, h, R, seed) {
+    const img = new Float32Array(w * h * 4), m = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+        m[i] = mask[i] ? 1 : 0;
+        if (m[i]) continue;   // Krita zeroes masked pixels too, so they cannot vote
+        img[i * 4] = rgba[i * 4]; img[i * 4 + 1] = rgba[i * 4 + 1]; img[i * 4 + 2] = rgba[i * 4 + 2]; img[i * 4 + 3] = rgba[i * 4 + 3];
+    }
+    const pyramid = [_spLevel(w, h, img, m)];
+    let src = pyramid[0];
+    while (src.w > R && src.h > R && src.integ[src.integ.length - 1] > 0) { src = _spDownsample(src); pyramid.push(src); }
+    if (pyramid.length < 2) return null;
+    const rand = _spRandom(seed);
+    let target = { w: src.w, h: src.h, img: Float32Array.from(src.img) }, F = null;
+    for (let level = pyramid.length - 1; level > 0; level--) {
+        const Src = pyramid[level], next = _spField(target.w, target.h);
+        if (!F) _spRandomize(next, target, Src, R, rand);
+        else _spFromCoarser(next, F, target, Src, R, rand);
+        F = next;
+        target = _spEM(F, target, level, R, pyramid, rand);
+    }
+    return target.img;
+}
+/** Smart Patch: fill where `mask` (one byte per document pixel, > 0 = fill)
+ *  is set from the picture around it, into the active layer. Krita's
+ *  defaults: patch radius 4 (2..8), accuracy 50 (0..100), which samples the
+ *  mask's box plus 1 + accuracy/25 times its size on each side. Writes the
+ *  synthesised region (the fill and the soft ring Krita's votes make around
+ *  it), weighed by the selection as the other direct tools are. Returns
+ *  { changed, reason }, reason "empty", "mask" (editing a mask) or "large". */
+function smartPatch(mask, opts = {}) {
+    // A layer's pixels only: not a mask, not a Regions colour map.
+    if (S.editingMask || (_strokeTransaction && _strokeTransaction.region)) return { changed: false, reason: "mask" };
+    const R = Math.max(2, Math.min(8, Math.round(opts.radius ?? 4)));
+    const accuracy = Math.max(0, Math.min(100, opts.accuracy ?? 50));
+    const W = S.W, H = S.H;
+    let x0 = W, y0 = H, x1 = -1, y1 = -1, count = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        if (!mask[y * W + x]) continue;
+        count++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    if (!count) return { changed: false, reason: "empty" };
+    if (count > SMART_PATCH_MAX_MASKED) return { changed: false, reason: "large" };
+    const scale = 1 + accuracy / 25, bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const rx = Math.max(0, x0 - Math.floor(bw * scale)), ry = Math.max(0, y0 - Math.floor(bh * scale));
+    const rw = Math.min(W, x1 + 1 + Math.floor(bw * scale)) - rx, rh = Math.min(H, y1 + 1 + Math.floor(bh * scale)) - ry;
+    // The visible picture, as Clone samples it.
+    const tc = getTempCanvas("smartPatchSrc", W, H), tctx = tc.getContext("2d", { colorSpace: "srgb" });
+    for (const L of S.layers) {
+        if (L.visible && L.canvas) { tctx.globalAlpha = L.opacity; tctx.drawImage(L.canvas, 0, 0); }
+    }
+    tctx.globalAlpha = 1;
+    const src = tctx.getImageData(rx, ry, rw, rh).data;
+    const sub = new Uint8Array(rw * rh);
+    for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) sub[y * rw + x] = mask[(ry + y) * W + rx + x] ? 1 : 0;
+    const filled = _spInpaint(src, sub, rw, rh, R, opts.seed ?? 1);
+    if (!filled) return { changed: false, reason: "empty" };
+    // Only what the rebuild changed travels; everything else stays clear so
+    // the draw below leaves it alone.
+    const out = getTempCanvas("smartPatchOut", rw, rh), octx = out.getContext("2d", { colorSpace: "srgb" });
+    const res = octx.createImageData(rw, rh), rd = res.data;
+    let changed = false;
+    for (let i = 0; i < rw * rh; i++) {
+        const j = i * 4;
+        const v = [0, 1, 2, 3].map(k => Math.max(0, Math.min(255, Math.round(filled[j + k]))));
+        if (!sub[i] && v[0] === src[j] && v[1] === src[j + 1] && v[2] === src[j + 2] && v[3] === src[j + 3]) continue;
+        rd[j] = v[0]; rd[j + 1] = v[1]; rd[j + 2] = v[2]; rd[j + 3] = v[3];
+        changed = true;
+    }
+    if (!changed) return { changed: false, reason: "empty" };
+    octx.putImageData(res, 0, 0);
+    const T = drawTarget();
+    _withSelection(T.ctx, rx, ry, rw, rh, () => {
+        T.ctx.save(); T.ctx.globalAlpha = 1; T.ctx.globalCompositeOperation = "source-over";
+        T.ctx.drawImage(out, rx, ry);
+        T.ctx.restore();
+    });
+    markCompositeDirty();
+    return { changed: true, reason: "", region: { x: rx, y: ry, w: rw, h: rh } };
+}
+// The Patch brush (Clone tool, Patch mode): dabs build a mask, shown as a
+// tint; lifting the pen patches it.
+function patchBegin() {
+    S._patchMask = new Uint8Array(S.W * S.H);
+    if (!S._patchOverlay || S._patchOverlay.width !== S.W || S._patchOverlay.height !== S.H) S._patchOverlay = _createCanvas(S.W, S.H);
+    S._patchOverlay.getContext("2d").clearRect(0, 0, S.W, S.H);
+}
+function patchDab(x, y, p) {
+    if (!S._patchMask) return;
+    const r = Math.max(0.5, pSz(p) / 2), W = S.W, H = S.H;
+    const xa = Math.max(0, Math.floor(x - r)), xb = Math.min(W - 1, Math.ceil(x + r));
+    const ya = Math.max(0, Math.floor(y - r)), yb = Math.min(H - 1, Math.ceil(y + r));
+    for (let py = ya; py <= yb; py++) for (let px = xa; px <= xb; px++) {
+        if (Math.hypot(px + 0.5 - x, py + 0.5 - y) <= r) S._patchMask[py * W + px] = 1;
+    }
+    const o = S._patchOverlay.getContext("2d");
+    o.fillStyle = "rgba(255,0,255,0.45)";
+    o.beginPath(); o.arc(x, y, r, 0, Math.PI * 2); o.fill();
+}
+/** Patch what the brush covered, then forget the mask. */
+function patchEnd(opts) {
+    const mask = S._patchMask;
+    S._patchMask = null;
+    if (S._patchOverlay) S._patchOverlay.getContext("2d").clearRect(0, 0, S._patchOverlay.width, S._patchOverlay.height);
+    return mask ? smartPatch(mask, opts) : { changed: false, reason: "empty" };
 }
 
 // ========================================================================
 // FLOOD FILL
 // ========================================================================
+// CT12 (Evidence/canvas-ct12/SOURCE_REVIEW.md). Tolerance and Contiguous are
+// the owner's to set (defaults 32 and on: what the fill always did). The fill
+// is laid over the pixel at Opacity x the selection's coverage -- it used to
+// REPLACE the pixel with the fill colour at alpha `Opacity`, so a 50 % fill
+// cut a half-transparent hole instead of tinting, and a feathered selection
+// filled hard out to its faintest tail. At 100 % with no selection the
+// result is the same bytes as before. Returns whether anything changed, so a
+// fill that does nothing leaves history alone.
 function floodFill(pt) {
     const T = drawTarget(), ctx = T.ctx, w = S.W, h = S.H;
     const sx = ~~pt.x, sy = ~~pt.y;
-    if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
-    if (S.selection.active && S.selection.mask && S.selection.mask[sy * w + sx] === 0) return;
+    if (sx < 0 || sx >= w || sy < 0 || sy >= h) return false;
+    const sel = S.selection.active && S.selection.mask ? S.selection.mask : null;
+    if (sel && sel[sy * w + sx] === 0) return false;
     const img = ctx.getImageData(0, 0, w, h), d = img.data;
     const idx = (sy * w + sx) * 4;
     const tR = d[idx], tG = d[idx + 1], tB = d[idx + 2], tA = d[idx + 3];
-    const fc = hexRgb(drawColor()), fA = ~~(S.brushOpacity * 255);
-    if (tR === fc.r && tG === fc.g && tB === fc.b && tA === fA) return;
-    const tol = 32, stack = [sx, sy], vis = new Uint8Array(w * h);
-    const sel = S.selection.active ? S.selection.mask : null;
-    while (stack.length) {
-        const cy2 = stack.pop(), cx2 = stack.pop();
-        const ci = cy2 * w + cx2;
-        if (vis[ci]) continue;
-        if (sel && sel[ci] === 0) continue;
-        const pi = ci * 4;
-        if (Math.abs(d[pi] - tR) > tol || Math.abs(d[pi + 1] - tG) > tol ||
-            Math.abs(d[pi + 2] - tB) > tol || Math.abs(d[pi + 3] - tA) > tol) continue;
-        vis[ci] = 1;
-        d[pi] = fc.r; d[pi + 1] = fc.g; d[pi + 2] = fc.b; d[pi + 3] = fA;
-        if (cx2 > 0) stack.push(cx2 - 1, cy2);
-        if (cx2 < w - 1) stack.push(cx2 + 1, cy2);
-        if (cy2 > 0) stack.push(cx2, cy2 - 1);
-        if (cy2 < h - 1) stack.push(cx2, cy2 + 1);
+    const fc = hexRgb(drawColor()), op = Math.max(0, Math.min(1, S.brushOpacity));
+    if (!(op > 0)) return false;
+    const tol = S.fillTolerance ?? 32, contiguous = S.fillContiguous !== false;
+    const near = (pi) => Math.abs(d[pi] - tR) <= tol && Math.abs(d[pi + 1] - tG) <= tol &&
+                         Math.abs(d[pi + 2] - tB) <= tol && Math.abs(d[pi + 3] - tA) <= tol;
+    let changed = false;
+    const lay = (ci) => {
+        const a = sel ? op * sel[ci] / 255 : op;
+        if (!(a > 0)) return;
+        const pi = ci * 4, da = d[pi + 3] / 255, oa = a + da * (1 - a);
+        const r = (fc.r * a + d[pi] * da * (1 - a)) / oa, g = (fc.g * a + d[pi + 1] * da * (1 - a)) / oa;
+        const b = (fc.b * a + d[pi + 2] * da * (1 - a)) / oa, al = oa * 255;
+        const before0 = d[pi], before1 = d[pi + 1], before2 = d[pi + 2], before3 = d[pi + 3];
+        d[pi] = r; d[pi + 1] = g; d[pi + 2] = b; d[pi + 3] = al;
+        if (d[pi] !== before0 || d[pi + 1] !== before1 || d[pi + 2] !== before2 || d[pi + 3] !== before3) changed = true;
+    };
+    if (!contiguous) {
+        // Every matching pixel, read before any is written.
+        const hits = [];
+        for (let ci = 0; ci < w * h; ci++) if ((!sel || sel[ci]) && near(ci * 4)) hits.push(ci);
+        for (const ci of hits) lay(ci);
+    } else {
+        // A pixel is tested before it is written and written once, so every
+        // test sees the original colours.
+        const stack = [sx, sy], vis = new Uint8Array(w * h);
+        while (stack.length) {
+            const cy2 = stack.pop(), cx2 = stack.pop();
+            const ci = cy2 * w + cx2;
+            if (vis[ci]) continue;
+            if (sel && sel[ci] === 0) continue;
+            if (!near(ci * 4)) continue;
+            vis[ci] = 1;
+            lay(ci);
+            if (cx2 > 0) stack.push(cx2 - 1, cy2);
+            if (cx2 < w - 1) stack.push(cx2 + 1, cy2);
+            if (cy2 > 0) stack.push(cx2, cy2 - 1);
+            if (cy2 < h - 1) stack.push(cx2, cy2 + 1);
+        }
     }
-    ctx.putImageData(img, 0, 0);
+    if (changed) ctx.putImageData(img, 0, 0);
+    return changed;
 }
 
 // ========================================================================
@@ -4351,12 +5535,14 @@ function drawShapePath(ctx, mode, x1, y1, x2, y2, filled) {
 
 function commitShape(start, end, mode, filled) {
     const T = drawTarget(), col = drawColor();
-    T.ctx.save();
-    T.ctx.strokeStyle = col; T.ctx.fillStyle = col;
-    T.ctx.lineWidth = brushPx();
-    T.ctx.globalAlpha = S.brushOpacity;
-    drawShapePath(T.ctx, mode, start.x, start.y, end.x, end.y, filled);
-    T.ctx.restore();
+    _withSelection(T.ctx, 0, 0, S.W, S.H, () => {   // CT4
+        T.ctx.save();
+        T.ctx.strokeStyle = col; T.ctx.fillStyle = col;
+        T.ctx.lineWidth = brushPx();
+        T.ctx.globalAlpha = S.brushOpacity;
+        drawShapePath(T.ctx, mode, start.x, start.y, end.x, end.y, filled);
+        T.ctx.restore();
+    });
 }
 
 // ========================================================================
@@ -4485,20 +5671,29 @@ function screenToDoc(screenX, screenY) {
 // UNDO / REDO
 // ========================================================================
 function _undoTarget() {
-    if (S.editingMask) return { ctx: S.mask.ctx, id: "mask" };
+    if (S.editingMask) {
+        const m = maskTargetEntry();
+        return m === S.mask ? { ctx: S.mask.ctx, id: "mask" } : { ctx: m.ctx, id: "mask:" + m.id };
+    }
     const L = activeLayer();
     return { ctx: L.ctx, id: L.id };
 }
 
 function _undoResolve(id) {
     if (id === "mask") return S.mask.ctx;
+    if (typeof id === "string" && id.startsWith("mask:")) {
+        const m = maskById(Number(id.slice(5)));
+        return m ? m.ctx : null;
+    }
     const L = S.layers.find(l => l.id === id);
     return L ? L.ctx : null;
 }
 
 function _inferActionLabel() {
     const labels = {
-        mask: S.maskOperation === "subtract" ? "Subtract generation mask" : "Add generation mask",
+        mask: paintingInpaintMask()
+            ? (S.maskOperation === "subtract" ? "Subtract generation mask" : "Add generation mask")
+            : (S.maskOperation === "subtract" ? "Erase " : "Paint ") + maskTargetEntry().name,
         brush: "Brush stroke", eraser: "Erase", smudge: "Smudge", blur: "Blur",
         fill: "Fill", gradient: "Gradient", shape: "Shape", text: "Text",
         clone: "Clone stamp", dodge: "Dodge/Burn", liquify: "Liquify",
@@ -4616,12 +5811,13 @@ function saveStructuralUndo(label) {
             return {
                 id: L.id, name: L.name, type: L.type,
                 visible: L.visible, opacity: L.opacity,
-                blendMode: L.blendMode, locked: L.locked,
+                blendMode: L.blendMode, locked: L.locked, source: _sourceCopy(L),
                 data: L.ctx.getImageData(0, 0, S.W, S.H)
             };
         }),
         activeIdx: S.activeLayerIdx, editingMask: S.editingMask, userMaskMode: !!S._userMaskMode,
         maskData: S.mask.ctx.getImageData(0, 0, S.W, S.H),
+        masks: _snapshotMasks(), maskTarget: S.maskTarget, nextMaskId: S._nextMaskId,
         canvasW: S.W, canvasH: S.H
     };
     S.undoStack.push(snapshot);
@@ -4646,6 +5842,11 @@ function _restoreStructural(entry) {
         S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
     }
     if (entry.maskData) S.mask.ctx.putImageData(entry.maskData, 0, 0);
+    if (entry.masks) {
+        S.masks = entry.masks.map(m => _makeMask(m));
+        S.maskTarget = maskById(entry.maskTarget) ? entry.maskTarget : null;
+        S._nextMaskId = entry.nextMaskId || S._nextMaskId;
+    }
     S.layers = [];
     for (const ld of entry.layers) {
         if (ld.type === "adjustment") {
@@ -4659,7 +5860,8 @@ function _restoreStructural(entry) {
             if (ld.data) ctx.putImageData(ld.data, 0, 0);
             S.layers.push({
                 id: ld.id, name: ld.name, type: ld.type, canvas: c, ctx: ctx,
-                visible: ld.visible, opacity: ld.opacity, blendMode: ld.blendMode, locked: ld.locked
+                visible: ld.visible, opacity: ld.opacity, blendMode: ld.blendMode, locked: ld.locked,
+                source: ld.source ? JSON.parse(JSON.stringify(ld.source)) : null
             });
         }
     }
@@ -4686,12 +5888,13 @@ function _captureStructural() {
             return {
                 id: L.id, name: L.name, type: L.type,
                 visible: L.visible, opacity: L.opacity,
-                blendMode: L.blendMode, locked: L.locked,
+                blendMode: L.blendMode, locked: L.locked, source: _sourceCopy(L),
                 data: L.ctx.getImageData(0, 0, S.W, S.H)
             };
         }),
         activeIdx: S.activeLayerIdx, editingMask: S.editingMask, userMaskMode: !!S._userMaskMode,
         maskData: S.mask.ctx.getImageData(0, 0, S.W, S.H),
+        masks: _snapshotMasks(), maskTarget: S.maskTarget, nextMaskId: S._nextMaskId,
         canvasW: S.W, canvasH: S.H
     };
 }
@@ -4742,7 +5945,7 @@ function strokeTargetIsCurrent() {
         && t.tool === S.tool && t.editingMask === S.editingMask && t.regionMode === S.regionMode
         && (t.region ? t.regionId === S.activeRegionId
             && S.regions.some(r => r === t.target)
-            : t.editingMask ? t.target.ctx === S.mask.ctx : t.layer === activeLayer()));
+            : t.editingMask ? t.target.ctx === maskTargetEntry().ctx : t.layer === activeLayer()));
 }
 
 function _strokePixelsChanged(t) {
@@ -4763,7 +5966,7 @@ function _clearStrokeBuffers() {
     S.drawing = false;
     S.stroke._openingDab = null;
     S.stroke._headingKnown = false;
-    S.stroke.alphaMap = null;
+    S.stroke.alphaMap = null; S.stroke.mix = null;
     S.stroke.accum = null;
     S.stroke._accumFor = null;
     S.stroke.points = [];
@@ -4780,6 +5983,9 @@ function _clearStrokeBuffers() {
     S._smudgeSymBuffers = null;
     S._liquifySnapshot = null;
     S.stroke._liquifyDist = 0;
+    // CT10: a cancelled Patch stroke leaves no mask or tint behind.
+    S._patchMask = null;
+    if (S._patchOverlay) S._patchOverlay.getContext("2d").clearRect(0, 0, S._patchOverlay.width, S._patchOverlay.height);
     if (S.stroke.pointerId != null && S.canvas) {
         try { S.canvas.releasePointerCapture(S.stroke.pointerId); } catch (_) {}
     }
@@ -4797,7 +6003,11 @@ function clearStrokeUndo() {
     const changed = _strokePixelsChanged(t);
     _strokeTransaction = null;
     if (!changed) _restoreStrokeHistory(t);
-    if (changed && t.tool === "mask") S._userMaskMode = true;
+    // The Inpaint mask arms inpainting, and so does the selected named mask,
+    // which is what inpaints (M3).
+    if (changed && t.tool === "mask" && (t.target.ctx === S.mask.ctx || t.target.ctx === inpaintSourceEntry().ctx)) {
+        S._userMaskMode = true;
+    }
     _clearStrokeBuffers();
     if (changed) _notifyActionComplete("stroke");
     return changed;
@@ -4830,13 +6040,17 @@ function abortStroke() {
 // two strokes gone. The Extension never touched the earlier stroke either.
 function undo() {
     if (_strokeTransaction) { abortStroke(); if (_onUndoRedo) _onUndoRedo(); return; }
+    _pendingSelection = null;
     // A NEW revision, never an old one reused.
     _bumpRevision();
     if (!S.undoStack.length) return;
     if (S.transform.active) { S.transform.active = false; S.transform.canvas = null; S.transform.flipH = false; S.transform.flipV = false; }
     markCompositeDirty();
     const e = S.undoStack.pop();
-    if (e.type === "structural") {
+    if (e.type === "selection") {
+        S.redoStack.push({ type: "selection", label: e.label, selection: _selectionSnapshot() });
+        _selectionRestore(e.selection);
+    } else if (e.type === "structural") {
         S.redoStack.push(_captureStructural());
         _restoreStructural(e);
     } else if (e.type === "region") {
@@ -4857,12 +6071,16 @@ function undo() {
 
 function redo() {
     if (_strokeTransaction) { abortStroke(); if (_onUndoRedo) _onUndoRedo(); return; }
+    _pendingSelection = null;
     // A NEW revision, never an old one reused.
     _bumpRevision();
     if (!S.redoStack.length) return;
     markCompositeDirty();
     const e = S.redoStack.pop();
-    if (e.type === "structural") {
+    if (e.type === "selection") {
+        S.undoStack.push({ type: "selection", label: e.label, selection: _selectionSnapshot() });
+        _selectionRestore(e.selection);
+    } else if (e.type === "structural") {
         S.undoStack.push(_captureStructural());
         _restoreStructural(e);
     } else if (e.type === "region") {
@@ -4879,6 +6097,64 @@ function redo() {
         if (e.layerId === "mask" && e.userMaskMode !== undefined) S._userMaskMode = e.userMaskMode;
     }
     if (_onUndoRedo) _onUndoRedo();
+}
+
+// ========================================================================
+// SELECTION STEPS IN HISTORY (S6, NAMED-MASKS-DEFERRED-SPEC.md)
+// ========================================================================
+// A user's selection change is an undo step, in the same stack as every
+// other step, so Ctrl+Z takes them back in the order they happened. A
+// gesture opens a step before it touches the selection and closes it when it
+// ends; a step whose selection came out the same is dropped. Only the user's
+// own selection actions are steps: a selection another action clears in
+// passing (a resize, a transform) is not. At most `MAX_SELECTION_STEPS` are
+// kept -- each holds a whole-document selection.
+const MAX_SELECTION_STEPS = 20;
+let _pendingSelection = null;
+function _selectionSnapshot() {
+    const s = S.selection;
+    return {
+        active: !!s.active, rect: s.rect ? { ...s.rect } : null,
+        mask: s.mask ? Uint8Array.from(s.mask) : null,
+        isLasso: !!s._isLasso, isEllipse: !!s._isEllipse, isMaskBased: !!s._isMaskBased,
+        contour: s._contour ? s._contour.map(p => ({ x: p.x, y: p.y })) : null,
+    };
+}
+function _selectionRestore(snap) {
+    const s = S.selection;
+    s.active = snap.active; s.rect = snap.rect ? { ...snap.rect } : null;
+    s.mask = snap.mask ? Uint8Array.from(snap.mask) : null;
+    s._isLasso = snap.isLasso; s._isEllipse = snap.isEllipse; s._isMaskBased = snap.isMaskBased;
+    s._contour = snap.contour ? snap.contour.map(p => ({ x: p.x, y: p.y })) : null;
+    s.dragging = false; s.lassoPoints = null;
+}
+function _selectionSame(a, b) {
+    if (a.active !== b.active) return false;
+    if (!a.active) return true;
+    if (!a.mask || !b.mask || a.mask.length !== b.mask.length) return a.mask === b.mask;
+    for (let i = 0; i < a.mask.length; i++) if (a.mask[i] !== b.mask[i]) return false;
+    return true;
+}
+/** Before a user's selection gesture or action changes the selection. */
+function beginSelectionStep(label) {
+    _pendingSelection = { label: label || "Select", before: _selectionSnapshot() };
+}
+/** After it: one undo step, unless nothing changed. Returns whether one was made. */
+function endSelectionStep() {
+    const p = _pendingSelection;
+    _pendingSelection = null;
+    if (!p || _selectionSame(p.before, _selectionSnapshot())) return false;
+    S.undoStack.push({ type: "selection", label: p.label, selection: p.before });
+    const steps = S.undoStack.filter(e => e.type === "selection");
+    if (steps.length > MAX_SELECTION_STEPS) S.undoStack.splice(S.undoStack.indexOf(steps[0]), 1);
+    if (S.undoStack.length > S.maxUndo) S.undoStack.shift();
+    S.redoStack = [];
+    return true;
+}
+/** A one-shot selection action as one step. */
+function selectionStep(label, fn) {
+    beginSelectionStep(label);
+    try { fn(); } finally { endSelectionStep(); }
 }
 
 // ========================================================================
@@ -4956,67 +6232,174 @@ function magicWandSelect(pt) {
     return { mask, rect: { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 } };
 }
 
-// Selection modification (add/subtract)
-function selectionModify(newMask, mode) {
-    if (mode === "add" && S.selection.mask) {
-        for (let i = 0; i < newMask.length; i++) {
-            if (newMask[i] > S.selection.mask[i]) S.selection.mask[i] = newMask[i];
-        }
-    } else if (mode === "subtract" && S.selection.mask) {
-        for (let i = 0; i < S.selection.mask.length; i++) {
-            if (newMask[i] > 0) S.selection.mask[i] = 0;
-        }
-    } else {
-        S.selection.mask = newMask;
-    }
-    // Recalculate bounding rect
-    const w = S.W, h = S.H, m = S.selection.mask;
-    let x0 = w, y0 = h, x1 = 0, y1 = 0;
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-        if (m[y * w + x] > 0) {
+// ---- CT4: one way into the selection ----------------------------------------
+// Evidence/canvas-ct4/SOURCE_REVIEW.md. Every selection tool combines through
+// `applySelection`, so the four modes mean the same everywhere: Replace,
+// Add (the larger), Subtract (cleared where the new shape has any) and
+// Intersect (the smaller). An empty result is NO selection -- inactive, null
+// bounds -- never an active all-zero mask, which made every tool that honours
+// the selection paint nothing. Subtract or Intersect with nothing selected
+// leaves nothing selected; Add with nothing selected is Replace.
+/** The bounds of a 0..255 mask's nonzero pixels, or null when it has none. */
+function _selectionBounds(m) {
+    const w = S.W, h = S.H;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) {
+        const row = y * w;
+        for (let x = 0; x < w; x++) {
+            if (!m[row + x]) continue;
             if (x < x0) x0 = x; if (x > x1) x1 = x;
-            if (y < y0) y0 = y; if (y > y1) y1 = y;
+            if (y < y0) y0 = y; y1 = y;
         }
     }
-    S.selection.rect = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
-    S.selection.active = true;
+    return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+/** Combine `newMask` (document size, 0..255) into the selection. `shape`
+ *  describes a Replace result for the marching ants: {rect, ellipse,
+ *  contour, maskBased}; a combined result is always drawn from its mask.
+ *  Returns whether anything is selected afterwards. */
+function applySelection(newMask, mode = "replace", shape = {}) {
+    const s = S.selection, had = !!(s.active && s.mask);
+    let m;
+    if (mode === "add" && had) {
+        m = s.mask;
+        for (let i = 0; i < m.length; i++) if (newMask[i] > m[i]) m[i] = newMask[i];
+    } else if (mode === "subtract" || mode === "intersect") {
+        if (!had) { selectionClear(); return false; }
+        m = s.mask;
+        if (mode === "subtract") { for (let i = 0; i < m.length; i++) if (newMask[i] > 0) m[i] = 0; }
+        else { for (let i = 0; i < m.length; i++) if (newMask[i] < m[i]) m[i] = newMask[i]; }
+    } else {
+        m = newMask;
+    }
+    const bounds = _selectionBounds(m);
+    if (!bounds) { selectionClear(); return false; }
+    const combined = had && mode !== "replace";
+    s.mask = m; s.active = true; s.dragging = false; s.lassoPoints = null;
+    s._edgeCache = null;   // the ants' outline: a combine changes the mask in place
+    s._isMaskBased = combined || !!shape.maskBased;
+    s._isEllipse = !combined && !!shape.ellipse;
+    s._isLasso = !combined && !!shape.contour;
+    s._contour = !combined && shape.contour ? shape.contour : null;
+    s.rect = !combined && shape.rect ? { ...shape.rect } : bounds;
+    return true;
+}
+// Kept for its callers (the wand, Load as selection): a mask-shaped change.
+function selectionModify(newMask, mode) {
+    return applySelection(newMask, mode, { maskBased: true });
+}
+/** After a change made in place: exact bounds, drawn from the mask, and no
+ *  selection when nothing is left. */
+function _selectionReshaped(m) {
+    const s = S.selection, bounds = _selectionBounds(m);
+    if (!bounds) { selectionClear(); return false; }
+    s.mask = m; s.rect = bounds; s.active = true; s._edgeCache = null;
+    s._isMaskBased = true; s._isLasso = false; s._isEllipse = false; s._contour = null;
+    return true;
+}
+/** Feather by `radius` px: the same Gaussian as a mask's Feather (sigma r/2). */
+function featherSelection(radius) {
+    if (!S.selection.active || !S.selection.mask || !(radius > 0)) return false;
+    return _selectionReshaped(featherCoverage(S.selection.mask, S.W, S.H, radius));
+}
+/** Grow by `px` (Shrink when negative), as a mask's Grow. */
+function growSelection(px) {
+    if (!S.selection.active || !S.selection.mask || !px) return false;
+    return _selectionReshaped(growCoverage(S.selection.mask, S.W, S.H, px | 0));
+}
+/** A selection gesture given up (pointer cancel, blur, Escape mid-drag): the
+ *  selection goes back to what it was when the gesture began, and no step. */
+function cancelSelectionStep() {
+    const p = _pendingSelection;
+    _pendingSelection = null;
+    if (!p) return false;
+    _selectionRestore(p.before);
+    S.selection.draft = null;
+    return true;
 }
 
-// Feather selection (3-pass box blur approximation of Gaussian)
-function featherSelection(radius) {
-    if (!S.selection.active || !S.selection.mask || !radius || radius < 1) return;
-    const w = S.W, h = S.H;
-    const src = S.selection.mask;
-    const dst = new Uint8Array(w * h);
-    const tmp = new Uint8Array(w * h);
-    for (let pass = 0; pass < 3; pass++) {
-        const input = pass === 0 ? src : (pass % 2 === 1 ? dst : tmp);
-        const output = pass % 2 === 1 ? tmp : dst;
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                let sum = 0, cnt = 0;
-                for (let kx = -radius; kx <= radius; kx++) {
-                    const sx2 = x + kx;
-                    if (sx2 >= 0 && sx2 < w) { sum += input[y * w + sx2]; cnt++; }
-                }
-                output[y * w + x] = (sum / cnt) | 0;
-            }
-        }
-        const buf = new Uint8Array(w * h);
-        for (let x2 = 0; x2 < w; x2++) {
-            for (let y2 = 0; y2 < h; y2++) {
-                let sum = 0, cnt = 0;
-                for (let ky = -radius; ky <= radius; ky++) {
-                    const sy2 = y2 + ky;
-                    if (sy2 >= 0 && sy2 < h) { sum += output[sy2 * w + x2]; cnt++; }
-                }
-                buf[y2 * w + x2] = (sum / cnt) | 0;
-            }
-        }
-        if (pass < 2) { for (let i = 0; i < w * h; i++) dst[i] = buf[i]; }
-        else { S.selection.mask = buf; }
+// ---- CT11: Transform lifts the selected SHAPE -------------------------------
+// Evidence/canvas-ct11/SOURCE_REVIEW.md (audit F04). Transform used to copy
+// and clear the selection's whole bounding RECTANGLE, so transforming an
+// ellipse or a lasso also moved the corners it did not select and left a
+// rectangular hole. Now the pixels go through the selection's coverage: the
+// floating canvas gets coverage x alpha, the layer keeps the rest (a soft
+// edge splits between the two). With no selection the whole rectangle lifts
+// exactly as before.
+/** Lift `L`'s pixels inside `bounds` (document pixels, inside the document)
+ *  into a new canvas; returns it. */
+function liftSelection(L, bounds) {
+    const tc = _createCanvas(bounds.w, bounds.h);
+    const tx = tc.getContext("2d", { colorSpace: "srgb" });
+    const sel = S.selection.active && S.selection.mask ? S.selection.mask : null;
+    if (!sel) {
+        tx.drawImage(L.canvas, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+        L.ctx.clearRect(bounds.x, bounds.y, bounds.w, bounds.h);
+        return tc;
     }
-    S.selection._isMaskBased = true;
+    const src = L.ctx.getImageData(bounds.x, bounds.y, bounds.w, bounds.h), sd = src.data;
+    const lifted = tx.createImageData(bounds.w, bounds.h), ld = lifted.data;
+    for (let y = 0; y < bounds.h; y++) {
+        const row = (bounds.y + y) * S.W + bounds.x;
+        for (let x = 0; x < bounds.w; x++) {
+            const c = sel[row + x];
+            if (!c) continue;
+            const i = (y * bounds.w + x) * 4, a = sd[i + 3], up = Math.round(a * c / 255);
+            ld[i] = sd[i]; ld[i + 1] = sd[i + 1]; ld[i + 2] = sd[i + 2]; ld[i + 3] = up;
+            sd[i + 3] = a - up;
+        }
+    }
+    tx.putImageData(lifted, 0, 0);
+    L.ctx.putImageData(src, bounds.x, bounds.y);
+    return tc;
+}
+/** The selection as it is, and back: for an action that clears it in
+ *  passing and may be cancelled (Transform's Escape). */
+function selectionSnapshot() { return _selectionSnapshot(); }
+function restoreSelection(snap) { if (snap) { _selectionRestore(snap); S.selection._edgeCache = null; } }
+
+// ---- CT4: the selection constrains the direct tools --------------------------
+// Smudge, Blur, Pixelate, Dodge/Burn, Liquify, Clone and Shape write straight
+// to the layer and ignored the selection (audit F03; reproduced in
+// Evidence/canvas-ct4/baseline.json: identical pixels at 0, 50 and 100 %
+// coverage). Their kernels are unchanged: each operation's effect on its own
+// rectangle is weighed by the selection's coverage once, as Brush and
+// Gradient already do -- unselected pixels keep what they had, a half-selected
+// pixel takes half of the change.
+/** A copy of a rectangle's pixels before an operation, or null when no
+ *  selection constrains it. */
+function _selectionPre(data) {
+    return S.selection.active && S.selection.mask ? Uint8ClampedArray.from(data) : null;
+}
+/** `post` (the rectangle at ix, iy, w x h after the operation) pulled back
+ *  toward `pre` by the selection's coverage. */
+function _selectionWeigh(post, pre, ix, iy, w, h) {
+    if (!pre) return;
+    const sel = S.selection.mask, W = S.W;
+    for (let py = 0; py < h; py++) {
+        const row = (iy + py) * W + ix;
+        for (let px = 0; px < w; px++) {
+            const c = sel[row + px];
+            if (c === 255) continue;
+            const i = (py * w + px) * 4;
+            if (c === 0) { post[i] = pre[i]; post[i + 1] = pre[i + 1]; post[i + 2] = pre[i + 2]; post[i + 3] = pre[i + 3]; continue; }
+            const t = c / 255;
+            for (let k = 0; k < 4; k++) post[i + k] = pre[i + k] + (post[i + k] - pre[i + k]) * t;
+        }
+    }
+}
+/** For an operation that draws through the context (Clone, Shape): `fn` runs,
+ *  then its effect inside the clamped rectangle is weighed by the selection. */
+function _withSelection(ctx, x, y, w, h, fn) {
+    if (!(S.selection.active && S.selection.mask)) { fn(); return; }
+    const ix = Math.max(0, Math.floor(x)), iy = Math.max(0, Math.floor(y));
+    const ex = Math.min(S.W, Math.ceil(x + w)), ey = Math.min(S.H, Math.ceil(y + h));
+    if (ex <= ix || ey <= iy) { fn(); return; }
+    const pre = ctx.getImageData(ix, iy, ex - ix, ey - iy).data;
+    fn();
+    const after = ctx.getImageData(ix, iy, ex - ix, ey - iy);
+    _selectionWeigh(after.data, pre, ix, iy, ex - ix, ey - iy);
+    ctx.putImageData(after, ix, iy);
 }
 
 // Selection operations
@@ -5051,9 +6434,11 @@ function selectionDelete() {
 }
 
 function selectionInvert() {
-    if (!S.selection.active || !S.selection.mask) return;
-    for (let i = 0; i < S.selection.mask.length; i++) S.selection.mask[i] = 255 - S.selection.mask[i];
-    S.selection.rect = { x: 0, y: 0, w: S.W, h: S.H };
+    if (!S.selection.active || !S.selection.mask) return false;
+    const m = S.selection.mask;
+    for (let i = 0; i < m.length; i++) m[i] = 255 - m[i];
+    // CT4: inverting everything leaves nothing, which is no selection.
+    return _selectionReshaped(m);
 }
 
 function selectionAll() {
@@ -5061,6 +6446,8 @@ function selectionAll() {
     S.selection.mask = new Uint8Array(S.W * S.H);
     S.selection.mask.fill(255);
     S.selection.active = true;
+    S.selection._isMaskBased = false; S.selection._isLasso = false;
+    S.selection._isEllipse = false; S.selection._contour = null;
 }
 
 function selectionClear() {
@@ -5073,6 +6460,7 @@ function selectionClear() {
     S.selection._isMaskBased = false;
     S.selection._contour = null;
     S.selection.lassoPoints = null;
+    S.selection.draft = null;
 }
 
 function selectionToMask() {
@@ -6212,7 +7600,8 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
     }
 
     if (showMask) {
-        let overlay = S.mask.canvas;
+        const shown = shownMask();
+        let overlay = shown.canvas;
         if (S.drawing && S.editingMask && S.stroke.alphaMap) {
             // Preview the same single merge as commit. Coverage is not the
             // remaining mask, and two tinted overlays would double its alpha.
@@ -6221,15 +7610,22 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
             if (_maskPreview.height !== S.H) _maskPreview.height = S.H;
             const mx = _maskPreview.getContext("2d");
             mx.clearRect(0, 0, S.W, S.H);
-            mx.drawImage(S.mask.canvas, 0, 0);
+            mx.drawImage(shown.canvas, 0, 0);
             mx.globalCompositeOperation = strokeTool() === "eraser" ? "destination-out" : "source-over";
             mx.drawImage(S.stroke.canvas, 0, 0);
             mx.globalCompositeOperation = "source-over";
             overlay = _maskPreview;
         }
         c.globalCompositeOperation = "source-over";
-        c.globalAlpha = S.mask.opacity;
+        c.globalAlpha = shown.opacity;
         c.drawImage(overlay, 0, 0);
+    }
+    // The other named masks whose eye is on, each at its own opacity.
+    for (const m of S.masks) {
+        if (!m.visible || !m.canvas || (showMask && m === shownMask())) continue;
+        c.globalCompositeOperation = "source-over";
+        c.globalAlpha = m.opacity;
+        c.drawImage(m.canvas, 0, 0);
     }
     c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
 }
@@ -6293,7 +7689,7 @@ function composite(dirtyOnly) {
         const d = S.stroke.frameDirty || S.stroke.dirty;
         if (d.x1 >= d.x0 && d.y1 >= d.y0) {
             const onMask = S.editingMask;
-            const col = onMask ? S.maskColor : S.color;
+            const col = drawColor();
             const dx = Math.max(0, d.x0), dy = Math.max(0, d.y0);
             const dw = Math.min(S.W, d.x1 + 1) - dx, dh = Math.min(S.H, d.y1 + 1) - dy;
             if (dw > 0 && dh > 0) {
@@ -6321,7 +7717,7 @@ function composite(dirtyOnly) {
                     // R1-A. See `_composite2D`. The mask overlay keeps its own
                     // display opacity -- that is not brush Opacity and buildup
                     // has nothing to say about it.
-                    c.globalAlpha = onMask ? S.mask.opacity
+                    c.globalAlpha = onMask ? shownMask().opacity
                         : (S.brushBuildup ? 1 : S.brushOpacity);
                     c.globalCompositeOperation = "source-over";
                     c.drawImage(S.stroke.canvas, dx, dy, dw, dh, dx, dy, dw, dh);
@@ -6340,7 +7736,7 @@ function composite(dirtyOnly) {
 
     const eraserActive = S.drawing && S.stroke.canvas && strokeTool() === "eraser";
     const AL = activeLayer();
-    const showMask = S.mask.visible && S.mask.canvas;
+    const showMask = shownMask().visible && shownMask().canvas;
 
     // Prepare wet stroke canvas for brush
     //
@@ -6370,7 +7766,7 @@ function composite(dirtyOnly) {
         && (strokeTool() === "brush" || strokeTool() === "eraser")) ? strokeTool() : null;
     if (wetTool) {
         const onMask = S.editingMask;
-        const col = onMask ? S.maskColor : S.color;
+        const col = drawColor();
         const frame = S.stroke.frameDirty || S.stroke.dirty;
         if (frame.x1 >= frame.x0 && frame.y1 >= frame.y0) {
             const dx = Math.max(0, frame.x0), dy = Math.max(0, frame.y0);
@@ -6590,38 +7986,95 @@ function hasGenerationMask() {
 function clearGenerationMask() {
     if (_strokeTransaction) abortStroke();
     if (!hasGenerationMask()) return false;
-    const mask = S.editingMask, region = S.regionMode;
-    S.editingMask = true; S.regionMode = false;
+    const mask = S.editingMask, region = S.regionMode, target = S.maskTarget;
+    // The undo entry must name the Inpaint mask even while a named mask is
+    // the brush's target.
+    S.editingMask = true; S.regionMode = false; S.maskTarget = null;
     noteStrokeUndo("Clear generation mask");
     S.mask.ctx.clearRect(0, 0, S.W, S.H);
-    S.editingMask = mask; S.regionMode = region;
+    S.editingMask = mask; S.regionMode = region; S.maskTarget = target;
     clearStrokeUndo();
     markCompositeDirty(); composite();
     return true;
 }
 
-function exportMask() {
+/** Clear a mask: the Inpaint mask (null) as above, or a named one. */
+function clearMask(id) {
+    if (id == null) return clearGenerationMask();
+    const m = maskById(id);
+    if (!m) return false;
+    if (_strokeTransaction) abortStroke();
+    saveStructuralUndo("Clear mask");
+    m.ctx.clearRect(0, 0, S.W, S.H);
+    markCompositeDirty(); composite();
+    return true;
+}
+
+function exportMask(opts = {}) {
     // The mask is the MASK LAYER, plus visible regions in Regional mode.
     //
     // A third path used to sit above this one, building the mask from the
     // painted layers instead. It served a superseded sketch mode (see
     // INPAINT_SKETCH in PROJECT_STATE.md) and was unreachable: nothing ever
     // set the state it tested for.
-    const maskC = _createCanvas(S.W, S.H);
-    const mx = maskC.getContext("2d", { colorSpace: "srgb" });
-    mx.drawImage(S.mask.canvas, 0, 0);
+    //
+    // M3: the mask is the selected one -- the Inpaint mask at alpha > 0 as
+    // always, or a named mask cut to hard at `INPAINT_CUT`.
+    //
+    // S1: with Soft Inpainting on (`opts.soft`), a named mask goes as its
+    // grey, so a feathered edge or an Area map fades the inpaint in. Values
+    // under `SOFT_MASK_FLOOR` go as 0, so "Only masked" does not crop to a
+    // faint tail. Without Soft Inpainting the engine rounds its latent mask
+    // at one half anyway (measured: Evidence/s1-soft-inpaint), so the cut
+    // stays. The Inpaint mask is hard by construction either way.
+    const source = inpaintSourceEntry();
+    if (opts.soft && source !== S.mask) return _exportSoftMask(source);
+    const cut = source === S.mask ? 1 : INPAINT_CUT;
+    const sd = source.ctx.getImageData(0, 0, S.W, S.H).data;
+    let rd = null;
     if (S.studioMode === "Edit" && S.inpaintMode === "Regional" && S.regions.length) {
+        const maskC = _createCanvas(S.W, S.H);
+        const mx = maskC.getContext("2d", { colorSpace: "srgb" });
         for (const r of S.regions) { if (r.visible) mx.drawImage(r.canvas, 0, 0); }
+        rd = mx.getImageData(0, 0, S.W, S.H).data;
     }
-    const d = mx.getImageData(0, 0, S.W, S.H).data;
+    const on = (i) => sd[i + 3] >= cut || (rd !== null && rd[i + 3] > 0);
     let has = false;
-    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) { has = true; break; }
+    for (let i = 0; i < sd.length; i += 4) if (on(i)) { has = true; break; }
     if (!has) return "null";
     const c = _createCanvas(S.W, S.H);
     const x = c.getContext("2d", { colorSpace: "srgb" });
     x.fillStyle = "#000"; x.fillRect(0, 0, S.W, S.H);
     const o = x.getImageData(0, 0, S.W, S.H), od = o.data;
-    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0) { od[i] = 255; od[i + 1] = 255; od[i + 2] = 255; od[i + 3] = 255; }
+    for (let i = 0; i < sd.length; i += 4) if (on(i)) { od[i] = 255; od[i + 1] = 255; od[i + 2] = 255; od[i + 3] = 255; }
+    x.putImageData(o, 0, 0);
+    return c.toDataURL("image/png");
+}
+const SOFT_MASK_FLOOR = 8;
+/** S1: a named mask as grey (white = covered), visible regions joining at
+ *  full strength in Regional mode; "null" when nothing reaches the floor. */
+function _exportSoftMask(source) {
+    const sd = source.ctx.getImageData(0, 0, S.W, S.H).data;
+    let rd = null;
+    if (S.studioMode === "Edit" && S.inpaintMode === "Regional" && S.regions.length) {
+        const maskC = _createCanvas(S.W, S.H);
+        const mx = maskC.getContext("2d", { colorSpace: "srgb" });
+        for (const r of S.regions) { if (r.visible) mx.drawImage(r.canvas, 0, 0); }
+        rd = mx.getImageData(0, 0, S.W, S.H).data;
+    }
+    const c = _createCanvas(S.W, S.H);
+    const x = c.getContext("2d", { colorSpace: "srgb" });
+    x.fillStyle = "#000"; x.fillRect(0, 0, S.W, S.H);
+    const o = x.getImageData(0, 0, S.W, S.H), od = o.data;
+    let has = false;
+    for (let i = 0; i < sd.length; i += 4) {
+        let v = sd[i + 3] >= SOFT_MASK_FLOOR ? sd[i + 3] : 0;
+        if (rd !== null && rd[i + 3] > 0) v = 255;
+        if (!v) continue;
+        has = true;
+        od[i] = od[i + 1] = od[i + 2] = v; od[i + 3] = 255;
+    }
+    if (!has) return "null";
     x.putImageData(o, 0, 0);
     return c.toDataURL("image/png");
 }
@@ -7023,6 +8476,7 @@ function resizeCanvas(nw, nh) {
     markCompositeDirty();
     const savedLayers = S.layers.map(L => L.canvas ? L.ctx.getImageData(0, 0, S.W, S.H) : null);
     const savedMask = S.mask.ctx.getImageData(0, 0, S.W, S.H);
+    const savedNamed = S.masks.map(m => m.ctx.getImageData(0, 0, S.W, S.H));
     // Save region canvases before dimension change
     // Use each region's actual canvas size (may differ from S.W×S.H if regions
     // were never resized by a prior resizeCanvas call — this is the first fix).
@@ -7062,6 +8516,13 @@ function resizeCanvas(nw, nh) {
     const tmpM = _createCanvas(savedMask.width, savedMask.height);
     tmpM.getContext("2d", { colorSpace: "srgb" }).putImageData(savedMask, 0, 0);
     S.mask.ctx.drawImage(tmpM, 0, 0, nw, nh);
+    S.masks.forEach((m, i) => {
+        m.canvas.width = nw; m.canvas.height = nh;
+        m.ctx = m.canvas.getContext("2d", { colorSpace: "srgb" });
+        const tmp = _createCanvas(savedNamed[i].width, savedNamed[i].height);
+        tmp.getContext("2d", { colorSpace: "srgb" }).putImageData(savedNamed[i], 0, 0);
+        m.ctx.drawImage(tmp, 0, 0, nw, nh);
+    });
     // Resize region canvases to match new dimensions
     for (let i = 0; i < S.regions.length; i++) {
         const r = S.regions[i];
@@ -7074,6 +8535,194 @@ function resizeCanvas(nw, nh) {
             r.ctx.drawImage(tmpR, 0, 0, nw, nh);
         }
     }
+    // M2. Every layer was stretched to the new size: its picture with it.
+    const oldW = savedMask.width, oldH = savedMask.height;
+    followLayerSources([nw / oldW, 0, 0, nh / oldH, 0, 0]);
+}
+
+// ========================================================================
+// CANVAS SIZE (CT9 groundwork; Evidence/canvas-ct9/SOURCE_REVIEW.md)
+// ========================================================================
+// The document grows or shrinks around an ANCHOR without scaling anything:
+// `resizeCanvas` stretches every layer to the new size (Image Size); this
+// keeps every pixel where it is relative to the anchor and adds transparent
+// space (or trims). Layers, the Inpaint mask, named masks and regions all
+// move by the same offset, and each layer's picture follows (M2), so a word
+// mask still lands on its subject. The selection is cleared, as a resize
+// clears it. One structural undo step, which restores the size too.
+/** `ax`, `ay` in 0..1: 0 = left / top, 0.5 = centre, 1 = right / bottom.
+ *  Returns the offset the old document moved by, or null for no change. */
+function canvasSize(nw, nh, ax = 0.5, ay = 0.5) {
+    nw = Math.round(nw); nh = Math.round(nh);
+    if (!(nw >= 1 && nh >= 1) || (nw === S.W && nh === S.H)) return null;
+    if (_strokeTransaction) abortStroke();
+    saveStructuralUndo("Canvas size");
+    const dx = Math.round((nw - S.W) * Math.min(1, Math.max(0, ax)));
+    const dy = Math.round((nh - S.H) * Math.min(1, Math.max(0, ay)));
+    return _canvasSizeAt(nw, nh, dx, dy);
+}
+/** The document resized to nw x nh with the old one placed at (dx, dy). No
+ *  undo of its own: the caller takes one first. */
+function _canvasSizeAt(nw, nh, dx, dy) {
+    selectionClear();
+    markCompositeDirty();
+    const oldW = S.W, oldH = S.H;
+    const place = (canvas, ctx, data, fillWhite) => {
+        canvas.width = nw; canvas.height = nh;
+        const c = canvas.getContext("2d", { colorSpace: "srgb" });
+        if (fillWhite) { c.fillStyle = "#fff"; c.fillRect(0, 0, nw, nh); }
+        if (data) {
+            const tmp = _createCanvas(data.width, data.height);
+            tmp.getContext("2d", { colorSpace: "srgb" }).putImageData(data, 0, 0);
+            c.drawImage(tmp, dx, dy);
+        }
+        return c;
+    };
+    const savedLayers = S.layers.map(L => L.canvas ? L.ctx.getImageData(0, 0, oldW, oldH) : null);
+    const savedMask = S.mask.ctx.getImageData(0, 0, oldW, oldH);
+    const savedNamed = S.masks.map(m => m.ctx.getImageData(0, 0, oldW, oldH));
+    const savedRegions = S.regions.map(r => r.ctx.getImageData(0, 0, r.canvas.width, r.canvas.height));
+    S.W = nw; S.H = nh;
+    const pixels = nw * nh;
+    S.maxUndo = pixels > 4000000 ? 25 : pixels > 2000000 ? 50 : 100;
+    while (S.undoStack.length > S.maxUndo) S.undoStack.shift();
+    while (S.redoStack.length > S.maxUndo) S.redoStack.shift();
+    S.stroke.canvas.width = nw; S.stroke.canvas.height = nh;
+    S.layers.forEach((L, i) => { if (L.canvas) L.ctx = place(L.canvas, L.ctx, savedLayers[i], L.type === "reference"); });
+    S.mask.ctx = place(S.mask.canvas, S.mask.ctx, savedMask, false);
+    S.masks.forEach((m, i) => { m.ctx = place(m.canvas, m.ctx, savedNamed[i], false); });
+    S.regions.forEach((r, i) => { r.ctx = place(r.canvas, r.ctx, savedRegions[i], false); });
+    followLayerSources([1, 0, 0, 1, dx, dy]);
+    return { dx, dy };
+}
+
+// ---- CT9: Outpaint ------------------------------------------------------------
+// Owner, 2026-10-16 ("wait oh shit, we're getting outpainting?"), on the
+// recommendation: the new area is pre-filled by stretching the picture's
+// edge outward and blurring it into soft colour -- the "fill" A1111's
+// inpaint offers -- so the owner's own inpaint Fill ("Original") starts from
+// the picture's colours instead of blank. Their Fill setting is never moved.
+// The pre-fill is a layer of its own, "Outpaint fill", under everything
+// painted, so it can be seen and deleted; the Inpaint mask covers the new
+// area plus `overlap` pixels into the picture, so the seam is regenerated
+// too. One undo step.
+/** sides: {left, right, top, bottom} in pixels. Returns {dx, dy, width,
+ *  height} or null when nothing grows. */
+function outpaintPrepare(sides, overlap = 32, opts = {}) {
+    const l = Math.max(0, Math.round(sides.left || 0)), r = Math.max(0, Math.round(sides.right || 0));
+    const t = Math.max(0, Math.round(sides.top || 0)), b = Math.max(0, Math.round(sides.bottom || 0));
+    if (!(l + r + t + b > 0)) return null;
+    if (_strokeTransaction) abortStroke();
+    saveStructuralUndo("Outpaint");
+    const oldW = S.W, oldH = S.H, nw = oldW + l + r, nh = oldH + t + b;
+    _canvasSizeAt(nw, nh, l, t);
+    // The picture as it shows (Develop off), stretched from its own edge.
+    const flat = getFlattenedImageData({ applyDevelop: false }).data;
+    const fill = new Float32Array(nw * nh * 3), inside = (x, y) => x >= l && x < l + oldW && y >= t && y < t + oldH;
+    for (let y = 0; y < nh; y++) {
+        const sy = Math.min(t + oldH - 1, Math.max(t, y));
+        for (let x = 0; x < nw; x++) {
+            const sx = Math.min(l + oldW - 1, Math.max(l, x)), si = (sy * nw + sx) * 4, di = (y * nw + x) * 3;
+            fill[di] = flat[si]; fill[di + 1] = flat[si + 1]; fill[di + 2] = flat[si + 2];
+        }
+    }
+    // Soft colour, not streaks: three box passes per channel.
+    const k = Math.max(4, Math.round(Math.max(l, r, t, b) / 4));
+    const ch = new Float32Array(nw * nh), tmp = new Float32Array(nw * nh);
+    for (let c = 0; c < 3; c++) {
+        for (let i = 0; i < ch.length; i++) ch[i] = fill[i * 3 + c];
+        for (let pass = 0; pass < 3; pass++) { _boxBlur(ch, tmp, nw, nh, k, true); _boxBlur(tmp, ch, nw, nh, k, false); }
+        for (let i = 0; i < ch.length; i++) fill[i * 3 + c] = ch[i];
+    }
+    const layer = makeLayer("Outpaint fill", "paint");
+    const img = layer.ctx.createImageData(nw, nh), d = img.data;
+    for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) {
+        if (inside(x, y)) continue;
+        const i = y * nw + x, j = i * 4;
+        d[j] = fill[i * 3]; d[j + 1] = fill[i * 3 + 1]; d[j + 2] = fill[i * 3 + 2]; d[j + 3] = 255;
+    }
+    layer.ctx.putImageData(img, 0, 0);
+    const under = S.layers[0] && S.layers[0].type === "reference" ? 1 : 0;
+    S.layers.splice(under, 0, layer);
+    if (S.activeLayerIdx >= under) S.activeLayerIdx++;
+    // The Inpaint mask: the new area and `overlap` pixels into the picture.
+    const ov = Math.max(0, Math.round(overlap));
+    const keep = { x0: l + (l ? ov : 0), y0: t + (t ? ov : 0), x1: l + oldW - (r ? ov : 0), y1: t + oldH - (b ? ov : 0) };
+    S.mask.ctx.clearRect(0, 0, nw, nh);
+    const m = S.mask.ctx.createImageData(nw, nh), md = m.data, rgb = hexRgb(S.maskColor);
+    for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) {
+        if (x >= keep.x0 && x < keep.x1 && y >= keep.y0 && y < keep.y1) continue;
+        const j = (y * nw + x) * 4;
+        md[j] = rgb.r; md[j + 1] = rgb.g; md[j + 2] = rgb.b; md[j + 3] = 255;
+    }
+    S.mask.ctx.putImageData(m, 0, 0);
+    S.maskTarget = null;               // the Inpaint mask is what inpaints (M3)
+    S._userMaskMode = true;
+    // What Generate sends for this document while it stays this size
+    // (`outpaintJob`): an undo changes the size and so disarms it.
+    if (!S.documentId) _startNewDocument();
+    // `refine`: the dialog's "Refine new area" (owner: "Refine optional").
+    S._outpaintArmed = { W: nw, H: nh, documentId: S.documentId, refine: !!(opts && opts.refine) };
+    markCompositeDirty();
+    return { dx: l, dy: t, width: nw, height: nh };
+}
+
+// CT9 follow-up (owner, 2026-10-16: outpaint on a Hires picture "works but
+// not very well"). Generating the outpaint at the CANVAS size asks the model
+// for an enlarged picture's size -- far above the ~1 MP it was trained at --
+// because Neo's Only masked crop is widened to the generation's aspect, which
+// was the whole canvas. Instead the job generates the WHOLE canvas at the
+// model's own area (`nativeArea`, the canvas's aspect) through Only masked:
+// Neo (`processing.py` inpaint_full_res: get_crop_region_v2 ->
+// expand_crop_region to the generation aspect = the whole canvas -> resize to
+// width x height -> paste back) works at ~1 MP and pastes the masked area
+// into the full-size picture. One base pass; no Hires.
+//
+// Not a strip-plus-context crop, though it would be 1:1: measured on the GPU
+// (Evidence/gpu-proof-2026-10-16/op-run2.txt), a crop that hides the subject
+// while the prompt still names it paints a second one into the strip, cut off
+// by a hard seam. The whole canvas: coherent, 19 s against the canvas-size
+// job's 60 s on a 1792 x 1536 Anima outpaint.
+/** Pure: the crop {x, y, w, h} and generation {width, height} for a mask
+ *  bounding box `box` on a `W` x `H` canvas: the whole canvas, at
+ *  `nativeArea`. (`box` is kept for a per-strip refine pass later.) */
+function outpaintPlan(box, W, H, nativeArea) {
+    const s = Math.sqrt(nativeArea / (W * H));
+    const to8 = v => Math.max(64, Math.round(v * s / 8) * 8);
+    return { crop: { x: 0, y: 0, w: W, h: H }, width: to8(W), height: to8(H) };
+}
+
+/** Pure: the optional refine pass's size (owner: "Refine optional"). The
+ *  masked strip plus as much picture as fits in `nativeArea`, so Neo's Only
+ *  masked crop -- widened to this aspect around the strip -- is worked on at
+ *  about 1:1. Several sides span the canvas and get the whole of it. Hiding
+ *  the subject is harmless here: at the pass's light denoise the first pass
+ *  has already decided what is there (measured: no duplicate, no seam). */
+function outpaintRefinePlan(box, W, H, nativeArea) {
+    let cw = W, ch = H;
+    if (box.h >= H && box.w < W) cw = Math.min(W, Math.max(box.w, Math.round(nativeArea / H)));
+    else if (box.w >= W && box.h < H) ch = Math.min(H, Math.max(box.h, Math.round(nativeArea / W)));
+    const s = Math.sqrt(nativeArea / (cw * ch));
+    const to8 = v => Math.max(64, Math.round(v * s / 8) * 8);
+    return { width: to8(cw), height: to8(ch) };
+}
+
+/** The outpaint job for Generate, or null: Outpaint armed this document at
+ *  its current size and inpainting is on. The box is the CURRENT mask's, so
+ *  an owner's edits to the mask are honoured. */
+function outpaintJob(nativeArea = 1024 * 1024) {
+    const a = S._outpaintArmed;
+    if (!a || a.W !== S.W || a.H !== S.H || a.documentId !== S.documentId || !S._userMaskMode) return null;
+    const d = S.mask.ctx.getImageData(0, 0, S.W, S.H).data;
+    let x0 = S.W, y0 = S.H, x1 = -1, y1 = -1;
+    for (let y = 0; y < S.H; y++) for (let x = 0; x < S.W; x++) {
+        if (!d[(y * S.W + x) * 4 + 3]) continue;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    if (x1 < 0) return null;
+    const box = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+    return { ...outpaintPlan(box, S.W, S.H, nativeArea),
+             refine: a.refine ? outpaintRefinePlan(box, S.W, S.H, nativeArea) : null };
 }
 
 // ========================================================================
@@ -7159,6 +8808,9 @@ function resetCanvasState(opts) {
 
     // Mask.
     if (S.mask && S.mask.ctx) S.mask.ctx.clearRect(0, 0, S.W, S.H);
+    S.masks = [];
+    S._nextMaskId = 1;
+    S.maskTarget = null;
     S.editingMask = S.tool === "mask";
     S._userMaskMode = false;
 
@@ -7167,7 +8819,7 @@ function resetCanvasState(opts) {
     if (S.stroke) {
         S.stroke.points = [];
         S.stroke.stampPoints = [];
-        S.stroke.alphaMap = null;
+        S.stroke.alphaMap = null; S.stroke.mix = null;
         S.stroke.accum = null;
         S.stroke._accumFor = null;
         S.stroke.dirty = { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -7335,6 +8987,11 @@ window.StudioCore = {
 
     // Resize
     resizeCanvas,
+    canvasSize,   // CT9 groundwork
+    outpaintPrepare,   // CT9
+    outpaintPlan,      // CT9: the outpaint job's crop and size
+    outpaintRefinePlan,
+    outpaintJob,
     resetCanvasState,
 
     // Mode
@@ -7394,6 +9051,13 @@ window.StudioCore = {
     dodgeBurnStroke,
     liquifyPush,
     cloneStamp,
+    smartPatch,
+    mixDab,
+    kmMix: _kmMix,
+    patchBegin,
+    patchDab,
+    patchEnd,
+    SMART_PATCH_MAX_MASKED,
     regionPaintAt,
     regionPaintMove,
     regionEraseMove,
@@ -7418,11 +9082,29 @@ window.StudioCore = {
     selectionFill,
     selectionDelete,
     selectionToMask,
+    // M1: named masks
+    maskById, maskTargetEntry, paintingInpaintMask, shownMask, maskCoverage,
+    createMask, duplicateMask, deleteMask, renameMask, setMaskTarget, invertMask, clearMask,
+    saveSelectionAsMask, loadMaskAsSelection,
+    // S6: selection steps in History
+    beginSelectionStep, endSelectionStep, selectionStep, MAX_SELECTION_STEPS,
+    // M2: layer source and word masks
+    setLayerSource, followLayerSources, followLayerSource, layerSourceFresh,
+    pictureMaskToDocument, createWordMask, remakeWordMask, mulAffine: _mulAffine,
+    masksToPsdGroup, masksFromPsd, replaceMasksFromPsd,
+    rangeCoverage, createRangeMask,   // CT5
+    // M3: the selected mask inpaints
+    INPAINT_CUT, SOFT_MASK_FLOOR, inpaintSourceEntry, hasInpaintCoverage,
+    growCoverage, featherCoverage, shapeCoverage,
+    // extras: a colour per mask
+    MASK_COLORS, maskColorOf, setMaskColor,
     selectionCopy,
     selectionCut,
     selectionPaste,
     selectionModify,
     featherSelection,
+    applySelection, growSelection, cancelSelectionStep,   // CT4
+    liftSelection, selectionSnapshot, restoreSelection,   // CT11
     fillPolygonMask,
     magicWandSelect,
     magneticEdgeMap,

@@ -3,6 +3,76 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Masks, word masks, new canvas tools, folder dialogs — 2026-10-18
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. **The first start after
+this update downloads one more model file (MobileSAM, 41 MB) for word
+masks.** The generation engine files, installer and requirements are
+unchanged.
+
+- **Browse opens your system's folder dialog.** Every folder setting (model
+  folders, Save folder, Gallery folders, wildcards, heatmap data) has a
+  Browse… button that opens Windows' own "Select Folder" window. Typing a
+  path still works.
+- **Masks panel** (inside Layers). Besides the Inpaint mask, a document can
+  hold named masks: New, rename, show/hide, duplicate, invert, delete; Save
+  selection as mask and Load as selection (Shift adds, Alt subtracts,
+  Shift+Alt intersects). Masks are kept per tab and come back after a
+  reload. The Inpaint mask stays a hard brush; named masks take Opacity and
+  Hardness.
+- **Masks from words.** Masks > From word… lists the words of the selected
+  layer's picture (Studio pictures made with heatmap recording on). Pick one
+  or more words, choose Object, Area/light or Everything else, adjust Grow
+  and Feather, or step through an object's parts. The first time for a
+  picture takes a few seconds on the CPU, with a progress bar.
+- **Masks from tones or colour:** highlights, midtones, shadows or a colour
+  range.
+- **Inpaint with any mask.** The mask selected in the Masks panel is the one
+  Generate inpaints with; a soft mask is cut at 40%. With Soft Inpainting
+  on, a feathered mask's grey is used.
+- **Develop local adjustments:** Exposure, Contrast, Highlights, Shadows,
+  Whites, Blacks, Temperature, Tint, Saturation and Vibrance inside a named
+  mask.
+- **PSD:** named masks are saved as layer masks and come back when the PSD
+  is opened in Studio.
+- **Word Detail:** an Auto Detail slot (Model: Words…) that details the
+  prompt words you name, using the picture's heatmap data. In a batch, only
+  the first picture.
+- **Canvas tools:** Outpaint (extend a side; about one normal generation's
+  time even on large pictures, with an optional "Refine new area"), Canvas
+  Size, Smart Patch (remove small things from their surroundings, no model),
+  Paint Mixer (a Mix toggle on the Brush that picks up wet colour and mixes
+  like paint: blue and yellow make green), Sharpen (in Blur) and Heal (in
+  Clone). Fill has Tolerance, Contiguous and real opacity. Selections follow
+  one rule in every tool, are undo steps, and are kept per tab and after a
+  reload. Transform moves an ellipse or lasso selection's shape.
+- **Saving:** the Save folder setting works (it did nothing before).
+  Pictures are saved as `studio/<create|edit|upscaled>/<date>/Studio-NNNNN-<seed>`
+  under the results folder, or in Forge Neo's layout. A folder outside
+  Studio's trusted places falls back to the default and says so.
+- **Workflows and saved layouts** save, load and delete (they failed
+  before). **Embeddings** have their own folder setting.
+- **Network model folders** (opt-in): Settings > Model folders > "Allow
+  network model folders" lets a model folder live on another machine. An
+  unreachable share shows as unreachable instead of freezing Studio.
+- **Generation now matches Forge Neo in three places:** Anima's Hires pass
+  uses the same shift as its base pass (it used 3.5 instead of 3.0); Auto
+  Detail gives each region its own seed and keeps the detector's order, as
+  ADetailer does, and `[SEP]`/`[PROMPT]` work in slot prompts; prompt
+  comments are removed before generation; each model family uses its own
+  shift. **Anima pictures with Hires, and Auto Detail results, will differ
+  slightly from before.**
+- **Heatmaps:** an "Only masked" inpaint's heatmap now sits inside the area
+  that was inpainted.
+
+Checked on a real GPU (2026-10-18, the previous build against this one on
+the same prompts and seeds): plain Anima, SDXL and Outpaint with Refine are
+byte-identical; Anima with Hires and Auto Detail change slightly, as
+intended. Also checked on a GPU: Word Detail, Outpaint on a large picture,
+heatmap recording on SDXL and on "Only masked" inpaints (byte-identical with
+recording on and off).
+
 ## Word heatmaps, crash recovery, fixes — 2026-10-15
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

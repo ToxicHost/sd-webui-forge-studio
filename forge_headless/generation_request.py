@@ -205,6 +205,13 @@ class OutputOptions:
     embed_metadata: bool = True
     #: P11. The legacy "generation" watermark mode, or None (the default).
     watermark: "WatermarkOptions | None" = None
+    #: OF1. The owner's save folder, absolute and ALREADY trusted by Studio's
+    #: policy (`forge_studio/save_roots.py`), or "" for the default.
+    save_dir: str = ""
+    #: OF1. `studio` (the Extension's tree, the default) or `neo`.
+    save_tree: str = "studio"
+    #: OF1. `upscaled` for the Upscale panel's refine leg, else "".
+    purpose: str = ""
 
 
 @dataclass(frozen=True)
@@ -255,6 +262,19 @@ class InpaintOptions:
     #: only in this setting came back byte-identical. Admission was right and
     #: the port was right; the seam between them was not.
     soft: "SoftInpaintOptions | None" = None
+    #: Outpaint's optional refine pass (CT9), or None. Carried for the same
+    #: reason as `soft`.
+    refine: "InpaintRefineOptions | None" = None
+
+
+@dataclass(frozen=True)
+class InpaintRefineOptions:
+    """A second, light inpaint pass over the masked area at `width` x
+    `height` (Only masked, no padding), after the first. The port runs it."""
+
+    width: int
+    height: int
+    denoising_strength: float = 0.35
 
 
 @dataclass(frozen=True)
@@ -629,7 +649,8 @@ def validate_request(
         # by then the image exists and the cost is spent.
         for slot in request.ad_slots:
             where = f"slot {getattr(slot, 'index', '?')}"
-            if not str(getattr(slot, "detector_path", "") or ""):
+            # Word Detail slots find their region from the capture: no file.
+            if not getattr(slot, "words", ()) and not str(getattr(slot, "detector_path", "") or ""):
                 problems.append(
                     _problem(
                         "GENERATION_ADETAILER_DETECTOR_UNRESOLVED",

@@ -337,6 +337,30 @@ def _sdxl_tokens(p: Any, text: str) -> tuple[list[str], list[int]]:
     return pieces, columns
 
 
+def _crop_of(p: Any) -> dict[str, Any]:
+    """`{"crop": [x, y, w, h], "frame": [W, H]}` when this pass sampled Neo's
+    "Only masked" crop, else `{}`.
+
+    Neo crops the init picture to `paste_to` and scales the crop to the
+    generation size (`modules/processing.py:1767-1773`, rescaled with the
+    picture at `:1838-1844`), so the maps describe that box alone. Without
+    the box the viewer stretched them over the whole picture. `paste_to` is
+    in the pixels of the init picture, whose size is `frame`.
+    """
+    box = getattr(p, "paste_to", None)
+    images = getattr(p, "init_images", None) or []
+    if not box or not images:
+        return {}
+    try:
+        x, y, w, h = (int(v) for v in box)
+        frame_w, frame_h = (int(v) for v in images[0].size)
+    except (TypeError, ValueError, AttributeError):
+        return {}
+    if w <= 0 or h <= 0 or frame_w <= 0 or frame_h <= 0:
+        return {}
+    return {"crop": [x, y, w, h], "frame": [frame_w, frame_h]}
+
+
 def _finish(session: _Session, p: Any) -> CaptureResult | None:
     if session.failed or not session.sums:
         return None
@@ -374,7 +398,7 @@ def _finish(session: _Session, p: Any) -> CaptureResult | None:
             return None
         arrays["sdxl"] = (fine / sum(1 for n in ("sdxl_16", "sdxl_32") if n in session.sums)) \
             .to("cpu").numpy().astype("float16")
-    meta = {"calls": dict(session.counts)}
+    meta = {"calls": dict(session.counts), **_crop_of(p)}
     if session.family == "anima":
         from modules.shared import opts
 

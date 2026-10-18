@@ -12,6 +12,17 @@
 
 "use strict";
 
+// Word Detail (owner, 2026-10-16): the Auto Detail Model dropdown's "Words…"
+// entry. Never a detector name (a catalogue name is a file name), so it
+// cannot collide with one.
+const AD_WORDS = "__words__";
+/** Show a slot's Words row when its Model is "Words…". */
+function _syncADWordsRow(n) {
+  const words = document.getElementById(`paramAD${n}Model`)?.value === AD_WORDS;
+  const row = document.getElementById(`paramAD${n}WordsRow`);
+  if (row) row.style.display = words ? "" : "none";
+}
+
 // ═══════════════════════════════════════════
 // API CLIENT
 // ═══════════════════════════════════════════
@@ -106,8 +117,6 @@ const API = {
   dynPromptsConfig:    ()        => API.get("/studio/dynamic_prompts/config"),
   dynPromptsSetConfig: (payload) => API.post("/studio/dynamic_prompts/config", payload),
   dynPromptsSelectFolder: (folder) => API.post("/studio/dynamic_prompts/select_folder", { folder }),
-  dynPromptsPickFolder: ()        => fetch(API.base + "/studio/dynamic_prompts/pick_folder",
-                                            { method: "POST" }).then(r => r.json()),
   dynPromptsStatus:    ()        => API.get("/studio/dynamic_prompts/status"),
 };
 
@@ -703,6 +712,92 @@ async function _trustSaveFolder(path) {
     showToast("Could not reach server: " + e.message, "error");
     return false;
   }
+}
+
+// FP1. Every Browse button in Studio opens the operating system's own folder
+// dialog -- File Explorer's "Select Folder" on Windows -- through ONE server
+// route (`folder_dialog.py`). Studio binds 127.0.0.1, so the server's desktop
+// is the owner's desktop; the browser itself can never hand the page a folder
+// PATH, which is what every one of these settings stores. Owner, 2026-10-18:
+// typing or pasting a models path was "horribly inconvenient".
+//
+// Resolves with the chosen folder; "" when the owner cancelled or a dialog is
+// already open (both quiet for the caller); null when no dialog could be
+// shown at all and the in-page browser is not there either -- the caller's
+// typed field is the way forward then. Where the server has no desktop
+// (headless, a container) the in-page browser of the SERVER's disk
+// (`studio-dir-picker.js`) stands in, as it did for every button before.
+//
+// `start` is the folder the dialog opens in: whatever the field holds, or the
+// folder currently configured. The answer only fills a field. Trust, save and
+// validation stay with each setting's own route.
+let _folderDialogPending = false;
+async function _studioPickFolder(options) {
+  const purpose = (options && options.purpose) || "folder";
+  const start = String((options && options.start) || "").trim();
+  if (_folderDialogPending) {
+    showToast(_i18n("folderDialog.busy", "A folder dialog is already open — finish choosing there."), "info");
+    return "";
+  }
+  _folderDialogPending = true;
+  let data = null;
+  try {
+    const r = await fetch(API.base + "/studio/pick_folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ purpose, start }),
+    });
+    data = await r.json().catch(() => null);
+  } catch (_) {
+    data = null;
+  } finally {
+    _folderDialogPending = false;
+  }
+  if (data && typeof data.path === "string") return data.path.trim();
+  if (data && data.busy) {
+    showToast(data.error || _i18n("folderDialog.busy", "A folder dialog is already open — finish choosing there."), "info");
+    return "";
+  }
+  const picker = window.StudioDirPicker;
+  if (picker && typeof picker.choose === "function") return (await picker.choose()) || "";
+  showToast(_i18n("folderDialog.unavailable", "No folder dialog on this machine — type the folder's path instead"), "info");
+  return null;
+}
+// gallery.js's Link folder uses the same dialog.
+window.studioPickFolder = _studioPickFolder;
+
+// OF1. Settings > Save folder and Save tree, as output-group fields: only the
+// ones that differ from the default (Studio's own folder, Studio's tree), or
+// null when both are default and there is no purpose. Read from the DOM at
+// submit time, like the format: the field is the thing the owner just touched.
+// The server decides whether the folder is trusted and says so if it is not.
+function _saveLocationFields(purpose) {
+  const dir = (document.getElementById("settingSaveDir")?.value ?? State.saveDir ?? "")
+    .trim();
+  const tree = (document.getElementById("settingSaveTree")?.value ?? State.saveTree)
+    === "neo" ? "neo" : "studio";
+  const fields = {};
+  if (dir) fields.save_dir = dir;
+  if (tree === "neo") fields.save_tree = "neo";
+  if (purpose === "upscaled") fields.purpose = "upscaled";
+  return Object.keys(fields).length ? fields : null;
+}
+
+// OF1. The format and folder an ESRGAN-only upscale is saved with -- the same
+// Settings the generation's output group reads, as the Extension sends its
+// save_format / save_quality / save_lossless with the upscale.
+function _upscaleOutputGroup() {
+  const format = (document.getElementById("settingSaveFormat")?.value || "png")
+    .trim().toLowerCase();
+  const group = { format, ...(_saveLocationFields("") || {}) };
+  if (format === "webp"
+      && document.getElementById("toggleWebpLossless")?.classList.contains("on")) {
+    group.lossless = true;
+  } else {
+    const quality = getOutputQualityForFormat(format);
+    if (Number.isFinite(quality)) group.quality = Math.max(1, Math.min(100, quality | 0));
+  }
+  return group;
 }
 
 // Render the persisted trusted-save-folder list (with Remove) in Settings.
@@ -2222,9 +2317,11 @@ async function populateDropdowns() {
         if (sel) {
           // Restore session-saved value (stashed in data-pending-value by _applyDefaults)
           const savedVal = sel.dataset.pendingValue || sel.value;
+          // Word Detail (owner, 2026-10-16): "Words…" finds the region from
+          // the job's own heatmap capture instead of a detector file.
           sel.innerHTML = adModels.map(m =>
             `<option value="${m.name}">${m.name}</option>`
-          ).join("");
+          ).join("") + `<option value="${AD_WORDS}">Words…</option>`;
           // Restore saved value if it exists in the new options, otherwise
           // default slot 1 to face_yolo (slots 2/3 stay at first option)
           if (savedVal && [...sel.options].some(o => o.value === savedVal)) {
@@ -2232,6 +2329,11 @@ async function populateDropdowns() {
           } else if (n === 1) {
             const faceOpt = [...sel.options].find(o => o.value.includes("face_yolo"));
             if (faceOpt) sel.value = faceOpt.value;
+          }
+          _syncADWordsRow(n);
+          if (!sel.dataset.wordsBound) {
+            sel.dataset.wordsBound = "1";
+            sel.addEventListener("change", () => _syncADWordsRow(n));
           }
         }
       });
@@ -2794,7 +2896,9 @@ function _collectCanvasSource(w, h) {
     eng.resizeCanvas(w, h);
   }
   const canvasB64 = eng.exportCanvas();
-  const maskB64 = (eng.state._userMaskMode) ? eng.exportMask() : "";
+  // S1: with Soft Inpainting on, a named mask is sent as its grey.
+  const softOn = !!document.getElementById("checkSoftInpaint")?.classList.contains("checked");
+  const maskB64 = (eng.state._userMaskMode) ? eng.exportMask({ soft: softOn }) : "";
   const regionsJson = eng.serializeRegions();
   // `exportMask()` returns the STRING "null" when mask mode is on but nothing
   // has been painted (canvas-core.js:3250). That string is truthy, so
@@ -2832,8 +2936,10 @@ function _collectCanvasSource(w, h) {
     regionsJson || "empty", operation);
   // WHICH document and WHICH revision these pixels came from. Captured with
   // them, in the same call, so the pair cannot describe two different states.
-  const document = eng.documentIdentity ? eng.documentIdentity() : null;
-  return { canvasB64, maskB64, mask, regionsJson, isTxt2img, operation, document };
+  // Not named `document`: a local of that name shadows the page's for the
+  // WHOLE function, so the Soft Inpainting read above threw before it.
+  const identity = eng.documentIdentity ? eng.documentIdentity() : null;
+  return { canvasB64, maskB64, mask, regionsJson, isTxt2img, operation, document: identity };
 }
 
 async function doGenerate(overrides = {}) {
@@ -2867,6 +2973,12 @@ async function doGenerate(overrides = {}) {
     parseInt(document.getElementById("paramWidth")?.value) || 768,
     parseInt(document.getElementById("paramHeight")?.value) || 768,
   );
+  // CT9: an armed Outpaint generates its strip plus picture context at the
+  // model's own size, not at the enlarged canvas's (`outpaintJob`). SD 1.5's
+  // own size is 512 x 512; the rest are ~1 MP.
+  const _outpaint = (_source.operation === "inpaint" && window.StudioCore?.outpaintJob)
+    ? window.StudioCore.outpaintJob(State._currentModelArch === "sd15" ? 512 * 512 : 1024 * 1024)
+    : null;
 
   const lifecycle = window.StudioModelControls;
   // The Hires group in Studio's own vocabulary, or null when the owner did
@@ -2925,8 +3037,16 @@ async function doGenerate(overrides = {}) {
     const typed = document.getElementById(`paramAD${n}Prompt`)?.value || "";
     const suffix = window.ADLoRAStack?.compileSuffix?.(n) || "";
     if (!suffix) return typed;
-    return typed.trim() ? `${typed.trim()}, ${suffix}` : suffix;
+    // An empty prompt with LoRAs keeps the main prompt through ADetailer's
+    // [PROMPT] placeholder, as the Extension did (`studio_generation.py`
+    // `_append_prompt_suffix("[PROMPT]", sfx)`); sending the suffix alone
+    // detailed the region from the LoRA tag only.
+    return typed.trim() ? `${typed.trim()}, ${suffix}` : `[PROMPT], ${suffix}`;
   };
+
+  // Word Detail: a slot's words, from its Words field (comma separated).
+  const _adWords = (n) => (document.getElementById(`paramAD${n}Words`)?.value || "")
+    .split(",").map(w => w.trim()).filter(Boolean).slice(0, 8);
 
   const _autoDetailGroup = (force = false) => {
     // `force` is for the Upscale panel, whose own "Auto Detail" checkbox is
@@ -2942,7 +3062,10 @@ async function doGenerate(overrides = {}) {
         enabled: true,
         // A catalogue NAME, straight from the dropdown. The server turns an
         // admitted name into a path and refuses one it did not offer.
-        detector: document.getElementById(`paramAD${n}Model`)?.value || "",
+        // "Words…" sends the slot's words instead, and no detector.
+        ...(document.getElementById(`paramAD${n}Model`)?.value === AD_WORDS
+          ? { detector: "", words: _adWords(n) }
+          : { detector: document.getElementById(`paramAD${n}Model`)?.value || "" }),
         confidence: _num(`paramAD${n}Conf`, 0.3),
         denoising_strength: _num(`paramAD${n}Denoise`, 0.3),
         mask_blur: parseInt(document.getElementById(`paramAD${n}Blur`)?.value, 10) || 0,
@@ -3062,8 +3185,15 @@ async function doGenerate(overrides = {}) {
         margin: (State.watermarkMargin ?? 16) | 0,
         rotation: State.watermarkRotation ?? 0,
       } : null;
-    if (format !== "jpeg" && format !== "webp" && embedMetadata && !watermark) return null;
-    const group = { format };
+    // OF1. WHERE it is written -- Settings > Save folder and Save tree, plus
+    // the Upscale panel's refine leg. These sat in the legacy collector below
+    // the `return`, so the owner's folder reached nothing. Only the fields
+    // that differ from the default travel, so a default install still sends
+    // no group at all.
+    const location = _saveLocationFields(overrides.outputPurpose);
+    if (!location
+        && format !== "jpeg" && format !== "webp" && embedMetadata && !watermark) return null;
+    const group = { format, ...(location || {}) };
     // Sent only when it is FALSE. True is the server default, so sending it
     // would put a field on every request that says exactly nothing.
     if (!embedMetadata) group.embed_metadata = false;
@@ -3158,7 +3288,9 @@ async function doGenerate(overrides = {}) {
         // The Hires group, sent ONLY when the owner switched it on. Absent is
         // not the same as disabled: absent means the server sets no hr_* field
         // at all, so the base pass is byte-identical to a pre-P0.7 one.
-        ...(_hiresGroup() ? { hires: _hiresGroup() } : {}),
+        // An outpaint job sends none: it is already generated at the model's
+        // own size and pasted back at the picture's (CT9).
+        ...(!_outpaint && _hiresGroup() ? { hires: _hiresGroup() } : {}),
         // Auto Detail, the same way and for the same reason: absent is not
         // disabled. With no `auto_detail` key the server sets no slot at all
         // and the result is byte-identical to a pre-P0.8 one.
@@ -3194,8 +3326,12 @@ async function doGenerate(overrides = {}) {
         // "neo": the server applies the owner's default ("studio") on Anima
         // and ignores the field on every other model.
         ...AnimaEmphasis.requestField(),
-        width: parseInt(document.getElementById("paramWidth")?.value) || 768,
-        height: parseInt(document.getElementById("paramHeight")?.value) || 768,
+        // An outpaint job's size is its strip-plus-context crop's at the
+        // model's own area (CT9); Neo pastes it back at the canvas's size.
+        width: _outpaint ? _outpaint.width
+          : (parseInt(document.getElementById("paramWidth")?.value) || 768),
+        height: _outpaint ? _outpaint.height
+          : (parseInt(document.getElementById("paramHeight")?.value) || 768),
         // WP1. The operation and its inputs, from the ONE collection above.
         //
         // Sent only for an image operation: a txt2img body carrying a source
@@ -3252,11 +3388,19 @@ async function doGenerate(overrides = {}) {
             // Not `??`: `parseInt(undefined)` is NaN, not undefined, so `??`
             // would have passed NaN straight through to the server.
             mask_blur: _num("paramMaskBlur", 4),
-            padding: _num("paramPadding", 32),
+            // An outpaint job is Only masked with no padding, so Neo's crop
+            // is the planned strip-plus-context one (CT9). The owner's
+            // controls are not moved.
+            padding: _outpaint ? 0 : _num("paramPadding", 32),
             fill: _num("paramFill", 1),
-            full_resolution:
-              (document.getElementById("paramInpaintArea")?.value ?? "1") === "1",
+            full_resolution: _outpaint ? true
+              : (document.getElementById("paramInpaintArea")?.value ?? "1") === "1",
             ...(_softInpaintGroup() ? { soft: _softInpaintGroup() } : {}),
+            // Outpaint's "Refine new area" (CT9; owner: "Refine optional"):
+            // a light second pass over the new area at about 1:1.
+            ...(_outpaint && _outpaint.refine ? { refine: {
+              width: _outpaint.refine.width, height: _outpaint.refine.height,
+              denoising_strength: 0.35 } } : {}),
           },
         } : {}),
       },
@@ -3267,6 +3411,10 @@ async function doGenerate(overrides = {}) {
         _i18n("toast.job.queued", "Job queued") + ": " + submitted.job_id,
         "info",
       );
+      // OF1. Non-fatal: the job runs, saved to the default folder, and the
+      // owner is told why their folder was not used -- the Extension's
+      // `result.notice` (frontend/app.js:2634-2635).
+      if (submitted && submitted.notice) showToast(submitted.notice, "info");
       // AR3.5. This is the branch every Studio install takes, and the
       // presentation setup below the `return` was therefore never reached.
       // Only on a SUCCESSFUL submission: a refused one leaves nothing to
@@ -4097,7 +4245,20 @@ async function _parsePixelResponse(resp) {
     height: h,
     imageData: new ImageData(bytes, w, h),
     profile: resp.headers.get("X-Color-Profile") || "unknown",
+    // M2: the picture's Gallery pixel hash, recorded on the layer it lands on.
+    contentHash: resp.headers.get("X-Content-Hash") || "",
   };
+}
+
+// M2. The layer now shows this picture: record which (spec 6.1), so the
+// Masks panel's "From word..." can find its heatmap capture.
+function _recordLayerSource(layer, decoded, opts, w, h) {
+  const Core = window.StudioCore;
+  if (!Core || !Core.setLayerSource || !layer) return;
+  Core.setLayerSource(layer, {
+    content_hash: (decoded && decoded.contentHash) || (opts && opts.contentHash) || "",
+    width: w, height: h,
+  });
 }
 
 // Sends the OPAQUE HANDLE, never a URL and never a path. The server resolves
@@ -4191,6 +4352,7 @@ async function _importLocalImageFile(file, opts) {
   const newL = Core.makeLayer(opts.layerName, "paint");
   if (decoded) newL.ctx.putImageData(decoded.imageData, 0, 0);
   else newL.ctx.drawImage(img, 0, 0, newW, newH);
+  _recordLayerSource(newL, decoded, opts, newW, newH);
   S.layers.splice(S.activeLayerIdx + 1, 0, newL);
   S.activeLayerIdx++;
   if (window.StudioUI) {
@@ -4364,6 +4526,7 @@ function displayOnCanvas(imgSrc, opts) {
         const layerName = opts.layerName || "Imported";
         const newL = Core.makeLayer(layerName, "paint");
         writePixels(newL.ctx);
+        _recordLayerSource(newL, decoded, opts, outW, outH);
         S.layers.push(newL);
         S.activeLayerIdx = S.layers.length - 1;
       } else {
@@ -4378,12 +4541,14 @@ function displayOnCanvas(imgSrc, opts) {
           }
           genLayer.ctx.clearRect(0, 0, S.W, S.H);
           writePixels(genLayer.ctx);
+          _recordLayerSource(genLayer, decoded, opts, outW, outH);
           genLayer.visible = true;
           S.activeLayerIdx = S.layers.length - 1;
         } else {
           // Create new Gen Result layer at the top of the stack
           genLayer = Core.makeLayer("Gen Result", "paint");
           writePixels(genLayer.ctx);
+          _recordLayerSource(genLayer, decoded, opts, outW, outH);
           S.layers.push(genLayer);
           S.activeLayerIdx = S.layers.length - 1;
         }
@@ -5411,6 +5576,11 @@ function bindUI() {
           upscaler, scale,
           run_refine: false,
           run_ad: false,
+          // OF1. The Extension saves every upscale (studio_api.py:4513).
+          // Only when NOT refining: a refined upscale is saved once, by its
+          // generation below, as the Extension saves only the final image.
+          save: !refining,
+          output: _upscaleOutputGroup(),
         }),
       });
       const data = await r.json();
@@ -5430,6 +5600,9 @@ function bindUI() {
             steps: userSteps,
             denoise: runRefine ? userDenoise : 0,
             forceAutoDetail: runAD,
+            // OF1. Saved under `upscaled`, where the Extension's combined
+            // upscale-and-refine call puts it, not under `create`.
+            outputPurpose: "upscaled",
           });
           // From here the job owns the page exactly as a Generate click would,
           // so this handler must not tidy away the presentation it just
@@ -5437,9 +5610,12 @@ function bindUI() {
           // the refusal and started nothing.
           handedOff = true;
         } else {
-          showToast(
-            `Upscaled to ${data.width}\u00d7${data.height} with ${upscaler}`,
-            "success");
+          // The Extension's message (frontend/app.js:4201): what was saved.
+          let msg = `Upscaled to ${data.width}\u00d7${data.height} with ${upscaler}`;
+          if (data.filename) msg += ` \u2014 saved ${data.filename}`;
+          showToast(msg, "success");
+          if (data.notice) showToast(data.notice, "info");
+          if (data.save_error) showToast("Upscale not saved: " + data.save_error, "error");
         }
       } else {
         showToast("Upscale failed: " + (data.error || "unknown error"), "error");
@@ -5487,7 +5663,7 @@ function bindUI() {
     const mpath = _entry.maskPath || "";
     const fstats = _entry.floatStats || null;
     if (img) {
-      displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: fstats });
+      displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: fstats, contentHash: _entry.contentHash || "" });
     } else {
       // The third silent path: no selected result means the click did
       // nothing at all, with not even a console line to show for it.
@@ -5578,7 +5754,7 @@ function bindUI() {
         const fpath = _ctxEntry.floatPath || "";
         const mpath = _ctxEntry.maskPath || "";
         if (action === "canvas" && imgSrc) {
-          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: _ctxEntry.floatStats || null });
+          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: _ctxEntry.floatStats || null, contentHash: _ctxEntry.contentHash || "" });
         } else if (action === "seed" && seed) {
           window.studioCopyText(seed).then(() => showToast(`Seed ${seed} copied`, "success"), () => showToast("Copy failed", "error"));
         } else if (action === "save-exr") {
@@ -5680,7 +5856,7 @@ function bindUI() {
     if (canvasArea && canvasArea.contains(e.target)) {
       const img = _pickOutputSource(idx);
       const _dragEntry = State.sessionEntries[idx] || {};
-      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: _dragEntry.floatPath || "", maskPath: _dragEntry.maskPath || "", floatStats: _dragEntry.floatStats || null });
+      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: _dragEntry.floatPath || "", maskPath: _dragEntry.maskPath || "", floatStats: _dragEntry.floatStats || null, contentHash: _dragEntry.contentHash || "" });
     }
   });
 
@@ -6719,23 +6895,17 @@ function bindUI() {
     }).catch(() => showToast("Failed to save wildcard folder.", "error"));
   }
 
-  _dynFolderBrowse?.addEventListener("click", () => {
-    API.dynPromptsPickFolder().then(resp => {
-      if (resp?.unavailable) {
-        // Headless host or no display server — reveal the manual-path
-        // row so the user can still set a folder by pasting.
-        if (_dynFolderManualRow) _dynFolderManualRow.style.display = "";
-        if (_dynFolderBrowse) _dynFolderBrowse.style.display = "none";
-        showToast("Folder picker unavailable on this server — enter path manually.", "info");
-        return;
-      }
-      _applyPickedFolder(resp?.path || "");
-    }).catch(() => {
-      // Likely 500 from the Tk fallback path; surface the manual entry.
+  _dynFolderBrowse?.addEventListener("click", async () => {
+    // FP1. The shared dialog, opened in the folder in use (the manual row's
+    // field holds it, default or custom).
+    const folder = await _studioPickFolder({ purpose: "wildcards", start: _dynFolderInput?.value });
+    if (folder === null) {
+      // No dialog on this host — reveal the manual-path row so the owner can
+      // still set a folder by pasting.
       if (_dynFolderManualRow) _dynFolderManualRow.style.display = "";
-      if (_dynFolderBrowse) _dynFolderBrowse.style.display = "none";
-      showToast("Folder picker unavailable — enter path manually.", "info");
-    });
+      return;
+    }
+    _applyPickedFolder(folder);
   });
 
   _dynFolderSet?.addEventListener("click", () => {
@@ -6814,22 +6984,15 @@ function bindUI() {
   };
   _galFolderInput?.addEventListener("input", _syncGalFolder);
   _galFolderInput?.addEventListener("change", _syncGalFolder);
-  // Browse — native folder picker on the Forge/Studio server machine.
-  // Reuses the Gallery's existing server-side picker. Manual entry above is
-  // always available (and is the only option for headless/remote servers).
+  // Browse — the system's folder dialog (FP1). Manual entry above is always
+  // available, and is the way forward on a host with no desktop.
   document.getElementById("galleryFolderBrowse")?.addEventListener("click", async () => {
-    try {
-      const r = await _studioPickFolder();
-      const data = await r.json();
-      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
-      if (data.path && _galFolderInput) {
-        _galFolderInput.value = data.path;
-        _syncGalFolder();
-        // Picking a save destination is an explicit write intent → trust it.
-        if (await _trustSaveFolder(data.path)) _renderTrustedRoots();
-      }
-    } catch (e) {
-      showToast("Folder picker unavailable on this server — type the path manually", "info");
+    const path = await _studioPickFolder({ purpose: "gallery", start: _galFolderInput?.value });
+    if (path && _galFolderInput) {
+      _galFolderInput.value = path;
+      _syncGalFolder();
+      // Picking a save destination is an explicit write intent → trust it.
+      if (await _trustSaveFolder(path)) _renderTrustedRoots();
     }
   });
   // Open — reveal the configured folder on the server machine.
@@ -6867,23 +7030,19 @@ function bindUI() {
   _saveDirInput?.addEventListener("input", _syncSaveDir);
   _saveDirInput?.addEventListener("change", _syncSaveDir);
   document.getElementById("saveDirBrowse")?.addEventListener("click", async () => {
-    try {
-      const r = await _studioPickFolder();
-      const data = await r.json();
-      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
-      if (data.path && _saveDirInput) {
-        _saveDirInput.value = data.path;
-        _syncSaveDir();
-        // Picking a save destination is an explicit write intent → trust it.
-        if (await _trustSaveFolder(data.path)) _renderTrustedRoots();
-      }
-    } catch (e) {
-      showToast("Folder picker unavailable on this server — type the path manually", "info");
+    // Blank opens in Studio's own output folder: the server knows where that is.
+    const path = await _studioPickFolder({ purpose: "save", start: _saveDirInput?.value });
+    if (path && _saveDirInput) {
+      _saveDirInput.value = path;
+      _syncSaveDir();
+      // Picking a save destination is an explicit write intent → trust it.
+      if (await _trustSaveFolder(path)) _renderTrustedRoots();
     }
   });
   document.getElementById("saveDirOpen")?.addEventListener("click", async () => {
+    // OF1. Blank opens Studio's own output folder -- where a blank setting
+    // saves -- rather than refusing; the server decides which folder that is.
     const dir = (_saveDirInput?.value || "").trim();
-    if (!dir) { showToast("No save folder set", "info"); return; }
     try {
       const r = await fetch(API.base + "/studio/open_folder", {
         method: "POST",
@@ -6892,6 +7051,8 @@ function bindUI() {
       });
       const data = await r.json();
       if (data.ok) showToast("Opened save folder", "success");
+      // A host with no file manager (a container) says where the folder is.
+      else if (data.unavailable && data.path) showToast("Save folder on the server: " + data.path, "info");
       else showToast(data.error || "Could not open folder", "error");
     } catch (e) {
       showToast("Could not open folder: " + e.message, "error");
@@ -6935,6 +7096,7 @@ function bindUI() {
     { role: "vae",          input: "modelRootVae",         status: "modelRootStatusVae",         browse: "modelRootBrowseVae" },
     { role: "lora",         input: "modelRootLora",        status: "modelRootStatusLora",        browse: "modelRootBrowseLora" },
     { role: "adetailer",    input: "modelRootAdetailer",   status: "modelRootStatusAdetailer",   browse: "modelRootBrowseAdetailer" },
+    { role: "embedding",    input: "modelRootEmbedding",   status: "modelRootStatusEmbedding",   browse: "modelRootBrowseEmbedding" },
   ];
   // Held per process by the server and never persisted; refreshed on each read.
   let _modelRootToken = "";
@@ -6943,6 +7105,11 @@ function bindUI() {
     if (!entry) return _i18n("settings.modelFolders.unconfigured", "Not configured");
     if (entry.status === "not_configured") {
       return _i18n("settings.modelFolders.unconfigured", "Not configured");
+    }
+    if (entry.status === "unreachable") {
+      // A network folder whose machine is not answering. Saved, not refused:
+      // nothing about it is wrong, and Refresh model list tries it again.
+      return _i18n("settings.modelFolders.offline", "Offline — that network folder is not answering. Press Refresh model list once its machine is on.");
     }
     if (entry.status === "refused") {
       // Never the raw backend exception. A stable code maps to owner wording.
@@ -6957,7 +7124,7 @@ function bindUI() {
       const fallbacks = {
         "settings.modelFolders.err.missing":    "Unavailable — that folder was not found",
         "settings.modelFolders.err.notFolder":  "Unavailable — that is a file, not a folder",
-        "settings.modelFolders.err.network":    "Unavailable — network locations are not supported",
+        "settings.modelFolders.err.network":    "Unavailable — turn on Allow network model folders to use a folder on another machine",
         "settings.modelFolders.err.wholeDrive": "Unavailable — pick a folder, not a whole drive",
         "settings.modelFolders.err.notAbsolute":"Unavailable — use a full path",
       };
@@ -6975,17 +7142,8 @@ function bindUI() {
     return base;
   }
 
-  // The server-side folder dialog is retired. It opened on the machine
-  // running Studio -- the wrong machine for a remote host, a VM or a
-  // container -- which is why it already degraded to a toast. Every caller
-  // now goes through the in-page picker; the shape of the answer is
-  // unchanged, so the call sites did not have to be rewritten around it.
-  async function _studioPickFolder() {
-    return {
-      ok: false,
-      json: async () => ({ error: "Use the folder picker." }),
-    };
-  }
+  // `_studioPickFolder` lives at the top level now (beside `_trustSaveFolder`):
+  // the first-run card calls it too, from outside this function.
 
   function _renderModelRootStatuses(document_) {
     const byRole = {};
@@ -6997,6 +7155,11 @@ function bindUI() {
       el.textContent = _modelRootStatusText(entry);
       el.dataset.state = entry ? entry.status : "not_configured";
     });
+    // The server owns the switch; the knob only ever mirrors what it said.
+    const networkToggle = document.getElementById("toggleNetworkModelFolders");
+    if (networkToggle && document_ && typeof document_.allow_network_model_roots === "boolean") {
+      networkToggle.classList.toggle("on", document_.allow_network_model_roots);
+    }
   }
 
   async function _readModelRoots() {
@@ -7041,20 +7204,15 @@ function bindUI() {
   MODEL_ROOT_FIELDS.forEach(field => {
     // Browse fills the field and nothing else. Nothing is applied until Save,
     // which is what makes the three fields one transaction rather than three.
+    // FP1: the system's folder dialog, opened in the folder typed here or, if
+    // none, the role's first configured folder. This is the ONLY Browse
+    // handler for these buttons; `studio-dir-picker.js` no longer binds them.
     document.getElementById(field.browse)?.addEventListener("click", async () => {
-      try {
-        const r = await _studioPickFolder();
-        const data = await r.json();
-        if (data.error) {
-          showToast(_i18n("settings.modelFolders.pickerUnavailable", "Folder picker unavailable — type the path instead"), "info");
-          return;
-        }
-        const input = document.getElementById(field.input);
-        if (data.path && input) input.value = String(data.path).trim();
-      } catch (_) {
-        // The dialog opens on the machine running Studio, not in the browser.
-        showToast(_i18n("settings.modelFolders.pickerRemote", "The folder dialog opens on the machine running Studio — type the path instead"), "info");
-      }
+      const input = document.getElementById(field.input);
+      const configured = (window.StudioDirPicker?.roots?.() || {})[field.role] || [];
+      const start = (input?.value || "").trim() || configured[0] || "";
+      const path = await _studioPickFolder({ purpose: field.role, start });
+      if (path && input) input.value = path;
     });
   });
 
@@ -7150,12 +7308,58 @@ function bindUI() {
     }
   });
 
+  // "Allow network model folders" saves on its own click, as one transaction
+  // with the folders that are configured right now -- the same complete
+  // mapping the Save button posts. Turning it off while a network folder is
+  // configured is refused by the server, and the knob goes back.
+  document.getElementById("toggleNetworkModelFolders")?.addEventListener("click", async (event) => {
+    const toggle = event.currentTarget;
+    // The generic .toggle-track handler has already flipped the knob.
+    const wanted = toggle.classList.contains("on");
+    const current = await _readModelRoots();
+    toggle.classList.toggle("on", wanted);
+    const roots = {};
+    const configured = (current && current.roots) || {};
+    Object.keys(configured).forEach(role => {
+      const value = configured[role];
+      const list = Array.isArray(value) ? value.slice() : (value ? [value] : []);
+      if (list.length) roots[role] = list;
+    });
+    try {
+      const response = await fetch(API.base + "/studio/settings/model_roots", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Studio-Settings-Token": _modelRootToken,
+        },
+        body: JSON.stringify({ model_roots: roots, allow_network_model_roots: wanted }),
+      });
+      const document_ = await response.json();
+      if (!response.ok) {
+        toggle.classList.toggle("on", !wanted);
+        _setModelFoldersState("error", _modelRootSaveError(document_));
+        showToast(_i18n("settings.modelFolders.network.failed", "Network folder setting not changed"), "error");
+        return;
+      }
+      _renderModelRootStatuses(document_);
+      if (window.StudioDirPicker && typeof window.StudioDirPicker.refresh === "function") {
+        window.StudioDirPicker.refresh().catch(() => {});
+      }
+      showToast(wanted
+        ? _i18n("settings.modelFolders.network.on", "Network model folders allowed")
+        : _i18n("settings.modelFolders.network.off", "Network model folders turned off"), "success");
+    } catch (_) {
+      toggle.classList.toggle("on", !wanted);
+      _setModelFoldersState("error", _i18n("settings.modelFolders.saveUnreachable", "Studio could not be reached. Folders were not changed."));
+    }
+  });
+
   function _modelRootSaveError(document_) {
     const code = (document_ && document_.code) || "";
     const roleWords = {
       HEADLESS_CATALOGUE_ROOT_UNAVAILABLE:       "One of those folders was not found. Nothing was changed.",
       HEADLESS_CATALOGUE_ROOT_NOT_A_DIRECTORY:   "One of those paths is a file, not a folder. Nothing was changed.",
-      HEADLESS_CATALOGUE_ROOT_NETWORK_LOCATION:  "Network locations are not supported. Nothing was changed.",
+      HEADLESS_CATALOGUE_ROOT_NETWORK_LOCATION:  "That is a folder on another machine. Turn on Allow network model folders first. Nothing was changed.",
       HEADLESS_CATALOGUE_ROOT_DEVICE_NAMESPACE:  "That path form is not supported. Nothing was changed.",
       HEADLESS_CATALOGUE_ROOT_IS_FILESYSTEM_ROOT:"Pick a folder rather than a whole drive. Nothing was changed.",
       HEADLESS_CATALOGUE_ROOT_NOT_ABSOLUTE:      "Use a full path. Nothing was changed.",
@@ -7516,11 +7720,17 @@ function bindUI() {
     } else showToast(data.error || _i18n("settings.heatmap.cleanFailed", "Could not clean up."), "error");
     _refreshAttentionStore();
   });
+  // FP1. Browse fills the field and moves nothing: Move here, with its
+  // confirmation, is still what moves the data.
+  document.getElementById("attentionFolderBrowse")?.addEventListener("click", async () => {
+    const path = await _studioPickFolder({ purpose: "heatmap", start: _attnFolderInput?.value || _attnStatus?.folder });
+    if (path && _attnFolderInput) _attnFolderInput.value = path;
+  });
   document.getElementById("attentionFolderMove")?.addEventListener("click", async () => {
     const folder = (_attnFolderInput?.value || "").trim();
     const s = _attnStatus;
     if (!folder || (s && folder === s.folder)) {
-      showToast(_i18n("settings.heatmap.typeFolder", "Type the full path of the folder to move to."), "info");
+      showToast(_i18n("settings.heatmap.typeFolder", "Choose the folder to move to with Browse, or type its full path."), "info");
       return;
     }
     if (!window.confirm(_i18n("settings.heatmap.confirmMove", "Move the heatmap data ({size}) to {folder}?",
@@ -7625,13 +7835,13 @@ function bindUI() {
       ["checkAD", "check"],
       ["checkAD1", "check"], ["paramAD1Model", "val"],
       ["paramAD1Conf", "val"], ["paramAD1Denoise", "val"],
-      ["paramAD1Blur", "val"], ["paramAD1Prompt", "val"], ["adLoraStack1", "val"],
+      ["paramAD1Blur", "val"], ["paramAD1Prompt", "val"], ["adLoraStack1", "val"], ["paramAD1Words", "val"],
       ["checkAD2", "check"], ["paramAD2Model", "val"],
       ["paramAD2Conf", "val"], ["paramAD2Denoise", "val"],
-      ["paramAD2Blur", "val"], ["paramAD2Prompt", "val"], ["adLoraStack2", "val"],
+      ["paramAD2Blur", "val"], ["paramAD2Prompt", "val"], ["adLoraStack2", "val"], ["paramAD2Words", "val"],
       ["checkAD3", "check"], ["paramAD3Model", "val"],
       ["paramAD3Conf", "val"], ["paramAD3Denoise", "val"],
-      ["paramAD3Blur", "val"], ["paramAD3Prompt", "val"], ["adLoraStack3", "val"],
+      ["paramAD3Blur", "val"], ["paramAD3Prompt", "val"], ["adLoraStack3", "val"], ["paramAD3Words", "val"],
     ],
     upscale: [
       ["paramUpscaleModel", "val"], ["paramUpscaleScale", "val"],
@@ -8324,6 +8534,7 @@ function bindUI() {
       floatPath: entry.floatPath || "",
       maskPath: entry.maskPath || "",
       floatStats: entry.floatStats || null,
+      contentHash: entry.contentHash || "",
     });
     showToast(_i18n("toast.newestToCanvas", "Newest output → canvas"), "success");
     return true;
@@ -11162,17 +11373,11 @@ function _showFirstRunModal() {
     });
   });
 
-  // Folder picker — reuses the Gallery's server-side native dialog. Opens on
-  // the Forge machine; the text field above is the fallback for remote/VM.
+  // Folder picker — the system's folder dialog (FP1). The text field above is
+  // the fallback for a host with no desktop.
   ov.querySelector("#firstRunBrowse")?.addEventListener("click", async () => {
-    try {
-      const r = await _studioPickFolder();
-      const data = await r.json();
-      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
-      if (data.path) { _customPath = data.path.trim(); if (_pathEl) _pathEl.value = _customPath; }
-    } catch (_) {
-      showToast("Folder dialog opens on the Forge server — type the path in the field instead", "info");
-    }
+    const path = await _studioPickFolder({ purpose: "save", start: _pathEl?.value });
+    if (path) { _customPath = path; if (_pathEl) _pathEl.value = _customPath; }
   });
 
   const _pick = (group) => ov.querySelector('[data-fr="' + group + '"] .first-run-choice.active')?.dataset.val;

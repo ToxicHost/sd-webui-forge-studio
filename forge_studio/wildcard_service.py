@@ -27,7 +27,6 @@ choice held in memory would be a setting that quietly forgets itself.
 
 from __future__ import annotations
 
-import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -184,42 +183,20 @@ class WildcardService:
     def pick_folder(self) -> dict[str, Any]:
         """Ask the owner for a folder with the system's own dialog.
 
+        The shared dialog (`folder_dialog.py`) now, opened in the folder that
+        is set. The page calls `/studio/pick_folder` directly; this route stays
+        for anything that learned it, with the same answers it always gave:
         `{"unavailable": true}` where there is no desktop to put one on --
         app.js reads that and reveals a manual-path row, so a headless host
-        stays usable. A 500 there would leave the owner with a toast and no
-        way to set a folder at all.
+        stays usable.
         """
 
-        result: dict[str, Any] = {}
+        from .folder_dialog import shared_dialog
 
-        def ask() -> None:
-            try:
-                import tkinter
-                from tkinter import filedialog
-            except ImportError:
-                result["unavailable"] = True
-                return
-            try:
-                window = tkinter.Tk()
-                window.withdraw()
-                window.wm_attributes("-topmost", 1)
-                chosen = filedialog.askdirectory(title="Select wildcard folder")
-                window.destroy()
-            except Exception:  # noqa: BLE001
-                result["unavailable"] = True
-                return
-            # Cancelled is an empty path, NOT an error: app.js returns quietly
-            # on a blank path, so reporting a cancel as a failure would scold
-            # the owner for changing their mind.
-            result["path"] = str(chosen or "").replace("/", os.sep)
-
-        worker = threading.Thread(target=ask, name="studio-wildcard-pick",
-                                  daemon=True)
-        worker.start()
-        worker.join(timeout=PICK_TIMEOUT_SECONDS)
-        if worker.is_alive() or "unavailable" in result:
-            return {"unavailable": True}
-        return {"path": result.get("path", "")}
+        answer = shared_dialog().pick(self.config().get("wildcard_folder"), "wildcards")
+        if "path" in answer:
+            return {"path": answer["path"]}
+        return {"unavailable": True}
 
     def listing(self) -> list[dict[str, Any]]:
         # A fresh walk on every listing, as the Extension's `list_wildcards`

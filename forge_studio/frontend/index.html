@@ -137,6 +137,13 @@
           <button class="ctx-mode-btn" id="aliasedBtn" data-i18n-title="ctxBar.aliased.tooltip" title="Aliased: hard pixel edges, no antialiasing">Alias</button>
           <button class="ctx-mode-btn" id="pixelPerfectBtn" data-i18n-title="ctxBar.pixelPerfect.tooltip" title="Pixel Perfect: one-pixel corners (needs Aliased and a 1px brush)">PP</button>
         </span>
+        <!-- CT10 Paint Mixer: the brush picks up the colour under it and
+             carries it along the stroke, like wet paint. Amount 0 is the
+             brush colour, 100 only what it picked up. -->
+        <span class="ctx-item" data-ctx="mix-opts" style="display:flex;gap:4px;align-items:center;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn" id="brushMixBtn" data-i18n="ctxBar.mix" data-i18n-title="ctxBar.mix.tooltip" title="Mix: the brush picks up the colour under it and carries it along the stroke, like wet paint">Mix</button>
+          <span class="ctx-scrub" data-key="brushMix" data-label="Amount" data-min="0" data-max="100" data-step="5" data-suffix="%" data-scale="100">Amount: 50%</span>
+        </span>
         <span class="ctx-item" data-ctx="mask-target"><strong>Inpaint Mask</strong> · Generation mask</span>
         <span class="ctx-item" data-ctx="mask-operation" role="group" aria-label="Mask operation">
           <button class="ctx-mode-btn" data-mask-operation="add" aria-pressed="true">+ Add</button>
@@ -169,6 +176,17 @@
         <span class="ctx-item" data-ctx="db-opts" style="display:flex;gap:2px;">
           <button class="ctx-mode-btn active" data-dbmode="dodge" data-i18n-title="dodgeTool.dodge" title="Dodge (lighten)">&#x2600;</button>
           <button class="ctx-mode-btn" data-dbmode="burn" data-i18n-title="dodgeTool.burn" title="Burn (darken)">&#x25cf;</button>
+        </span>
+        <!-- Blur / Sharpen (CT10) -->
+        <span class="ctx-item" data-ctx="blur-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-blurmode="blur" data-i18n="blurTool.blur" data-i18n-title="blurTool.blur.tooltip" title="Soften the pixels under the brush">Blur</button>
+          <button class="ctx-mode-btn" data-blurmode="sharpen" data-i18n="blurTool.sharpen" data-i18n-title="blurTool.sharpen.tooltip" title="Crisp up the pixels under the brush">Sharpen</button>
+        </span>
+        <!-- Clone / Heal (CT10) -->
+        <span class="ctx-item" data-ctx="clone-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-clonemode="clone" data-i18n="cloneTool.clone" data-i18n-title="cloneTool.clone.tooltip" title="Copy the source exactly (Alt-click sets the source)">Clone</button>
+          <button class="ctx-mode-btn" data-clonemode="heal" data-i18n="cloneTool.heal" data-i18n-title="cloneTool.heal.tooltip" title="Copy the source's detail in this spot's colour and light (Alt-click sets the source)">Heal</button>
+          <button class="ctx-mode-btn" data-clonemode="patch" data-i18n="cloneTool.patch" data-i18n-title="cloneTool.patch.tooltip" title="Paint over a blemish; on release it is filled from the picture around it (no source needed)">Patch</button>
         </span>
         <!-- Liquify sub-options -->
         <span class="ctx-item" data-ctx="liquify-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
@@ -214,6 +232,11 @@
         <span class="ctx-item" data-ctx="eye-opts" style="display:flex;gap:4px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
           <span class="ctx-scrub" data-key="sampleRadius" data-label="Radius" data-min="1" data-max="11" data-step="2" data-suffix="px" data-scale="1">Radius: 1px</span>
           <button class="ctx-mode-btn" id="sampleMergedBtn" data-i18n="eyedropperTool.merged" data-i18n-title="eyedropperTool.merged.tooltip" title="Sample from all visible layers">Merged</button>
+        </span>
+        <!-- Fill options (CT12) -->
+        <span class="ctx-item" data-ctx="fill-opts" style="display:flex;gap:4px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <span class="ctx-scrub" data-key="fillTolerance" data-label="Tolerance" data-min="0" data-max="255" data-step="1" data-suffix="" data-scale="1">Tolerance: 32</span>
+          <button class="ctx-mode-btn active" id="fillContiguousBtn" data-i18n="fillTool.contiguous" data-i18n-title="fillTool.contiguous.tooltip" title="Fill only the connected area; off fills every matching pixel">Contiguous</button>
         </span>
         <!-- Crop options -->
         <span class="ctx-item" data-ctx="crop-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
@@ -840,6 +863,7 @@
                   <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
                   <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD1Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
                 </div>
+                <div class="param-grid cols-1" id="paramAD1WordsRow" style="display:none;"><div class="param-cell" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label>Words</label><input class="param-val" id="paramAD1Words" type="text" spellcheck="false" placeholder="candle, eyes" style="text-align:left;"></div></div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
                   <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
@@ -867,6 +891,7 @@
                   <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
                   <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD2Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
                 </div>
+                <div class="param-grid cols-1" id="paramAD2WordsRow" style="display:none;"><div class="param-cell" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label>Words</label><input class="param-val" id="paramAD2Words" type="text" spellcheck="false" placeholder="candle, eyes" style="text-align:left;"></div></div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
                   <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
@@ -895,6 +920,7 @@
                   <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
                   <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD3Conf" data-min="0" data-max="1" data-step="0.05" value="0.3"></div>
                 </div>
+                <div class="param-grid cols-1" id="paramAD3WordsRow" style="display:none;"><div class="param-cell" title="Word Detail: the prompt words to detail, separated by commas (needs heatmap capture on)"><label>Words</label><input class="param-val" id="paramAD3Words" type="text" spellcheck="false" placeholder="candle, eyes" style="text-align:left;"></div></div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
                   <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" data-min="0" data-max="1" data-step="0.01" value="0.4"></div>
@@ -1108,6 +1134,24 @@
               <div class="layer-vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
             </div>
           </div>
+          <!-- Masks (M1, Evidence/NAMED-MASKS-SPEC.md): the Inpaint mask and the
+               named masks. Inside the Layers block, so it moves and hides with it. -->
+          <div class="section-header" data-collapse="masksList">
+            <span class="section-arrow">&#x25BC;</span>
+            <span class="section-label" data-i18n="panels.masks">Masks</span>
+            <div class="section-actions" id="maskActions">
+              <button data-i18n-title="mask.new.tooltip" title="New mask" id="maskNew"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+              <button data-i18n-title="mask.fromSelection.tooltip" title="Save selection as mask" id="maskFromSelection"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="3 3"><rect x="4" y="4" width="16" height="16" rx="1"/></svg></button>
+              <button data-i18n-title="mask.fromRange.tooltip" title="From range… (a mask of the picture's highlights, midtones, shadows or a colour)" id="maskFromRange"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg></button>
+              <button data-i18n-title="mask.fromWord.tooltip" title="From word… (a mask from a word of the active layer's picture)" id="maskFromWord"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19l5-14 5 14"/><path d="M6 14h6"/><path d="M17 9v10"/><path d="M15 9h4"/></svg></button>
+              <button data-i18n-title="mask.loadSelection.tooltip" title="Load as selection (Shift adds, Alt subtracts, Shift+Alt intersects)" id="maskToSelection"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></button>
+              <span class="action-sep" aria-hidden="true"></span>
+              <button data-i18n-title="mask.duplicate.tooltip" title="Duplicate" id="maskDupe"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
+              <button data-i18n-title="mask.invert.tooltip" title="Invert" id="maskInvert"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path fill="currentColor" stroke="none" d="M12 3a9 9 0 0 0 0 18z"/></svg></button>
+              <button data-i18n-title="mask.delete.tooltip" title="Delete" id="maskDel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
+            </div>
+          </div>
+          <div id="masksList" class="section-body"></div>
           </div>
 
           <!-- Action History (wrapper makes the header+body pair one layout block) -->
@@ -1247,6 +1291,14 @@
                 <div class="settings-card-body">
                   <p class="settings-item-description" data-i18n="settings.modelFolders.intro">These folders are read on the machine running Studio. Studio only lists model files directly inside each folder — it does not search subfolders, and it skips shortcuts, symlinks and cloud-placeholder files, so a folder of links will look empty.</p>
 
+                  <div class="settings-item" data-setting-key="toggleNetworkModelFolders" data-setting-search="network share nas unc mapped drive other machine computer smb nfs remote model folders">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.network.title">Allow network model folders</span>
+                      <p class="settings-item-description" data-i18n="settings.modelFolders.network.desc">Use a folder on another machine, such as \\otherpc\models or a mapped drive. Type or paste its path below. If that machine is off, the folder shows as Offline and Studio keeps working; press Refresh model list once it is back.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleNetworkModelFolders"><div class="toggle-knob"></div></div></div>
+                  </div>
+
                   <div class="settings-item settings-item-stacked" data-setting-key="modelRootCheckpoint" data-setting-search="model folder checkpoint models directory path safetensors ckpt gguf">
                     <div class="settings-item-copy">
                       <span class="settings-item-title" data-i18n="settings.modelFolders.checkpoint">Checkpoint folder</span>
@@ -1341,6 +1393,26 @@
                     <div class="settings-item-control settings-btn-group settings-btn-group-end">
                       <button class="defaults-btn" id="modelRootAddLora" data-role="Lora" data-i18n="settings.modelFolders.add">Add folder</button>
                       <button class="defaults-btn" id="modelRootBrowseLora" data-role="lora" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
+                  <!-- EMB. Embeddings (textual inversion). Named in the prompt
+                       and read by the engine's CLIP text encoders when a model
+                       loads; Studio hands the folder to the engine, which
+                       otherwise had none. -->
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootEmbedding" data-setting-search="model folder embedding embeddings textual inversion directory path">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.embedding">Embeddings folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusEmbedding" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootEmbedding" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListEmbedding"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddEmbedding" data-role="Embedding" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseEmbedding" data-role="embedding" data-i18n="settings.modelFolders.browse">Browse…</button>
                     </div>
                   </div>
                   <div class="settings-item-description" id="modelRootDetectorSummary"></div>
@@ -1914,6 +1986,7 @@
                   </div>
                   <div class="settings-item settings-item-actions">
                     <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="attentionFolderBrowse" data-i18n="settings.heatmap.browse">Browse…</button>
                       <button class="defaults-btn" id="attentionFolderMove" data-i18n="settings.heatmap.move">Move here</button>
                       <button class="defaults-btn" id="attentionFolderClean" data-i18n="settings.heatmap.clean">Clean up</button>
                       <button class="defaults-btn" id="attentionFolderOpen" data-i18n="settings.heatmap.open">Open folder</button>

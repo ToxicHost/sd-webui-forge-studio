@@ -380,13 +380,22 @@ class StudioApplication:
             self._results.forget(asset.handle)
         return winner
 
+    def allow_result_roots(self, roots: Any) -> None:
+        """OF1. Let the registry serve files in the owner's trusted save
+        folders, as well as in the result root. `roots` is called on every
+        registration and read, so untrusting a folder stops serving it."""
+
+        if self._results is not None:
+            self._results.allow_roots(roots)
+
     def register_saved_file(self, path: Path, *, media_type: str) -> ResultAsset | None:
         """P3. A handle for a file Studio SAVED into its result root.
 
         Save and Canvas Export write there, and the page opens the result by
         handle -- the Extension opened `/file=<absolute path>`, which Standalone
         does not serve. None when there is no registry, or the file is outside
-        the owned root (a folder linked in the Gallery): the save still
+        every root the registry serves (the result root and, since OF1, the
+        save roots -- trusted and Gallery-linked folders): the save still
         happened, there is just nothing to open.
         """
 
@@ -587,6 +596,11 @@ class StudioApplication:
         offered = ", ".join(detector.name for detector in detectors)
         for position, slot in enumerate(getattr(auto_detail, "slots", ()), start=1):
             if not getattr(slot, "enabled", False):
+                continue
+            # Word Detail (S8b): a slot that details words names no detector by
+            # design -- its region comes from the job's own heatmap capture.
+            # `presentation` already refuses words AND a detector together.
+            if getattr(slot, "words", ()):
                 continue
             chosen = str(getattr(slot, "detector", "") or "")
             if not chosen:

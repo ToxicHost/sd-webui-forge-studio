@@ -26,6 +26,11 @@
       "sha256": "53c54aec2239355faffc6c5b70d0f3d05042f386f956cbec39cec46ad456f050"
     },
     {
+      "path": "models/sam/mobile_sam.pt",
+      "bytes": 40728226,
+      "sha256": "6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f"
+    },
+    {
       "path": "models/ESRGAN/remacri_original.pt",
       "bytes": 67025055,
       "sha256": "e1a73bd89c2da1ae494774746398689048b5a892bd9653e146713f9df8bca86a"

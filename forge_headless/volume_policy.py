@@ -380,20 +380,24 @@ def _read_getmntinfo():
 
 
 def admit_as_root(
-    kind: VolumeKind, *, allow_unclassified: bool = False
+    kind: VolumeKind,
+    *,
+    allow_unclassified: bool = False,
+    allow_remote: bool = False,
 ) -> tuple[bool, str | None]:
     """CURRENT POLICY: may a model root live on a volume of this kind?
 
     Returns `(admitted, reason_code)`. This function is the whole of the
-    decision, so a future release that supports explicitly configured network
-    roots changes it and nothing else -- the classifier above states facts and
-    has no opinion.
+    decision -- the classifier above states facts and has no opinion -- which
+    is why the network opt-in landed here as one argument.
 
     ```text
     LOCAL, REMOVABLE   admitted
-    REMOTE             refused, and not overridable. A dead mount hangs a
-                       request handler with no timeout and no cancellation;
-                       that is an availability failure, not a preference.
+    REMOTE             refused by default. A dead mount hangs whoever stats
+                       it, with no timeout and no cancellation. Admitted only
+                       under the owner's "Allow network model folders", and
+                       only for a caller that then touches the root through
+                       `remote_roots` (`validate_root` insists on a runner).
     PSEUDO             refused. Kernel bookkeeping is never where models live
                        and enumerating it can be pathological.
     UNKNOWN            refused by default, overridable. "Could not tell" must
@@ -406,6 +410,8 @@ def admit_as_root(
     if kind in (VolumeKind.LOCAL, VolumeKind.REMOVABLE):
         return True, None
     if kind is VolumeKind.REMOTE:
+        if allow_remote:
+            return True, None
         return False, ROOT_VOLUME_REMOTE
     if kind is VolumeKind.PSEUDO:
         return False, ROOT_VOLUME_PSEUDO

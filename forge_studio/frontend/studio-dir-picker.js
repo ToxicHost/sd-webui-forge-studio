@@ -1,11 +1,13 @@
 /*
  * The Settings folder picker, and the ordered-root rows behind it.
  *
- * The whole file exists because a native folder dialog opens on the machine
- * running Studio, which is the wrong machine for a remote host, a VM or a
- * container -- which is why the old Browse button already degraded to "type
- * the path instead". This browses the SERVER's filesystem, in the page, and
- * says so.
+ * Browse opens the operating system's own folder dialog now (FP1,
+ * `_studioPickFolder` in app.js over `/studio/pick_folder`): Studio binds
+ * 127.0.0.1, so the server's desktop is the owner's. This overlay is the
+ * FALLBACK for a host with no desktop -- a container, a headless server --
+ * where a native dialog cannot appear. It browses the SERVER's filesystem, in
+ * the page, and says so. The model-root Browse buttons are bound by app.js
+ * alone; `choose()` is how it reaches this overlay.
  *
  * Directory names are attacker-influenced strings. Everything rendered here
  * goes through textContent; there is no innerHTML anywhere in this file and a
@@ -34,10 +36,10 @@
   // Must stay equal to `catalogue.MODEL_ROLES` -- a guard asserts it,
   // because the two drifting is how a root becomes configurable on one
   // side and invisible on the other.
-  const ROLES = ["checkpoint", "text_encoder", "vae", "adetailer", "lora"];
+  const ROLES = ["checkpoint", "text_encoder", "vae", "adetailer", "lora", "embedding"];
   const ROLE_SUFFIX = {
     checkpoint: "Checkpoint", text_encoder: "TextEncoder", vae: "Vae",
-    adetailer: "Adetailer", lora: "Lora",
+    adetailer: "Adetailer", lora: "Lora", embedding: "Embedding",
   };
 
   const state = {
@@ -52,6 +54,7 @@
     // One source now: a role that exists in ROLES has a slot by construction.
     roots: Object.fromEntries(ROLES.map((role) => [role, []])),
     open: null,          // { role, handle, path, entries, breadcrumb, usable }
+    chooser: null,       // OF1: resolve(path|null) for a choose() caller
     busy: false,
   };
 
@@ -184,6 +187,9 @@
   function statusText(detail) {
     if (!detail) return "";
     if (detail.status === "refused") return "unavailable";
+    // A network folder whose machine is not answering: kept, and retried by
+    // Refresh model list.
+    if (detail.status === "unreachable") return "offline";
     if (detail.truncated) return detail.entry_count + "+ models";
     return (detail.entry_count || 0) + " models";
   }
@@ -272,6 +278,25 @@
     const node = document.getElementById("studioDirPicker");
     if (node) node.style.display = "none";
     state.open = null;
+    finishChoosing(null);
+  }
+
+  // OF1. A caller other than a model-root row -- Settings > Save folder's
+  // Browse, the Gallery folder's -- waiting for one folder. Kept OUT of
+  // `state.open`, which `render` rebuilds on every navigation.
+  function finishChoosing(path) {
+    const resolve = state.chooser;
+    state.chooser = null;
+    if (resolve) resolve(path || null);
+  }
+
+  // Resolves with the chosen folder's path, or null when cancelled.
+  function choose() {
+    finishChoosing(null);
+    return new Promise((resolve) => {
+      state.chooser = resolve;
+      open(null);
+    });
   }
 
   function message(text) {
@@ -391,6 +416,12 @@
 
   function chooseCurrent() {
     if (!state.open || !state.open.usable) return;
+    if (state.chooser) {
+      const path = state.open.path;
+      finishChoosing(path);
+      close();
+      return;
+    }
     addRoot(state.open.role, state.open.path);
     close();
   }
@@ -452,6 +483,7 @@
 
   window.StudioDirPicker = Object.freeze({
     open: open,
+    choose: choose,
     save: save,
     refresh: refreshSettings,
     addRoot: addRoot,
@@ -459,14 +491,11 @@
   });
 
   function mount() {
+    // Browse is NOT bound here. Both files bound it once, so one click opened
+    // this overlay twice over; app.js now owns it and opens the system's
+    // folder dialog, reaching this overlay through `choose()` only when the
+    // server has no desktop.
     ROLES.forEach((role) => {
-      const button = document.getElementById("modelRootBrowse" + ROLE_SUFFIX[role]);
-      if (button) {
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          open(role);
-        });
-      }
       const input = document.getElementById("modelRoot" + ROLE_SUFFIX[role]);
       const add = document.getElementById("modelRootAdd" + ROLE_SUFFIX[role]);
       if (add && input) {

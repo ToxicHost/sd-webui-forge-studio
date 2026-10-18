@@ -648,10 +648,25 @@ def build_forge_engine(*, profile: object = None, opened: object = None, **_igno
             path = opened.path(role)  # type: ignore[attr-defined]
             if path:
                 additional.append(path)
-        return forge_loader(
+        # EMB. Neo sets the embeddings folder in `forge_model_reload`, which
+        # this direct build never calls; the CLIP text engines read it as
+        # they are built, so it is set first (`embedding_roots`). Never fatal:
+        # embeddings are not worth a model that fails to load.
+        from . import embedding_roots
+
+        try:
+            embedding_roots.apply_before_load()
+        except Exception:  # noqa: BLE001 - see above
+            pass
+        engine = forge_loader(
             opened.path("checkpoint"),  # type: ignore[attr-defined]
             additional_state_dicts=additional,
         )
+        try:
+            embedding_roots.extend_engine(engine)
+        except Exception:  # noqa: BLE001 - see above
+            pass
+        return engine
     finally:
         restore = getattr(watch, "restore", None)
         if callable(restore):

@@ -351,16 +351,18 @@ def enrich_cards(registry: Any, cards: List[dict]) -> List[dict]:
     """Extension `enrich_lora_entries` (:548-608): cached data only, never a
     network call, and the owner's own preview and sidecar always win."""
 
+    from .model_browser import lora_model_id, on_model
+
     for card in cards:
-        found = locate(registry, str(card.get("name") or ""))
-        if found is None:
+        name = str(card.get("name") or "")
+        # One call per card for everything it reads beside the LoRA: on a
+        # network folder that call is bounded and remembered until the next
+        # rescan, so the browser does not re-read a share it already read.
+        view = on_model(
+            registry, "lora", lora_model_id(registry, name) or "", "civitai",
+            lambda _path, name=name: _cached_view(registry, name), default=None)
+        if not view:
             continue
-        path, root = found
-        sha = cached_hash(root, path)
-        meta = load_cached_entry(root, sha) if sha else None
-        if not meta:
-            continue
-        view = public_view(meta, str(card["name"]), root)
         card["civitai"] = view
         if not card.get("preview") and view.get("preview"):
             card["preview"] = view["preview"]
@@ -371,7 +373,26 @@ def enrich_cards(registry: Any, cards: List[dict]) -> List[dict]:
     return cards
 
 
+def _cached_view(registry: Any, name: str) -> Optional[dict]:
+    found = locate(registry, name)
+    if found is None:
+        return None
+    path, root = found
+    sha = cached_hash(root, path)
+    meta = load_cached_entry(root, sha) if sha else None
+    if not meta:
+        return None
+    return public_view(meta, name, root)
+
+
 def read_cached_preview(registry: Any, name: str) -> Optional[Tuple[bytes, str]]:
+    from .model_browser import lora_model_id, on_model
+
+    return on_model(registry, "lora", lora_model_id(registry, name) or "", None,
+                    lambda _path: _read_cached_preview(registry, name), default=None)
+
+
+def _read_cached_preview(registry: Any, name: str) -> Optional[Tuple[bytes, str]]:
     found = locate(registry, name)
     if found is None:
         return None

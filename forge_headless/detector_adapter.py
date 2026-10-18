@@ -196,18 +196,34 @@ def is_all_black(image: Any) -> bool:
 def dilate_erode(image: Any, value: int) -> Any:
     """Positive dilates, negative erodes, zero is a no-op.
 
-    Upstream reaches for `cv2.getStructuringElement` and `cv2.dilate`. PIL's
-    MaxFilter/MinFilter are the same square-kernel morphology on a single
-    channel and cost this file an opencv import it otherwise does not need --
-    the mask is an 8-bit L image either way, and the kernel is square in both.
+    Upstream's `cv2.getStructuringElement` and `cv2.dilate`/`erode`, exactly,
+    when opencv imports. PIL's MaxFilter/MinFilter are the fallback: the same
+    square morphology, but only odd and centred.
     """
 
     if value == 0:
         return image
 
+    size = abs(int(value))
+    # Upstream's own kernel when opencv is there -- it is a Neo dependency, so
+    # in Studio it always is. An EVEN kernel is not centred (4 grows a mask 2
+    # px up/left and 1 px down/right), which the PIL fallback below cannot
+    # express; that 1 px was the difference from ADetailer (review vs Neo,
+    # 2026-10-17).
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image
+
+        arr = np.asarray(ensure_pil_image(image, "L"))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
+        out = cv2.dilate(arr, kernel, iterations=1) if value > 0 else cv2.erode(arr, kernel, iterations=1)
+        return Image.fromarray(out, mode="L")
+    except ImportError:
+        pass
+
     from PIL import ImageFilter
 
-    size = abs(int(value))
     if size % 2 == 0:
         # PIL requires an odd kernel; opencv does not. Rounding UP keeps a
         # dilation from silently doing less than asked.

@@ -311,7 +311,7 @@ _OPERATIONS = ("txt2img", "img2img", "inpaint")
 
 #: Every field an inpaint group may carry.
 _INPAINT_FIELDS = ("mask_blur", "fill", "full_resolution", "padding",
-                   "invert", "soft")
+                   "invert", "soft", "refine")
 
 #: Every field the soft-inpainting group may carry, with the engine's own
 #: slider bounds (`soft_inpainting.py:518-526`). Studio does not invent a
@@ -392,7 +392,11 @@ _AUTO_DETAIL_SLOT_FIELDS = (
     "inpaint_padding",
     "steps",
     "cfg",
+    "words",
 )
+#: Word Detail: at most this many words in one slot, each this long at most.
+_WORD_DETAIL_MAX_WORDS = 8
+_WORD_DETAIL_MAX_LENGTH = 64
 
 #: Model IDENTITY, which the book makes a SIBLING of `generation`, not a member
 #: of it. `model_selection` holds the three opaque ids this job wants resident;
@@ -923,7 +927,35 @@ def _validated_inpaint(value: Any) -> Any:
         settings[name] = raw
 
     settings["soft"] = _validated_soft_inpaint(value.get("soft"))
+    settings["refine"] = _validated_inpaint_refine(value.get("refine"))
     return InpaintSettings(**settings)
+
+
+def _validated_inpaint_refine(value: Any) -> Any:
+    """Outpaint's refine pass (CT9), or None. A size like the job's own --
+    positive, no ceiling (owner, 2026-08-16) -- and a denoise in 0-1."""
+
+    from .contracts import InpaintRefine
+
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise PresentationError("inpaint.refine must be a JSON object.")
+    unexpected = sorted(str(key) for key in value
+                        if key not in ("width", "height", "denoising_strength"))
+    if unexpected:
+        raise PresentationError(f"Unsupported generation field: inpaint.refine.{unexpected[0]}.")
+    fields: dict[str, Any] = {}
+    for name in ("width", "height"):
+        raw = value.get(name)
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+            raise PresentationError(f"inpaint.refine.{name} must be a positive integer.")
+        fields[name] = raw
+    raw = value.get("denoising_strength", InpaintRefine.denoising_strength)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not 0 <= raw <= 1:
+        raise PresentationError("inpaint.refine.denoising_strength must be between 0 and 1.")
+    fields["denoising_strength"] = float(raw)
+    return InpaintRefine(**fields)
 
 
 #: A document id is 32 hex characters and nothing else. Anchored, so a value
@@ -1232,11 +1264,33 @@ def _validated_auto_detail(value: Any) -> Any:
             raise PresentationError(
                 f"{where}.min_ratio must not exceed {where}.max_ratio."
             )
+        # Word Detail: a list of prompt words, or absent. Present but empty is
+        # "Words…" chosen with nothing typed, refused by name rather than
+        # left to fail later as an unresolved detector.
+        raw_words = raw.get("words", [])
+        if not isinstance(raw_words, (list, tuple)) or len(raw_words) > _WORD_DETAIL_MAX_WORDS:
+            raise PresentationError(
+                f"{where}.words must be a list of at most {_WORD_DETAIL_MAX_WORDS} words.")
+        if "words" in raw and not raw_words:
+            raise PresentationError(
+                f"{where} is set to Words but has none; type the words to detail, separated by commas.")
+        words: list[str] = []
+        for word in raw_words:
+            if not isinstance(word, str) or not word.strip() or len(word.strip()) > _WORD_DETAIL_MAX_LENGTH:
+                raise PresentationError(
+                    f"{where}.words must hold words of 1 to {_WORD_DETAIL_MAX_LENGTH} characters.")
+            if word.strip().lower() not in words:
+                words.append(word.strip().lower())
+        detector = _text(raw.get("detector", ""), f"{where}.detector", limit=200)
+        if words and detector:
+            raise PresentationError(
+                f"{where} names a detector and words; a slot uses one or the other.")
 
         slots.append(
             AutoDetailSlot(
                 enabled=bool(slot_enabled),
-                detector=_text(raw.get("detector", ""), f"{where}.detector", limit=200),
+                detector=detector,
+                words=tuple(words),
                 confidence=_number(
                     raw.get("confidence", 0.3), f"{where}.confidence", 0.0, 1.0
                 ),
@@ -1300,7 +1354,8 @@ def _validated_output(value: Any) -> Any:
     if not isinstance(value, Mapping):
         raise PresentationError("output settings must be a JSON object.")
     unknown = sorted(str(k) for k in value if k not in
-                     ("format", "quality", "lossless", "embed_metadata", "watermark"))
+                     ("format", "quality", "lossless", "embed_metadata", "watermark",
+                      "save_dir", "save_tree", "purpose"))
     if unknown:
         raise PresentationError(
             f"Unknown output settings: {', '.join(unknown)}.")
@@ -1326,11 +1381,29 @@ def _validated_output(value: Any) -> Any:
         raise PresentationError(
             "output embed_metadata must be true or false.")
 
+    # OF1. Where it is written. Only the SHAPE is checked here; whether the
+    # folder is trusted is decided at admission (`StudioPresentation.
+    # _apply_save_policy`), which has the server's roots and this function
+    # does not.
+    save_dir = value.get("save_dir", "")
+    if not isinstance(save_dir, str):
+        raise PresentationError("output save_dir must be text.")
+    save_dir = save_dir.strip()
+    if len(save_dir) > 1024 or "\x00" in save_dir:
+        raise PresentationError("output save_dir is not a usable folder path.")
+    save_tree = value.get("save_tree", "studio")
+    if save_tree not in ("studio", "neo"):
+        raise PresentationError("output save_tree must be 'studio' or 'neo'.")
+    purpose = value.get("purpose", "")
+    if purpose not in ("", "upscaled"):
+        raise PresentationError("output purpose must be '' or 'upscaled'.")
+
     from .contracts import OutputSettings
 
     return OutputSettings(format=fmt, quality=quality, lossless=lossless,
                           embed_metadata=embed_metadata,
-                          watermark=_validated_watermark(value.get("watermark")))
+                          watermark=_validated_watermark(value.get("watermark")),
+                          save_dir=save_dir, save_tree=save_tree, purpose=purpose)
 
 
 def _validated_watermark(value: Any) -> Any:
@@ -1502,10 +1575,55 @@ class StudioPresentation:
         from .asset_service import AssetService
 
         self._assets = AssetService()
+        #: OF1. Which folders a job may save into (`save_roots.SaveRoots`).
+        #: Attached by the HTTP server, which owns the state folder and the
+        #: Gallery the policy reads; None means only the default folder.
+        self._save_roots: Any = None
 
     @property
     def assets(self) -> Any:
         return self._assets
+
+    @property
+    def save_roots(self) -> Any:
+        return self._save_roots
+
+    def attach_save_roots(self, save_roots: Any) -> None:
+        """OF1. Install the save-folder policy, and let the result registry
+        serve what it allows: a result written to a trusted folder outside the
+        result root is otherwise refused as outside the owned root."""
+
+        self._save_roots = save_roots
+        allow = getattr(self._application, "allow_result_roots", None)
+        if callable(allow) and save_roots is not None:
+            allow(save_roots.roots)
+
+    def _apply_save_policy(self, request_payload: dict[str, Any]) -> str:
+        """OF1. Replace the typed save folder with the trusted one, or "".
+
+        The Extension's admission rule (`studio_api.py:3065-3095`): a folder
+        is honoured only inside a safe write root; anything else saves to the
+        default folder and the page is told why, rather than the owner's
+        picture going somewhere they did not choose or nowhere at all. Returns
+        that notice, or "".
+        """
+
+        output = request_payload.get("output")
+        typed = str(getattr(output, "save_dir", "") or "")
+        if output is None or not typed:
+            return ""
+        policy = self._save_roots
+        if policy is None:
+            from .save_roots import UNTRUSTED_NOTICE
+
+            decision_folder, notice = "", UNTRUSTED_NOTICE
+        else:
+            decision = policy.decide(typed)
+            decision_folder, notice = decision.folder, decision.notice
+        from dataclasses import replace
+
+        request_payload["output"] = replace(output, save_dir=decision_folder)
+        return notice
 
     def admit_asset(self, payload: Any) -> dict[str, Any]:
         """`POST /api/assets`: one inline image in, one opaque handle out.
@@ -1875,13 +1993,19 @@ class StudioPresentation:
                 status=HTTPStatus.NOT_FOUND,
             )
         request_payload = _validated_request_payload(payload)
+        notice = self._apply_save_policy(request_payload)
         request_payload.update(self._server_execution_policy())
         request_payload.update(self._resolve_prompts(request_payload))
         try:
             request = self._request_factory(**request_payload)
         except (TypeError, ValueError) as exc:
             raise PresentationError(str(exc) or "Invalid generation request.") from exc
-        return coordinator.submit(request)
+        submitted = coordinator.submit(request)
+        if notice and isinstance(submitted, dict):
+            # Non-fatal, as the Extension's (`studio_api.py:3475`): the job
+            # runs, and the page says where its picture went instead.
+            submitted = {**submitted, "notice": notice}
+        return submitted
 
     def jobs(self) -> dict[str, Any]:
         coordinator = self._coordinator_or_none()
@@ -1999,6 +2123,7 @@ class StudioPresentation:
 
     def submit(self, payload: Any) -> dict[str, Any]:
         request_payload = _validated_request_payload(payload)
+        notice = self._apply_save_policy(request_payload)
         request_payload.update(self._server_execution_policy())
         request_payload.update(self._resolve_prompts(request_payload))
         try:
@@ -2010,6 +2135,8 @@ class StudioPresentation:
         response = _as_mapping(submitted)
         response["job_id"] = _job_id_of(submitted)
         response["state"] = _state_of(response)
+        if notice:
+            response["notice"] = notice
         return response
 
     def poll(
@@ -2206,6 +2333,10 @@ class _StudioHTTPServer(ThreadingHTTPServer):
         self.preferences = preferences
         #: HM2. Serialises a move of the attention store against adoption.
         self._attention_move_lock = threading.Lock()
+        #: FP1. The native folder dialog behind every Browse button. None means
+        #: the process's shared one (one desktop, one dialog); tests put a
+        #: `FolderDialog` with a fake chooser here.
+        self.folder_dialog = None
 
         self.presentation = presentation
         # Optional: hosts that do not configure model roots simply do not expose
@@ -2273,6 +2404,26 @@ class _StudioHTTPServer(ThreadingHTTPServer):
             from forge_studio.workshop_service import WorkshopService
 
             self.workshop_service = WorkshopService(registry, state_root)
+        # OF1. Settings > Save folder: which folders a job may save into, the
+        # owner's trusted list, and the Gallery registration of a chosen
+        # folder. Built here because this is where the state folder, the
+        # result root and the Gallery all meet.
+        from forge_studio.save_roots import SaveRoots
+
+        gallery = self.gallery_service
+        self.save_roots = SaveRoots(
+            state_root=state_root,
+            result_root=result_root,
+            install_roots=(Path(__file__).resolve().parents[1],),
+            linked_folders=gallery.linked_folder_paths if gallery is not None else None,
+            adopt_folder=gallery.adopt_folder if gallery is not None else None,
+        )
+        # Optional on the presentation for the same reason as everything else
+        # here: harnesses build this server around stand-in presentations.
+        attach = getattr(presentation, "attach_save_roots", None)
+        if callable(attach):
+            attach(self.save_roots)
+        self.source_adapter.save_roots = self.save_roots
         super().__init__(server_address, _StudioRequestHandler)
 
     def server_close(self) -> None:
@@ -2826,7 +2977,7 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PresentationError("Request body is not valid UTF-8 JSON.") from exc
 
-    def _send_pixel_bytes(self, pixels: Any) -> None:
+    def _send_pixel_bytes(self, pixels: Any, content_hash: str = "") -> None:
         """Raw RGBA under the same inert policy result bytes get.
 
         These are decoded from attacker-influenceable input and served
@@ -2850,10 +3001,35 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Width", str(pixels.width))
         self.send_header("X-Height", str(pixels.height))
         self.send_header("X-Color-Profile", pixels.profile_state)
+        if content_hash:
+            self.send_header("X-Content-Hash", content_hash)
         self.send_header("Content-Length", str(len(pixels.rgba)))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(pixels.rgba)
+
+    def _word_masks(self) -> None:
+        """M2. `POST /studio/masks/word`: a picture's words, or one word's
+        three mask previews. Bounded as the pixel routes are: the page may
+        send its copy of an unsaved picture."""
+
+        from forge_studio.word_mask_service import WordMaskRefusal, handle
+
+        payload = self._read_json_bounded(maximum_bytes=_MAX_PIXEL_REQUEST_BYTES)
+        server = self.server
+        gallery = getattr(server, "gallery_service", None)
+        roots = getattr(server, "attention_roots", None)
+        try:
+            store_root = roots()[0] if callable(roots) else None
+        except RuntimeError:                       # this host keeps no attention data
+            store_root = None
+        try:
+            reply = handle(payload, store=gallery.store() if gallery is not None else None,
+                           store_root=store_root)
+        except WordMaskRefusal as refusal:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"available": False, "error": str(refusal)})
+            return
+        self._send_json(HTTPStatus.OK, reply)
 
     # -- HM2: the attention sidecar store ---------------------------------
 
@@ -2963,6 +3139,43 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             return {"ok": False, "path": str(folder), "error": "The folder could not be opened."}
         return {"ok": True}
 
+    def _save_root_action(self, path: str, body: Any) -> tuple[HTTPStatus, dict[str, Any]]:
+        """OF1. Trust, untrust, or open a save folder.
+
+        These were answered by the source adapter's mock stubs on the live
+        server too ("Filesystem actions are unavailable in mock mode"), which
+        is why the owner's Trust click toasted an error and the setting looked
+        as if it had not saved.
+        """
+
+        policy = getattr(self.server, "save_roots", None)
+        if policy is None:
+            return HTTPStatus.NOT_FOUND, {"ok": False, "error": "Save folders are unavailable."}
+        raw = str((body or {}).get("path") or "").strip() if isinstance(body, Mapping) else ""
+        if path == "/studio/trust-save-root":
+            ok, message = policy.trust(raw)
+            if ok:
+                return HTTPStatus.OK, {"ok": True, "path": message}
+            return HTTPStatus.BAD_REQUEST, {"ok": False, "error": message}
+        if path == "/studio/untrust-save-root":
+            policy.untrust(raw)
+            return HTTPStatus.OK, {"ok": True}
+        # Open. A blank field opens Studio's own output folder, which is where
+        # a blank setting saves. Anything else must be a folder Studio may
+        # save into: Open is not a way to point the file manager anywhere.
+        if not raw:
+            folder = policy.default_folder()
+            if folder is None:
+                return HTTPStatus.OK, {"ok": False, "error": "Studio has no output folder."}
+            studio_tree = Path(folder) / "studio"
+            return HTTPStatus.OK, self._reveal_folder(
+                studio_tree if studio_tree.is_dir() else Path(folder))
+        if not Path(raw).expanduser().is_absolute() or not policy.allows(raw):
+            return HTTPStatus.FORBIDDEN, {
+                "ok": False,
+                "error": "Studio only opens folders it saves into. Trust the folder first."}
+        return HTTPStatus.OK, self._reveal_folder(Path(raw).expanduser().resolve())
+
     def _open_watermarks_folder(self) -> dict[str, Any]:
         """P11. The Extension opens the folder so the owner can drop images in,
         and on a host with no file manager answers `unavailable` WITH the path
@@ -3013,6 +3226,11 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         roots: list[Any] = list(configured_save_roots())
         if gallery is not None:
             roots.extend(gallery.linked_folder_paths())
+        # OF1. And the owner's trusted save folders, which the Extension's
+        # `_safe_write_roots` includes for this route as well.
+        policy = getattr(self.server, "save_roots", None)
+        if policy is not None:
+            roots.extend(policy.trusted())
         try:
             saved = save_output_image(
                 payload,
@@ -3143,7 +3361,16 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK, self._pixel_samples(payload, pixels, sample_grid)
             )
             return
-        self._send_pixel_bytes(pixels)
+        # M2. The picture's identity, the Gallery's pixel hash: the page
+        # records it on the layer it places the picture on, so a word mask can
+        # find the picture's heatmap capture. Empty when it cannot be read.
+        from .gallery_index import content_hash
+
+        try:
+            digest = content_hash(data)
+        except Exception:  # noqa: BLE001 - a hash is never a reason to refuse pixels
+            digest = ""
+        self._send_pixel_bytes(pixels, digest)
 
     @staticmethod
     def _pixel_samples(payload: Mapping[str, Any], pixels: Any, grid: Any) -> dict:
@@ -3738,12 +3965,23 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._send_result_bytes(found[1], found[0])
                 return
+            # OF1. The trusted save folders, the Extension's shape
+            # (`studio_api.py:5308-5310`). Settings shows these paths by
+            # design; the routes that take one are strict-origin below.
+            if path == "/studio/trusted-save-roots":
+                policy = getattr(self.server, "save_roots", None)
+                self._send_json(HTTPStatus.OK,
+                                {"roots": policy.trusted() if policy is not None else []})
+                return
             # P9. Develop's presets, from the state root.
             if path == "/studio/develop/presets":
                 from forge_studio.develop_presets import list_presets
 
                 self._send_json(HTTPStatus.OK,
                                 list_presets(getattr(self.server, "state_root", None)))
+                return
+            # F0. Workflows and layouts, from the state root.
+            if self._saved_setups("GET", path):
                 return
             # P4. A model's preview image, by catalogue id -- never a path.
             # P6. A Civitai-cached LoRA preview, by LoRA name.
@@ -4025,6 +4263,42 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                 self._read_json_optional()
                 self._send_json(HTTPStatus.OK, self._open_watermarks_folder())
                 return
+            # OF1. Settings > Save folder's Trust, Remove and Open, and the
+            # Gallery folder's Open. Strict origin: each one takes a path, and
+            # Trust widens where Studio will write (`studio_api.py:5292-5321`,
+            # its `_check_same_origin`).
+            if path in ("/studio/trust-save-root", "/studio/untrust-save-root",
+                        "/studio/open_folder"):
+                if not self._is_allowed_origin_strict():
+                    self._read_json_optional()
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden"})
+                    return
+                status, reply = self._save_root_action(path, self._read_json_optional() or {})
+                self._send_json(status, reply)
+                return
+            # FP1. Every Browse button's folder dialog (`folder_dialog.py`).
+            # Strict origin like the path routes it feeds: it opens a window on
+            # the owner's desktop, and a page from anywhere else must not be
+            # able to. The answer is only text for a field -- each setting's
+            # own route still validates whatever the owner then applies.
+            if path == "/studio/pick_folder":
+                payload = self._read_json_optional()
+                if not self._is_allowed_origin_strict():
+                    self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden"})
+                    return
+                from forge_studio.folder_dialog import shared_dialog
+
+                request = payload if isinstance(payload, dict) else {}
+                start = request.get("start")
+                purpose = request.get("purpose")
+                # A blank Save or Gallery folder means Studio's own output
+                # folder, so that is where the dialog opens.
+                result_root = getattr(self.server, "result_root", None)
+                if not str(start or "").strip() and purpose in ("save", "gallery") and result_root:
+                    start = str(result_root)
+                dialog = getattr(self.server, "folder_dialog", None) or shared_dialog()
+                self._send_json(HTTPStatus.OK, dialog.pick(start, purpose))
+                return
             # HM2. Clean up, move, or open the heatmap data store. STRICT
             # origin, as every route that takes a filesystem path: "move"
             # names a folder Studio will write into.
@@ -4035,6 +4309,11 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                     return
                 status, reply = self._attention_store_action(self._read_json_optional() or {})
                 self._send_json(status, reply)
+                return
+            # M2. Word masks from a picture's heatmap capture
+            # (`word_mask_service.py`; the arithmetic is forge_headless's).
+            if path == "/studio/masks/word":
+                self._word_masks()
                 return
             # P9. Develop's presets, kept in the state root.
             if path == "/studio/develop/presets":
@@ -4048,6 +4327,9 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                                     {"ok": False, "error": refusal.message})
                     return
                 self._send_json(HTTPStatus.OK, reply)
+                return
+            # F0. Workflows and layouts, kept in the state root.
+            if path in ("/studio/workflows", "/studio/layouts") and self._saved_setups("POST", path):
                 return
             if path == "/api/assets":
                 # Same bound as generate: this route exists to carry exactly
@@ -4172,6 +4454,22 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_api_error(exc)
 
+    def _saved_setups(self, method: str, path: str) -> bool:
+        """F0. A workflows / layouts route answered from the state root
+        (`saved_setups.py`); False for any other path."""
+
+        if not (path.startswith("/studio/workflows") or path.startswith("/studio/layouts")):
+            return False
+        from forge_studio.saved_setups import route
+
+        body = self._read_json() if method == "POST" else None
+        answer = route(method, path, getattr(self.server, "state_root", None), body)
+        if answer is None:
+            return False
+        status, reply = answer
+        self._send_json(HTTPStatus(status), reply)
+        return True
+
     def do_DELETE(self) -> None:
         if self._reject_untrusted_host():
             return
@@ -4183,6 +4481,9 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             return
         path = self._path()
         try:
+            # F0. Workflows and layouts, kept in the state root.
+            if self._saved_setups("DELETE", path):
+                return
             if path.startswith("/studio/"):
                 # `self.path`, not `path`. `_path()` strips the query string,
                 # so every DELETE reached the adapter with its parameters gone

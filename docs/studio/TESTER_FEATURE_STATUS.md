@@ -47,11 +47,18 @@ generation-model paths were accessed.
 | Automatic updates | Not automatic. Git installations update from Settings > About > Check for Updates or with `git pull --ff-only`; see [GIT_INSTALL.md](GIT_INSTALL.md). ZIP updates use a separate candidate folder and backups. |
 | Multi-user / public network service | Outside the Windows local-use candidate. |
 | Linux/NVIDIA Docker tester | Experimental [setup supplied](../../packaging/docker/README.md); config and native adapter checks only. Image build, GPU passthrough and container generation await the Linux tester. |
-| Word heatmaps | Available for testing (2026-10-15) | Anima and SDXL pictures record each prompt word's attention; the Gallery's Words section shows it. Settings > Heatmap data turns recording off, moves or cleans up its folder. Checked on a real GPU for Anima: pictures byte-identical with recording on and off, maps matching the research capture. SDXL heatmaps are in use but have not had the same pixel check yet. |
+| Masks and word masks | Available for testing (2026-10-18) | Named masks in a Masks panel, masks from prompt words (MobileSAM on the CPU) and from tones or colour, inpainting with any mask, Develop local adjustments, PSD layer masks. Store, undo, recovery and word-mask methods covered by tests; checked in the browser; word masks measured against reference masks on research pictures. |
+| Outpaint, Canvas Size, Smart Patch, Paint Mixer | Available for testing (2026-10-18) | Outpaint checked on a real GPU (large pictures, Refine new area); the others covered by tests and browser checks. |
+| Folder dialogs and network model folders | Available for testing (2026-10-18) | Browse opens the system folder dialog for every folder setting; network model folders are opt-in and bounded by timeouts. Covered by tests. |
+| Word heatmaps | Available for testing (2026-10-15) | Anima and SDXL pictures record each prompt word's attention; the Gallery's Words section shows it. Settings > Heatmap data turns recording off, moves or cleans up its folder. Checked on a real GPU for Anima: pictures byte-identical with recording on and off, maps matching the research capture. SDXL checked on a real GPU too: byte-identical with recording on and off (2026-10-16). |
 | macOS, Linux, Docker, AMD/Intel GPU certification | Not established by this review. Some platform/source support exists, but is not a tested release promise. |
 
 ## Verification scope
 
+- 2026-10-18 update: the full development suite passed apart from the same
+  development-guide text checks as before. On a real GPU the previous build
+  and this one gave byte-identical plain Anima, SDXL and Outpaint pictures;
+  Anima Hires and Auto Detail changed slightly, as intended (Neo parity).
 - 2026-10-15 update: the full development suite ran 6,336 tests with the GPU
   after the heatmap work; the 11 failures are the same development-guide text
   checks as before. The later fixes were tested with the GPU hidden: beyond

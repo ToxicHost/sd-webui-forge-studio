@@ -59,7 +59,7 @@ publication      nothing here publishes. Intermediate AD passes are not
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Sequence
 
 from .contracts import HeadlessError
@@ -104,6 +104,16 @@ class SlotSpec:
     inpaint_padding: int = 32
     steps: int = 0
     cfg: float = 0.0
+    #: Word Detail (S8b, owner 2026-10-16): prompt words to detail instead of
+    #: a detector. Non-empty means the slot finds its region from this job's
+    #: own heatmap capture (`detect_words`), and `detector_path` is unused.
+    words: tuple[str, ...] = ()
+    #: Which picture of the batch and which kept region of it this pass
+    #: details, set by `run_auto_detail` per region. ADetailer seeds each
+    #: region `all_seeds[image] + region` and picks its `[SEP]` prompt by
+    #: region (`!adetailer.py` `get_seed`, `fix_p2`, `get_each_tab_seed`).
+    image_index: int = 0
+    region_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -129,6 +139,9 @@ class SlotOutcome:
     #: none of the owner's mask lies near them. Recorded only when non-zero,
     #: so a job without that filter keeps its metadata exactly as before.
     outside_mask: int = 0
+    #: Word Detail: why a word slot found nothing, when it did not (no
+    #: capture, a word the prompt does not have). Recorded only when set.
+    note: str = ""
 
     def describe(self) -> dict[str, Any]:
         described = {
@@ -140,6 +153,8 @@ class SlotOutcome:
         }
         if self.outside_mask:
             described["outside_mask"] = self.outside_mask
+        if self.note:
+            described["note"] = self.note
         return described
 
 
@@ -156,6 +171,7 @@ def run_auto_detail(
     on_slot_start: Callable[[SlotSpec], None] | None = None,
     cancelled: Callable[[], bool] = _never_cancelled,
     keep_region: Callable[[Any, SlotSpec], bool] | None = None,
+    detect_words: Callable[[SlotSpec, Any], tuple[Any, str]] | None = None,
 ) -> tuple[list[Any], tuple[SlotOutcome, ...]]:
     """Run the enabled slots over `images`, in order. Returns the new images.
 
@@ -168,6 +184,12 @@ def run_auto_detail(
     owner's mask does not reach, whose detail the outside-mask clip would
     throw away (tester request, 2026-10-10). Every pass uses the same seed,
     so skipping one region does not change any other.
+
+    Word Detail: a slot with `words` asks `detect_words(slot, image)` instead
+    of `detect`, for `(DetectionResult or None, note)`. None is a slot that
+    found nothing, with the note saying why (no capture, a word the prompt
+    does not have) -- a named outcome, never a guessed region. Without a
+    `detect_words` the slot finds nothing and says so.
     """
 
     from .detector_adapter import (
@@ -188,7 +210,7 @@ def run_auto_detail(
             # did not run would put a detector name in the metadata of a
             # result it never touched.
             continue
-        if not slot.detector_path:
+        if not slot.words and not slot.detector_path:
             raise HeadlessError(
                 DETECTOR_UNRESOLVED,
                 f"Auto Detail slot {slot.index} names a detector that was "
@@ -202,17 +224,37 @@ def run_auto_detail(
         regions = 0
         outside = 0
         detailed = False
+        notes: list[str] = []
         for position, image in enumerate(current):
-            found = detect(
-                slot.detector_path, image, confidence=slot.confidence
-            )
+            if slot.words:
+                # The capture records the batch's FIRST picture only
+                # (`attention_capture._cond_rows`, row 0); using it on the
+                # others would detail a region that is not theirs.
+                if position > 0:
+                    found, note = None, "only the batch's first picture has word data"
+                elif detect_words is None:
+                    found, note = None, "Word Detail needs this job's heatmap capture"
+                else:
+                    found, note = detect_words(slot, image)
+                if note and note not in notes:
+                    notes.append(note)
+                if found is None:
+                    continue
+            else:
+                found = detect(
+                    slot.detector_path, image, confidence=slot.confidence
+                )
             candidates += len(found)
 
             found = filter_by_ratio(found, slot.min_ratio, slot.max_ratio)
-            # Sorted BEFORE the k-filter, matching upstream: "keep the largest
-            # two" is meaningless unless the order is defined first.
-            found = sort_bboxes(found, SortBy.AREA)
+            # ADetailer's order (`!adetailer.py` `pred_preprocessing`): the
+            # k-filter, which orders the kept regions largest first only when
+            # k > 0, then `sort_bboxes` by the `ad_bbox_sortby` option, whose
+            # default is "None". So with k = 0 the detector's own order stands.
+            # This used to sort by area first and called that upstream's; it is
+            # not, and with a seed per region the order decides each region's.
             found = filter_k_largest(found, slot.top_k)
+            found = sort_bboxes(found, SortBy.NONE)
 
             masks = mask_preprocess(
                 list(found.masks), kernel=slot.dilate_erode
@@ -222,9 +264,9 @@ def run_auto_detail(
                 outside += len(masks) - len(kept)
                 masks = kept
             regions += len(masks)
-            for mask in masks:
+            for region, mask in enumerate(masks):
                 _check_cancelled(cancelled)
-                image = detail(image, mask, slot)
+                image = detail(image, mask, replace(slot, image_index=position, region_index=region))
                 detailed = True
             current[position] = image
 
@@ -236,6 +278,7 @@ def run_auto_detail(
                 regions=regions,
                 detailed=detailed,
                 outside_mask=outside,
+                note="; ".join(notes),
             )
         )
 

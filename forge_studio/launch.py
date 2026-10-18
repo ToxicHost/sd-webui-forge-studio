@@ -190,6 +190,12 @@ def load_config(path: Path) -> dict[str, Any]:
     # not be possible at all, not as the safety measure itself.
     filesystem_browser_enabled = browser.get("enabled", True) is not False
 
+    # "Allow network model folders". Default OFF and only a literal `true`
+    # turns it on: the Settings page writes this key, and a hand-typed "yes"
+    # must not open the network path. Off, every network folder is refused
+    # exactly as before the opt-in existed.
+    allow_network_model_roots = raw.get("allow_network_model_roots") is True
+
     access = raw.get("load_access", {})
     if not isinstance(access, dict):
         raise _fail("load_access must be an object when present.")
@@ -259,6 +265,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "model_roots": model_roots,
         "model_roots_refusal": model_roots_refusal,
         "filesystem_browser_enabled": filesystem_browser_enabled,
+        "allow_network_model_roots": allow_network_model_roots,
         "last_model_selection": last_model_selection,
         "legacy_keys": legacy_keys,
         "timeout_seconds": timeout,
@@ -492,7 +499,10 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
     from forge_headless.model_roots import ModelRootRegistry
     from forge_studio.model_root_settings import ModelRootSettings
 
-    registry = ModelRootRegistry(workspace_root=WORKSPACE_ROOT)
+    registry = ModelRootRegistry(
+        workspace_root=WORKSPACE_ROOT,
+        allow_network=config.get("allow_network_model_roots", False),
+    )
     # Tolerant at startup only: a model directory renamed since last launch must
     # not stop Studio from starting, because the owner needs the app running in
     # order to correct it. The Settings write is all-or-nothing instead.
@@ -522,8 +532,14 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
                 "be used; check them in Settings.",
                 role,
                 entry.entry_count,
-                sum(1 for root in entry.roots if root.status == "refused"),
+                sum(1 for root in entry.roots if root.status != "ready"),
                 len(entry.roots),
+            )
+        elif entry.status == "unreachable":
+            logger.warning(
+                "Model directory for %s is a network folder that is not "
+                "answering; Rescan in Settings once its machine is on.",
+                role,
             )
         elif entry.status == "ready":
             logger.info("Model directory for %s: %d found.", role, entry.entry_count)

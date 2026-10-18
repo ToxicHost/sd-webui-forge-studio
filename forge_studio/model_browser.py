@@ -59,6 +59,56 @@ def model_file(registry: Any, role: str, model_id: str) -> Path | None:
         return None
 
 
+def on_model(registry: Any, role: str, model_id: str, key: Any, work: Any,
+             default: Any = None) -> Any:
+    """`work(path)` for the file behind one id; `path` as `model_file` gives it.
+
+    On a local folder this IS `work(model_file(...))`. On a network folder
+    (the owner's "Allow network model folders") the registry runs the resolve
+    and `work` as one bounded call, remembered under `key` until the next
+    rescan -- so a browse does not re-touch the share, and a share that stops
+    answering costs one timeout, after which every card gets `default` at once.
+    """
+
+    toucher = getattr(registry, "touch_model", None)
+    if toucher is None or role not in BROWSER_ROLES or not model_id:
+        return work(model_file(registry, role, model_id))
+    return toucher(role, str(model_id), key, work, default)
+
+
+#: `on_model`'s answer when a network folder did not answer in time.
+_OFFLINE = object()
+
+
+def _offline() -> BrowserRefusal:
+    return BrowserRefusal(
+        "That network folder is not answering. Try again once its machine is on.", 503)
+
+
+def _locate(registry: Any, role: str, model_id: str, missing: str) -> Path:
+    """The file behind an id, or a refusal: 404 for none, 503 for a dead share."""
+
+    path = on_model(registry, role, model_id, None, lambda found: found, default=_OFFLINE)
+    if path is _OFFLINE:
+        raise _offline()
+    if path is None:
+        raise BrowserRefusal(missing, 404)
+    return path
+
+
+def _beside(registry: Any, role: str, model_id: str, work: Any) -> Any:
+    """A write next to a model. Bounded on a network folder, and what was
+    remembered about the folder is dropped afterwards -- the write changed it."""
+
+    result = on_model(registry, role, model_id, None, lambda _found: work(), default=_OFFLINE)
+    if result is _OFFLINE:
+        raise _offline()
+    forget = getattr(registry, "forget_touches", None)
+    if forget is not None:
+        forget(role)
+    return result
+
+
 def _stem_path(path: Path) -> str:
     """`os.path.splitext(path)[0]`: only the last suffix goes."""
 
@@ -123,15 +173,13 @@ def checkpoint_listing(registry: Any) -> list[dict[str, Any]]:
         seen[label] = count + 1
         if count:
             label = f"{label} ({count + 1})"
-        path = model_file(registry, "checkpoint", entry.model_id)
         relative = PurePosixPath(str(getattr(entry, "relative_location", "") or "")
                                  .replace("\\", "/"))
         subfolder = "" if str(relative.parent) == "." else str(relative.parent)
-        try:
-            mtime = path.stat().st_mtime if path else 0
-        except OSError:
-            mtime = 0
-        preview = find_preview(path)
+        mtime, preview_link, base_model = on_model(
+            registry, "checkpoint", entry.model_id, "card",
+            lambda path, model_id=entry.model_id: _checkpoint_facts(model_id, path),
+            default=(0, None, ""))
         cards.append({
             "title": entry.model_id,
             "name": label,
@@ -140,12 +188,24 @@ def checkpoint_listing(registry: Any) -> list[dict[str, Any]]:
             "subfolder": subfolder,
             "size": int(getattr(entry, "size_bytes", 0) or 0),
             "mtime": mtime,
-            "preview": preview_url("checkpoint", entry.model_id, preview) if preview else None,
-            "base_model": base_model_of(path),
+            "preview": preview_link,
+            "base_model": base_model,
             "arch": "",
         })
     cards.sort(key=lambda card: (card["subfolder"].casefold(), card["name"].casefold()))
     return cards
+
+
+def _checkpoint_facts(model_id: str, path: Path | None) -> tuple[Any, Any, str]:
+    """Everything a checkpoint card reads from disk, in one call."""
+
+    try:
+        mtime = path.stat().st_mtime if path else 0
+    except OSError:
+        mtime = 0
+    preview = find_preview(path)
+    link = preview_url("checkpoint", model_id, preview) if preview else None
+    return mtime, link, base_model_of(path)
 
 
 # -- LoRA browser (P5) ----------------------------------------------------
@@ -200,36 +260,47 @@ def lora_listing(registry: Any, names: list[dict[str, Any]]) -> list[dict[str, A
                                 "activation_text": "", "preferred_weight": 0.0,
                                 "base_model": ""}
         if entry is not None:
-            path = model_file(registry, "lora", entry.model_id)
             relative = PurePosixPath(str(getattr(entry, "relative_location", "") or "")
                                      .replace("\\", "/"))
             card["subfolder"] = "" if str(relative.parent) == "." else str(relative.parent)
             card["size"] = int(getattr(entry, "size_bytes", 0) or 0)
-            if path is not None:
-                try:
-                    card["mtime"] = path.stat().st_mtime
-                except OSError:
-                    pass
-                preview = find_preview(path)
-                if preview is not None:
-                    card["preview"] = preview_url("lora", entry.model_id, preview)
-                user = _read_json(Path(_stem_path(path) + ".json"))
-                card["activation_text"] = str(user.get("activation text", "") or "")
-                try:
-                    card["preferred_weight"] = float(user.get("preferred weight", 0.0) or 0.0)
-                except (TypeError, ValueError):
-                    card["preferred_weight"] = 0.0
-                card["base_model"] = str(user.get("sd version") or "").strip()
-                helper = _read_json(Path(_stem_path(path) + ".civitai.info"))
-                if helper:
-                    if not card["base_model"]:
-                        card["base_model"] = str(helper.get("baseModel") or "")
-                    words = helper.get("trainedWords") or []
-                    if not card["activation_text"] and isinstance(words, list):
-                        card["activation_text"] = ", ".join(
-                            str(w).strip() for w in words if str(w).strip())
+            card.update(on_model(
+                registry, "lora", entry.model_id, "card",
+                lambda path, model_id=entry.model_id: _lora_facts(model_id, path),
+                default={}))
         out.append(card)
     return out
+
+
+def _lora_facts(model_id: str, path: Path | None) -> dict[str, Any]:
+    """Everything a LoRA card reads from disk, in one call. {} for no file."""
+
+    facts: dict[str, Any] = {}
+    if path is None:
+        return facts
+    try:
+        facts["mtime"] = path.stat().st_mtime
+    except OSError:
+        pass
+    preview = find_preview(path)
+    if preview is not None:
+        facts["preview"] = preview_url("lora", model_id, preview)
+    user = _read_json(Path(_stem_path(path) + ".json"))
+    facts["activation_text"] = str(user.get("activation text", "") or "")
+    try:
+        facts["preferred_weight"] = float(user.get("preferred weight", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        facts["preferred_weight"] = 0.0
+    facts["base_model"] = str(user.get("sd version") or "").strip()
+    helper = _read_json(Path(_stem_path(path) + ".civitai.info"))
+    if helper:
+        if not facts["base_model"]:
+            facts["base_model"] = str(helper.get("baseModel") or "")
+        words = helper.get("trainedWords") or []
+        if not facts["activation_text"] and isinstance(words, list):
+            facts["activation_text"] = ", ".join(
+                str(w).strip() for w in words if str(w).strip())
+    return facts
 
 
 def save_lora_metadata(registry: Any, body: dict[str, Any]) -> None:
@@ -237,15 +308,18 @@ def save_lora_metadata(registry: Any, body: dict[str, Any]) -> None:
     only the provided keys are written into `<stem>.json`, everything else in
     it is kept, an empty string clears a field."""
 
-    import os
-    import tempfile
-
     name = str(body.get("name") or "")
     if not name:
         raise BrowserRefusal("Missing name")
-    path = model_file(registry, "lora", lora_model_id(registry, name) or "")
-    if path is None:
-        raise BrowserRefusal(f"LoRA not found: {name}", 404)
+    model_id = lora_model_id(registry, name) or ""
+    path = _locate(registry, "lora", model_id, f"LoRA not found: {name}")
+    _beside(registry, "lora", model_id, lambda: _write_lora_metadata(path, body))
+
+
+def _write_lora_metadata(path: Path, body: dict[str, Any]) -> None:
+    import os
+    import tempfile
+
     sidecar = Path(_stem_path(path) + ".json")
     meta = _read_json(sidecar)
     if "activation_text" in body:
@@ -270,7 +344,13 @@ def save_lora_metadata(registry: Any, body: dict[str, Any]) -> None:
 
 
 def read_preview(registry: Any, role: str, model_id: str) -> tuple[bytes, str] | None:
-    preview = find_preview(model_file(registry, role, model_id))
+    # Bounded on a network folder, and NOT remembered (key None): the bytes
+    # are an image, and holding every preview in memory is not a cache.
+    return on_model(registry, role, model_id, None, _preview_bytes, default=None)
+
+
+def _preview_bytes(path: Path | None) -> tuple[bytes, str] | None:
+    preview = find_preview(path)
     if preview is None:
         return None
     media = PREVIEW_MEDIA.get(preview.suffix.lower())
@@ -291,9 +371,8 @@ def save_preview(registry: Any, role: str, model_id: str, image_b64: Any) -> Non
 
     if not model_id or not image_b64:
         raise BrowserRefusal("Missing name or image_b64")
-    path = model_file(registry, role, model_id)
-    if path is None:
-        raise BrowserRefusal(f"{_ROLE_NOUN.get(role, 'Model')} not found: {model_id}", 404)
+    path = _locate(registry, role, model_id,
+                   f"{_ROLE_NOUN.get(role, 'Model')} not found: {model_id}")
     text = str(image_b64)
     if "," in text:
         text = text.split(",", 1)[1]
@@ -306,14 +385,19 @@ def save_preview(registry: Any, role: str, model_id: str, image_b64: Any) -> Non
         image.thumbnail((PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE), Image.LANCZOS)
     target = Path(_stem_path(path) + ".preview.png")
     profile = _srgb_icc_bytes()
-    try:
-        if profile:
-            image.save(target, format="PNG", icc_profile=profile)
-        else:
-            image.save(target, format="PNG")
-    except OSError as error:
-        raise BrowserRefusal(f"The preview could not be written: {error.strerror or error}.",
-                             500) from None
+
+    def write() -> None:
+        try:
+            if profile:
+                image.save(target, format="PNG", icc_profile=profile)
+            else:
+                image.save(target, format="PNG")
+        except OSError as error:
+            raise BrowserRefusal(
+                f"The preview could not be written: {error.strerror or error}.",
+                500) from None
+
+    _beside(registry, role, model_id, write)
 
 
 def delete_previews(registry: Any, role: str, model_id: str) -> bool:
@@ -321,9 +405,12 @@ def delete_previews(registry: Any, role: str, model_id: str) -> bool:
 
     if not model_id:
         raise BrowserRefusal("Missing name")
-    path = model_file(registry, role, model_id)
-    if path is None:
-        raise BrowserRefusal(f"{_ROLE_NOUN.get(role, 'Model')} not found: {model_id}", 404)
+    path = _locate(registry, role, model_id,
+                   f"{_ROLE_NOUN.get(role, 'Model')} not found: {model_id}")
+    return bool(_beside(registry, role, model_id, lambda: _unlink_previews(path)))
+
+
+def _unlink_previews(path: Path) -> bool:
     base = _stem_path(path)
     removed = False
     for suffix in PREVIEW_SIDECARS:

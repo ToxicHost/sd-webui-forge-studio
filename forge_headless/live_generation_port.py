@@ -200,6 +200,82 @@ def safe_result_name(request_id: object, *, index: int,
     return f"{cleaned or f'job-{index}'}.{extension}"
 
 
+def result_folder(result_root: Path | str, request: object) -> Path:
+    """OF1. The folder this job's picture belongs in (`output_layout`).
+
+    Read from the request's `output` group: the owner's trusted folder, the
+    layout, and the purpose (`upscaled` for the Upscale panel's refine leg).
+    No group means the defaults, which is the Extension's own setup.
+    """
+
+    from .output_layout import output_folder
+
+    output = getattr(request, "output", None)
+    # `Operation` is a str-Enum, and `str()` of one is "Operation.INPAINT",
+    # not "inpaint" -- which filed every job as img2img until the OF1 seam
+    # test drove a real inpaint body through here. The VALUE is the name.
+    operation = getattr(request, "operation", "") or "txt2img"
+    return output_folder(
+        result_root,
+        save_dir=str(getattr(output, "save_dir", "") or ""),
+        layout=str(getattr(output, "save_tree", "") or "studio"),
+        operation=str(getattr(operation, "value", operation)),
+        purpose=str(getattr(output, "purpose", "") or ""),
+    )
+
+
+def write_result(image: Any, folder: Path, *, seed: Any, extension: str,
+                 encoder_format: str = "PNG",
+                 save_kwargs: dict[str, Any] | None = None) -> Path:
+    """Write one result as `Studio-NNNNN-<seed>.<ext>` in `folder`.
+
+    Exclusive at every name: a name another writer took between the counter
+    scan and the create moves on to the next number, as the Extension's probe
+    loop does (`studio_api.py:3218-3224`), and nothing is ever overwritten.
+    """
+
+    from .contracts import HeadlessError
+    from .output_layout import write_numbered
+
+    def write(target: Path) -> None:
+        try:
+            save_result_exclusively(image, target, encoder_format=encoder_format,
+                                    save_kwargs=save_kwargs)
+        except HeadlessError as error:
+            if error.code == "GENERATION_RESULT_IDENTIFIER_COLLISION":
+                raise FileExistsError(str(target)) from None
+            raise
+
+    try:
+        return write_numbered(Path(folder), seed=seed, extension=extension, write=write)
+    except FileExistsError:
+        raise HeadlessError(
+            "GENERATION_RESULT_IDENTIFIER_COLLISION",
+            "No free result name was found in the save folder.",
+        ) from None
+    except OSError as error:
+        raise HeadlessError(
+            "GENERATION_RESULT_FOLDER_UNWRITABLE",
+            "The save folder could not be written to: "
+            f"{error.strerror or type(error).__name__}.",
+        ) from None
+
+
+def result_location(result_root: Path | str, path: Path) -> str:
+    """Where a written result is, for `GenerationOutcome`.
+
+    Root-relative when it is inside the result root, as it always was. A file
+    in a trusted folder OUTSIDE the root is absolute: there is no relative
+    spelling for it, and the location still never leaves the backend -- the
+    browser receives an opaque handle (`ResultRegistry`).
+    """
+
+    try:
+        return Path(path).resolve().relative_to(Path(result_root).resolve()).as_posix()
+    except (OSError, ValueError):
+        return str(Path(path).resolve())
+
+
 
 _SRGB_ICC_CACHE: list = []
 
@@ -380,7 +456,7 @@ def _hires_target_description(request: Any) -> str:
 
 
 def _clip_to_mask(result: Any, source_image: Any, mask: Any,
-                  mask_blur: int) -> Any:
+                  mask_blur: int, soft: bool = False) -> Any:
     """Clip stray pixel changes OUTSIDE the mask. Ported from the Extension.
 
     `StableDiffusionProcessingImg2Img` already composites its output against
@@ -420,6 +496,12 @@ def _clip_to_mask(result: Any, source_image: Any, mask: Any,
         if mask_blur > 0:
             clip = clip.filter(ImageFilter.GaussianBlur(radius=mask_blur * 3))
             clip = clip.point(lambda value: 255 if value > 1 else 0)
+        elif soft:
+            # S1: a soft mask's grey is Neo's to blend (Soft Inpainting's
+            # overlay). Compositing with it here as well would square it --
+            # the M * M above -- so with no blur the clip is where the mask
+            # covers anything at all.
+            clip = clip.point(lambda value: 255 if value > 0 else 0)
         return Image.composite(result, original, clip)
     except Exception:  # noqa: BLE001 - see the docstring
         return result
@@ -619,6 +701,46 @@ def _soft_inpainting_bridge(request: Any, is_inpaint: bool) -> Any:
     return SoftInpaintingBridge(settings)
 
 
+def _neo_prompt(text: str) -> str:
+    """A prompt as Neo conditions on it: comments removed.
+
+    Neo's always-on `ScriptComments` (`modules/processing_scripts/
+    comments.py`, option `enable_prompt_comments`, on by default) strips
+    `/* ... */`, `# ...` and `// ...` from every prompt in `process()`. Studio
+    builds its processing objects with no script runner, so a comment reached
+    the model as text. The same two expressions as Neo's `strip_comments`,
+    which is not imported because its module registers options through
+    `modules.scripts` at import.
+    """
+
+    import re
+    import sys
+
+    # Only if Neo is already loaded, as it is for every live job: importing
+    # `modules.shared` runs Neo's argument parser, which exits on an argv it
+    # does not know. Absent, Neo's default -- on -- applies.
+    shared = sys.modules.get("modules.shared")
+    if shared is not None and not getattr(getattr(shared, "opts", None), "enable_prompt_comments", True):
+        return text
+    text = re.sub(r"\/\*.*?\*\/", "", text, flags=re.DOTALL)
+    return re.sub(r"[^\S\n]*(\#|\/\/).*", "", text)
+
+
+def _ad_prompt(slot_prompt: str, main: str, region: int) -> str:
+    """ADetailer's prompt for one detected region (`!adetailer.py`
+    `_get_prompt` and `i2i_prompts_replace`): the slot prompt split on
+    [SEP], the region's part (the last repeats); an empty part is the main
+    prompt and [PROMPT] inside one is replaced by it."""
+
+    import re
+
+    parts = re.split(r"\s*\[SEP\]\s*", slot_prompt)
+    part = parts[min(max(0, region), len(parts) - 1)]
+    if not part:
+        return main
+    return part.replace("[PROMPT]", main) if "[PROMPT]" in part else part
+
+
 def _inpaint_kwargs(request: Any, source: Any) -> dict[str, Any]:
     """Studio's inpaint options, in the engine's spelling.
 
@@ -686,9 +808,16 @@ def _hires_kwargs(request: Any) -> dict[str, Any]:
         "denoising_strength": float(getattr(request, "hr_denoising_strength", 0.7)),
         "hr_sampler_name": (getattr(request, "hr_sampler_name", "") or None),
         "hr_scheduler": (getattr(request, "hr_scheduler", "") or None),
-        "hr_prompt": str(getattr(request, "hr_prompt", "") or ""),
-        "hr_negative_prompt": str(getattr(request, "hr_negative_prompt", "") or ""),
+        "hr_prompt": _neo_prompt(str(getattr(request, "hr_prompt", "") or "")),
+        "hr_negative_prompt": _neo_prompt(str(getattr(request, "hr_negative_prompt", "") or "")),
         "hr_cfg": float(getattr(request, "hr_cfg", 0.0) or 0.0),
+        # The BASE pass's shift, not Neo's dataclass default. `sample_hr_pass`
+        # calls `set_shift(shift=self.hr_distilled_cfg)` and the field defaults
+        # to 3.5, so leaving it out ran every Anima Hires pass at 3.5 after a
+        # base pass at 3.0. Neo's own Anima preset sets both to the same value
+        # (`presets.py` SHIFT[anima] = 3.0 feeds `t2i_dcfg` and `t2i_hr_dcfg`);
+        # the Extension sets neither. Evidence/source-review/anima-hires-shift.md.
+        "hr_distilled_cfg": float(getattr(request, "distilled_cfg_scale", 3.0)),
         "hr_additional_modules": ["Use same choices"],
     }
 
@@ -1036,6 +1165,8 @@ class StudioLiveGenerationPort:
             path = pending_path(self._sidecar_root, str(getattr(request, "request_id", "") or ""))
             if path is not None:
                 attention_capture.write_sidecar(result, path)
+                # Word Detail reads this job's own capture (`_auto_detail`).
+                self._job_capture = path
         except Exception as exc:  # noqa: BLE001 - see the docstring
             import logging
 
@@ -1228,14 +1359,19 @@ class StudioLiveGenerationPort:
                 else {
                     "enable_hr": bool(getattr(request, "enable_hr", False)),
                     **_hires_kwargs(request),
+                    # The family's shift for the Hires pass too (Neo's
+                    # `t2i_hr_dcfg`, the same preset value as the base).
+                    **({"hr_distilled_cfg": self._shift(request)}
+                       if getattr(request, "enable_hr", False) else {}),
                 }
             )
             processing = processing_class(
                 sd_model=engine,
                 outpath_samples=str(self._result_root),
                 outpath_grids=str(self._result_root),
-                prompt=request.positive_prompt,  # type: ignore[attr-defined]
-                negative_prompt=request.negative_prompt,  # type: ignore[attr-defined]
+                # Comments stripped, as Neo's always-on script does.
+                prompt=_neo_prompt(request.positive_prompt),  # type: ignore[attr-defined]
+                negative_prompt=_neo_prompt(request.negative_prompt),  # type: ignore[attr-defined]
                 seed=int(request.seed),  # type: ignore[attr-defined]
                 # The owner's variation, not a pin. This was `-1` while the
                 # page shipped an Extra panel with a variation seed, a strength
@@ -1253,7 +1389,8 @@ class StudioLiveGenerationPort:
                 n_iter=1,
                 steps=int(request.steps),  # type: ignore[attr-defined]
                 cfg_scale=float(request.cfg_scale),  # type: ignore[attr-defined]
-                distilled_cfg_scale=float(request.distilled_cfg_scale),  # type: ignore[attr-defined]
+                # The loaded family's shift, as Neo's preset gives it.
+                distilled_cfg_scale=self._shift(request),
                 width=int(request.width),  # type: ignore[attr-defined]
                 height=int(request.height),  # type: ignore[attr-defined]
                 # `getattr`, not attribute access: a request reaching this port
@@ -1285,12 +1422,21 @@ class StudioLiveGenerationPort:
             # configured roots are reachable, and because a Studio that never
             # generates should not pay for a directory scan.
             _arm_lora_support(request)
+            # EMB. An embedding added since the model loaded is read now, on
+            # this thread, before any prompt is encoded (`embedding_roots`).
+            try:
+                from . import embedding_roots
+
+                embedding_roots.refresh(self._engine)
+            except Exception:  # noqa: BLE001 - an embedding scan never fails a job
+                pass
             # HM1. Mark THIS processing object -- the main pass -- for the
             # attention capture. Neo's Hires pass is flagged `is_hr_pass` on
             # the same object and is skipped; Studio's img2img Hires and the
             # Auto Detail passes build their own objects and are never marked.
             capture_wanted = self._sidecar_root is not None and bool(
                 getattr(request, "attention_capture_requested", True))
+            self._job_capture = None     # Word Detail: never a previous job's
             if capture_wanted:
                 from .attention_capture import MARK, take
 
@@ -1322,6 +1468,9 @@ class StudioLiveGenerationPort:
             # A no-op for txt2img, where Neo's built-in `enable_hr` already ran
             # the second pass inside `process_images_inner` above.
             self._img2img_hires(request, source, processed, progress)
+            # Outpaint's optional refine (CT9), on the same rule: before the
+            # clip, so the clip follows the last pass that changes pixels.
+            self._inpaint_refine(request, source, processed)
             self._clip_inpaint(request, processed)
             hires_on = bool(getattr(processing, "enable_hr", False))
             telemetry.stop(
@@ -1430,9 +1579,11 @@ class StudioLiveGenerationPort:
         images = list(getattr(processed, "images", ()) or ())
         if not images:
             return
-        blur = int(getattr(getattr(request, "inpaint", None), "mask_blur", 4) or 0)
+        options = getattr(request, "inpaint", None)
+        blur = int(getattr(options, "mask_blur", 4) or 0)
+        soft = getattr(options, "soft", None) is not None
         processed.images = [
-            _clip_to_mask(image, source.image, mask, blur) for image in images
+            _clip_to_mask(image, source.image, mask, blur, soft) for image in images
         ]
 
     def _auto_detail(
@@ -1487,6 +1638,38 @@ class StudioLiveGenerationPort:
 
             return run_detect(detector_path, image, confidence=confidence)
 
+        capture = getattr(self, "_job_capture", None)
+        request_id = str(getattr(request, "request_id", "") or "job")
+
+        def detect_words(slot: object, image: object):
+            """Word Detail (S8b): the slot's words' Object mask from THIS
+            job's capture (MobileSAM on the CPU, offline), as one region."""
+            from pathlib import Path
+
+            from .detector_adapter import DetectionResult
+
+            if capture is None or not Path(capture).is_file():
+                return None, "Word Detail needs this job's heatmap capture (it is off or this model has none)"
+            from . import word_masks
+
+            key = f"word-detail:{request_id}:{int(getattr(slot, 'index', 0))}:{id(image)}"
+            try:
+                mask, used, missing = word_masks.object_mask(
+                    key, Path(capture), image, list(getattr(slot, "words", ())),
+                    app_root=Path(__file__).resolve().parents[1])
+            except word_masks.WordMaskError as error:
+                return None, f"Word Detail: {error}"
+            except Exception as error:  # noqa: BLE001 - the picture is made; a slot is not worth it
+                return None, f"Word Detail could not run: {type(error).__name__}"
+            note = ("not in the prompt: " + ", ".join(missing)) if missing else ""
+            if mask is None:
+                return None, note or "Word Detail found nothing"
+            box = mask.getbbox()
+            if box is None:
+                return None, "Word Detail found nothing for " + ", ".join(used)
+            return DetectionResult(bboxes=[[float(v) for v in box]], masks=[mask],
+                                   confidences=[1.0], image_size=image.size), note
+
         detailed, outcomes = run_auto_detail(
             images,
             slots,
@@ -1497,6 +1680,7 @@ class StudioLiveGenerationPort:
             on_slot_start=on_slot_start,
             cancelled=cancelled,
             keep_region=_inpaint_region_filter(request, images[0].size),
+            detect_words=detect_words,
         )
         # In place, so `_publish` reads the detailed image without knowing a
         # detector ever ran.
@@ -1593,8 +1777,8 @@ class StudioLiveGenerationPort:
             sd_model=self._engine,
             outpath_samples=str(self._result_root),
             outpath_grids=str(self._result_root),
-            prompt=prompt,
-            negative_prompt=negative,
+            prompt=_neo_prompt(prompt),
+            negative_prompt=_neo_prompt(negative),
             # The SAME seed as the base pass. A second pass that reseeded would
             # make a fixed-seed job irreproducible at exactly the point the
             # owner cares about.
@@ -1608,8 +1792,7 @@ class StudioLiveGenerationPort:
             n_iter=1,
             steps=steps,
             cfg_scale=cfg,
-            distilled_cfg_scale=float(
-                getattr(request, "distilled_cfg_scale", 3.0)),
+            distilled_cfg_scale=self._shift(request),
             width=target_width,
             height=target_height,
             init_images=[upscaled],
@@ -1647,6 +1830,102 @@ class StudioLiveGenerationPort:
             # `_clip_inpaint` follow.
             processed.images = [results[0]] + images[1:]
 
+    def _shift(self, request) -> float:
+        """The shift (or distilled guidance) every pass of this job uses: the
+        loaded family's, as Neo's UI preset gives it (`family_shift`), or the
+        request's own value for an engine Neo's presets do not name."""
+
+        from .family_shift import family_shift
+
+        return family_shift(getattr(self, "_engine", None),
+                            float(getattr(request, "distilled_cfg_scale", 3.0)))
+
+    def _inpaint_refine(self, request, source, processed) -> None:
+        """Outpaint's "Refine new area" (CT9; owner, 2026-10-16: "Refine
+        optional"), in place. A no-op unless the job's inpaint group carries
+        `refine`.
+
+        The outpaint job generated the whole canvas at the model's own size
+        and Neo pasted the masked area back at full size, so the new area is
+        coherent but softer than the picture beside it. This re-denoises that
+        area lightly through Neo's own Only masked (`processing.py`
+        inpaint_full_res: crop around the mask, widened to `width` x `height`'s
+        aspect, worked on at that size, pasted back), with the page choosing
+        the size so the crop is about 1:1. Measured before it was built:
+        +8.2 s on a 1792 x 1536 Anima outpaint, no seam
+        (gpu-proof-2026-10-16/op-run2.txt).
+
+        A fresh processing object, as `_img2img_hires` and `_detail_pass` use:
+        the same prompt, seed, sampler, steps and CFG as the job, the same
+        mask and blur, fill "original" (it refines what the first pass made),
+        no padding.
+        """
+
+        options = getattr(request, "inpaint", None)
+        refine = getattr(options, "refine", None)
+        if refine is None or source is None:
+            return
+        mask = getattr(source, "mask", None)
+        if mask is None or not getattr(source, "mask_present", False):
+            return
+        images = list(getattr(processed, "images", ()) or ())
+        if not images:
+            return
+
+        from modules.processing import (
+            StableDiffusionProcessingImg2Img,
+            process_images_inner,
+        )
+
+        image = images[0]
+        if mask.size != image.size:
+            from PIL import Image as _Image
+
+            mask = mask.convert("L").resize(image.size, _Image.LANCZOS)
+        width, height = int(refine.width), int(refine.height)
+        pass_ = StableDiffusionProcessingImg2Img(
+            sd_model=self._engine,
+            outpath_samples=str(self._result_root),
+            outpath_grids=str(self._result_root),
+            prompt=_neo_prompt(str(getattr(request, "positive_prompt", ""))),
+            negative_prompt=_neo_prompt(str(getattr(request, "negative_prompt", ""))),
+            seed=int(getattr(request, "seed", 0)),
+            subseed=-1,
+            sampler_name=getattr(request, "sampler", None),
+            scheduler=getattr(request, "scheduler", None),
+            batch_size=1,
+            n_iter=1,
+            steps=int(getattr(request, "steps", 20)),
+            cfg_scale=float(getattr(request, "cfg_scale", 7.0)),
+            distilled_cfg_scale=self._shift(request),
+            width=width,
+            height=height,
+            init_images=[image],
+            denoising_strength=float(refine.denoising_strength),
+            do_not_save_samples=True,
+            do_not_save_grid=True,
+            override_settings={},
+            mask=mask,
+            mask_blur=int(getattr(options, "mask_blur", 4) or 0),
+            inpainting_fill=1,
+            inpaint_full_res=True,
+            inpaint_full_res_padding=0,
+            inpainting_mask_invert=1 if getattr(options, "invert", False) else 0,
+        )
+        pass_.scripts = _soft_inpainting_bridge(request, True)
+
+        telemetry = getattr(self, "telemetry", None)
+        if telemetry is not None:
+            telemetry.start("inpaint_refine")
+        try:
+            second = process_images_inner(pass_)
+        finally:
+            if telemetry is not None:
+                telemetry.stop("inpaint_refine", width=width, height=height)
+        results = list(getattr(second, "images", ()) or ())
+        if results:
+            processed.images = [results[0]] + images[1:]
+
     def _detail_pass(
         self,
         request: object,
@@ -1677,12 +1956,25 @@ class StudioLiveGenerationPort:
         cfg = float(getattr(slot, "cfg", 0.0)) or float(
             getattr(request, "cfg_scale", 7.0)
         )
-        prompt = str(getattr(slot, "prompt", "") or "") or str(
-            getattr(request, "positive_prompt", "")
-        )
-        negative = str(getattr(slot, "negative_prompt", "") or "") or str(
-            getattr(request, "negative_prompt", "")
-        )
+        # ADetailer's prompt rule (`!adetailer.py` `_get_prompt`,
+        # `i2i_prompts_replace`): the slot prompt split on [SEP], one part per
+        # region (the last repeats); an empty part is the main prompt, and
+        # [PROMPT] inside one is replaced by it. This used to send the slot
+        # prompt as typed -- "[PROMPT]" reached the model as text, and a slot
+        # whose only text was its LoRA lost the main prompt altogether.
+        region = int(getattr(slot, "region_index", 0) or 0)
+        prompt = _ad_prompt(str(getattr(slot, "prompt", "") or ""),
+                            str(getattr(request, "positive_prompt", "")), region)
+        negative = _ad_prompt(str(getattr(slot, "negative_prompt", "") or ""),
+                              str(getattr(request, "negative_prompt", "")), region)
+        # ADetailer's seed (`get_seed`, `fix_p2`, `get_each_tab_seed` with
+        # `ad_same_seed_for_each_tab` off by default): the batch picture's own
+        # seed, plus the region's number. Every region of every picture used
+        # to get the job's first seed.
+        picture = int(getattr(slot, "image_index", 0) or 0)
+        seeds = list(getattr(processing, "all_seeds", None) or [])
+        seed = (int(seeds[picture % len(seeds)]) if seeds
+                else int(getattr(request, "seed", 0)) + picture) + region
 
         # Named before use so the telemetry can record what was ACTUALLY
         # denoised rather than what was asked for. The frame handed in is the
@@ -1701,9 +1993,9 @@ class StudioLiveGenerationPort:
             sd_model=self._engine,
             outpath_samples=str(self._result_root),
             outpath_grids=str(self._result_root),
-            prompt=prompt,
-            negative_prompt=negative,
-            seed=int(getattr(request, "seed", 0)),
+            prompt=_neo_prompt(prompt),
+            negative_prompt=_neo_prompt(negative),
+            seed=seed,
             # STILL PINNED, deliberately. This is the Auto Detail detail pass,
             # not the base image. Whether an owner's variation seed should also
             # perturb each detected region's inpaint is a product question --
@@ -1718,7 +2010,7 @@ class StudioLiveGenerationPort:
             n_iter=1,
             steps=steps,
             cfg_scale=cfg,
-            distilled_cfg_scale=float(getattr(request, "distilled_cfg_scale", 3.0)),
+            distilled_cfg_scale=self._shift(request),
             # THE BASE SIZE, not the image's own. This is the single line
             # that made Auto Detail 4.4x slower than Neo's.
             #
@@ -1757,7 +2049,10 @@ class StudioLiveGenerationPort:
             do_not_save_grid=True,
             override_settings={},
         )
-        pass_.scripts = None  # type: ignore[attr-defined]
+        # Soft Inpainting carries over, as ADetailer keeps the soft-inpainting
+        # always-on script for its pass (`script_filter`); None when the job
+        # has none, which is every non-inpaint job.
+        pass_.scripts = _soft_inpainting_bridge(request, True)  # type: ignore[attr-defined]
         # The detail preparation ends HERE -- detection, the crop, the mask
         # and the conditioning setup are done, and the first region is about
         # to denoise. Everything charged to `prepare_detail` is therefore work
@@ -1812,12 +2107,8 @@ class StudioLiveGenerationPort:
 
         # The owner's chosen format, resolved ONCE so the name, the encoder
         # and the reported media type cannot disagree with each other.
-        encoder_format, extension, media_type = resolve_output_format(
-            getattr(request, "output", None))
-        name = safe_result_name(
-            getattr(request, "request_id", ""), index=self.generate_calls,
-            extension=extension,
-        )
+        output = getattr(request, "output", None)
+        encoder_format, extension, media_type = resolve_output_format(output)
         # The engine's own parameter string, taken rather than rebuilt.
         # `process_images_inner` already called `create_infotext` for this
         # image (`processing.py:1118-1119`) and handed it back here; Studio
@@ -1827,31 +2118,36 @@ class StudioLiveGenerationPort:
         infotext = str(infotexts[0]) if infotexts else ""
 
         image = _stamped(images[0], request)
+        seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))
 
-        self._result_root.mkdir(parents=True, exist_ok=True)
-        save_result_exclusively(
-            image, self._result_root / name,
+        # OF1. The owner's Save folder and layout, or the Extension's default
+        # `<result root>/studio/<mode>/<date>`. The folder arrived already
+        # trusted by Studio (`forge_studio/save_roots.py`); this only arranges
+        # it. It was `self._result_root / "<request id>.png"`, always, so the
+        # setting reached nothing.
+        path = write_result(
+            image,
+            result_folder(self._result_root, request),
+            seed=seed,
+            extension=extension,
             encoder_format=encoder_format,
             save_kwargs={
-                **output_save_kwargs(getattr(request, "output", None),
-                                     encoder_format),
+                **output_save_kwargs(output, encoder_format),
                 # Merged rather than passed separately so there is one
                 # save call and one set of encoder arguments. The two
                 # groups cannot collide: `pnginfo`/`exif` are metadata
                 # containers, and nothing above emits either.
-                **metadata_save_kwargs(infotext, encoder_format,
-                                       getattr(request, "output", None)),
+                **metadata_save_kwargs(infotext, encoder_format, output),
             },
         )
         width, height = image.size
 
-        seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))
         progress.mark_completed()  # type: ignore[attr-defined]
 
         return GenerationOutcome(
             job_id=request.request_id,  # type: ignore[attr-defined]
             request_id=request.request_id,  # type: ignore[attr-defined]
-            result_relative_location=name,
+            result_relative_location=result_location(self._result_root, path),
             # From the same row as the extension above. A `.jpg` reported as
             # `image/png` is the failure this feature is most likely to
             # produce, and taking both from one table makes it inexpressible.
@@ -1870,6 +2166,9 @@ class StudioLiveGenerationPort:
 
 __all__ = (
     "StudioLiveGenerationPort",
+    "result_folder",
+    "result_location",
     "safe_result_name",
     "save_result_exclusively",
+    "write_result",
 )

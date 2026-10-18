@@ -9,7 +9,9 @@
  *   - The compositor (canvas-core.js#_applyDevelop) calls
  *     window.StudioDevelop.applyToContext(ctx, w, h, params) at the end of
  *     every composite, after all layers, before UI overlays.
- *   - Develop is NOT a layer, NOT maskable, ALWAYS runs last.
+ *   - Develop is NOT a layer and ALWAYS runs last. Its global pass is not
+ *     maskable; LOCAL ADJUSTMENTS (M4, after the global pass) each apply a
+ *     few sliders through a named mask (see _applyLocal).
  *
  * Pipeline stages (see _applyDevelopFull below):
  *   A. Per-channel Float32 LUT: linearize → WB scale → exposure
@@ -30,7 +32,7 @@
 "use strict";
 
 var TAG = "[Develop]";
-var VERSION = "1.0.0";
+var VERSION = "1.1.0";   // M4: local adjustments (busts develop.css)
 
 // ========================================================================
 // i18n helper — every dynamically-built label/tooltip in this module
@@ -151,6 +153,11 @@ function defaultParams() {
         calBlueHue: 0,                 // -100..100
         calBlueSat: 0,                 // -100..100
         calShadowTint: 0,              // -100..100, green↔magenta in shadows only
+
+        // === M4: local adjustments (Evidence/NAMED-MASKS-SPEC.md 7.2) ===
+        // [{id, mask, enabled, amount, settings: {temperature, ...}}], applied
+        // in order after the global pass, each through a named mask.
+        local: [],
     };
 }
 
@@ -162,6 +169,7 @@ function defaultParams() {
 // gated on the source _version BEFORE bumping _version.
 function _migrateParams(p) {
     if (!p) return;
+    if (!Array.isArray(p.local)) p.local = [];   // M4
     var defaults = defaultParams();
     // V1 → V2: fill every missing field with current defaults.
     if ((p._version | 0) < 2) {
@@ -266,6 +274,8 @@ var SECTIONS = [
 // V2: insert custom-widget sections at the correct positions:
 //   basic → toneCurve → hsl → colorGrading → detail(+nr) → effects(+presence)
 SECTIONS.splice(1, 0, { id: "toneCurve",    label: "Tone Curve",    open: false, customBuild: _buildToneCurveSection });
+// M4: local adjustments sit right after the global sliders they echo.
+SECTIONS.splice(1, 0, { id: "local",        label: "Local adjustments", open: true, customBuild: _buildLocalSection });
 SECTIONS.splice(2, 0, { id: "hsl",          label: "HSL / Color",   open: false, customBuild: _buildHSLSection });
 SECTIONS.splice(3, 0, { id: "colorGrading", label: "Color Grading", open: false, customBuild: _buildColorGradingSection });
 
@@ -322,7 +332,13 @@ function _pointsAreIdentity(pts) {
         && pts[0][0] === 0   && pts[0][1] === 0
         && pts[1][0] === 255 && pts[1][1] === 255;
 }
+// M4: the whole pipeline is the identity when the global pass is and no
+// local adjustment can act.
 function _isIdentity(p) {
+    if (!p || !p.enabled) return true;
+    return _globalIsIdentity(p) && _activeLocal(p).length === 0;
+}
+function _globalIsIdentity(p) {
     if (!p) return true;
     if (!p.enabled) return true;
     // V1
@@ -906,8 +922,10 @@ function _applyCalibration(rLin, gLin, bLin, n, p) {
 // Cache: S._developBlurCache.lumBlur is reused while Phase A inputs (and
 // canvas dims) don't change. The masks themselves recompute cheaply.
 // ========================================================================
-function _getLumBlur(rLin, gLin, bLin, w, h, sig) {
-    var S = _S();
+function _getLumBlur(rLin, gLin, bLin, w, h, sig, noCache) {
+    // M4: a local pass neither reads nor fills the cache -- it is keyed by
+    // settings, not pixels, and a local pass blurs different pixels.
+    var S = noCache ? null : _S();
     // Quarter-resolution blur. The HL/shadow mask is intentionally low-frequency
     // (large kernel, smooth gradients), so blurring at 1/4 res and indexing back
     // via (y>>2)*lw + (x>>2) is mathematically near-identical and ~16× cheaper.
@@ -1081,7 +1099,18 @@ function _lutAt(lut, y) {
 // ========================================================================
 // FULL-RESOLUTION PIPELINE
 // ========================================================================
+// M4: the full-resolution pipeline is the global pass (skipped when it is
+// the identity: `_lin2u8`'s soft shoulder means sliders at zero are not a
+// no-op), then the local adjustments.
 function _applyDevelopFull(ctx, w, h, p) {
+    if (!_globalIsIdentity(p)) _applyGlobal(ctx, w, h, p, false);
+    _applyLocal(ctx, w, h, p);
+}
+
+// The global pipeline on `ctx`. `local` (M4): a local adjustment's pass --
+// it reads the canvas, never the High-Precision float source (which holds
+// the pixels BEFORE the global pass), and bypasses the luminance-blur cache.
+function _applyGlobal(ctx, w, h, p, local) {
     var img = ctx.getImageData(0, 0, w, h);
     var d = img.data;
     var n = w * h;
@@ -1096,7 +1125,7 @@ function _applyDevelopFull(ctx, w, h, p) {
     var rLin = new Float32Array(n);
     var gLin = new Float32Array(n);
     var bLin = new Float32Array(n);
-    if (_floatSrc && _floatSrc.w === w && _floatSrc.h === h
+    if (!local && _floatSrc && _floatSrc.w === w && _floatSrc.h === h
             && _floatSrc.r && _floatSrc.r.length === n) {
         var srcR = _floatSrc.r, srcG = _floatSrc.g, srcB = _floatSrc.b;
         var expGain = Math.pow(2, (p.exposure || 0) * 5 / 100);
@@ -1147,7 +1176,7 @@ function _applyDevelopFull(ctx, w, h, p) {
     var shAmt = p.shadows | 0;
     if (hlAmt !== 0 || shAmt !== 0) {
         var wbSig = lut.sig + "|T" + (p.temperature | 0) + "|N" + (p.tint | 0);
-        var blurCache = _getLumBlur(rLin, gLin, bLin, w, h, wbSig);
+        var blurCache = _getLumBlur(rLin, gLin, bLin, w, h, wbSig, local);
         _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt);
     }
 
@@ -1325,6 +1354,91 @@ function _applyDevelopProxy(ctx, w, h, p) {
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(_proxyTmp, 0, 0, pw, ph, 0, 0, w, h);
     ctx.imageSmoothingEnabled = prevSmoothing;
+}
+
+// ========================================================================
+// M4 — LOCAL ADJUSTMENTS (Evidence/NAMED-MASKS-SPEC.md 7.2)
+//
+// After the global pass, each local adjustment in order: the pipeline with
+// only its settings runs on the CURRENT result, and the outcome is blended
+// in by the mask's coverage x amount -- Lightroom's model. Applying to the
+// whole image and then blending keeps even the neighbour-reading
+// Highlights/Shadows region-safe. A local adjustment whose mask is gone does
+// nothing (the panel says "mask missing"); it is never removed silently.
+// ========================================================================
+var LOCAL_KEYS = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows",
+                  "whites", "blacks", "vibrance", "saturation"];
+
+function _localMask(id) {
+    var S = _S();
+    if (!S || !S.masks || id == null) return null;
+    for (var i = 0; i < S.masks.length; i++) if (S.masks[i].id === id) return S.masks[i];
+    return null;
+}
+
+// The adjustments that can change anything: on, amount > 0, a setting moved,
+// and their mask present.
+function _activeLocal(p) {
+    if (!p || !Array.isArray(p.local)) return [];
+    return p.local.filter(function (a) {
+        if (!a || a.enabled === false || !((a.amount == null ? 100 : a.amount) > 0)) return false;
+        var st = a.settings || {};
+        var moved = LOCAL_KEYS.some(function (k) { return (st[k] | 0) !== 0; });
+        return moved && !!_localMask(a.mask);
+    });
+}
+
+// The mask's coverage (0..255) at `w` x `h`: the document's own, or sampled
+// (nearest) for a drag-time proxy.
+function _localCoverage(id, w, h) {
+    var C = window.StudioCore, S = _S();
+    var full = C && C.maskCoverage ? C.maskCoverage(id) : null;
+    if (!full) return null;
+    if (w === S.W && h === S.H) return full;
+    var out = new Uint8Array(w * h);
+    for (var y = 0; y < h; y++) {
+        var sy = Math.min(S.H - 1, Math.floor((y + 0.5) * S.H / h));
+        for (var x = 0; x < w; x++) {
+            var sx = Math.min(S.W - 1, Math.floor((x + 0.5) * S.W / w));
+            out[y * w + x] = full[sy * S.W + sx];
+        }
+    }
+    return out;
+}
+
+var _localTmp = null;
+function _applyLocal(ctx, w, h, p) {
+    var list = _activeLocal(p);
+    if (!list.length) return;
+    var current = ctx.getImageData(0, 0, w, h);
+    if (!_localTmp) _localTmp = document.createElement("canvas");
+    if (_localTmp.width !== w) _localTmp.width = w;
+    if (_localTmp.height !== h) _localTmp.height = h;
+    var tx = _localTmp.getContext("2d", { colorSpace: "srgb" });
+    for (var i = 0; i < list.length; i++) {
+        var a = list[i];
+        var cov = _localCoverage(a.mask, w, h);
+        if (!cov) continue;
+        var lp = defaultParams();
+        lp.enabled = true;
+        for (var k = 0; k < LOCAL_KEYS.length; k++) {
+            var key = LOCAL_KEYS[k];
+            lp[key] = (a.settings && a.settings[key]) | 0;
+        }
+        tx.putImageData(current, 0, 0);
+        _applyGlobal(tx, w, h, lp, true);
+        var cand = tx.getImageData(0, 0, w, h).data;
+        var d = current.data, amt = Math.max(0, Math.min(100, a.amount == null ? 100 : a.amount)) / 100;
+        for (var q = 0, j = 0; q < cov.length; q++, j += 4) {
+            var t = cov[q] * amt / 255;
+            if (t <= 0) continue;
+            if (t >= 1) { d[j] = cand[j]; d[j + 1] = cand[j + 1]; d[j + 2] = cand[j + 2]; continue; }
+            d[j]     = Math.round(d[j]     + (cand[j]     - d[j])     * t);
+            d[j + 1] = Math.round(d[j + 1] + (cand[j + 1] - d[j + 1]) * t);
+            d[j + 2] = Math.round(d[j + 2] + (cand[j + 2] - d[j + 2]) * t);
+        }
+    }
+    ctx.putImageData(current, 0, 0);
 }
 
 // ========================================================================
@@ -2393,7 +2507,11 @@ var _floatSrc = null;
 var _floatSrcLoading = null;
 var _hpBadge = null;
 
-function _showPanel() { if (_panel) _panel.classList.add("visible"); }
+function _showPanel() {
+    if (_panel) _panel.classList.add("visible");
+    // M4: masks may have been made, renamed or deleted in the Canvas meanwhile.
+    _renderLocal();
+}
 function _hidePanel() { if (_panel) _panel.classList.remove("visible"); }
 
 // Element registry — populated during _buildPanel, used by syncPanel
@@ -3629,6 +3747,172 @@ function _buildSliderRow(field) {
 }
 
 // ========================================================================
+// M4 — LOCAL ADJUSTMENTS PANEL
+//
+// Each adjustment chooses a named mask HERE, from the document's masks. It
+// never selects it in the Masks panel: the selected mask is what the next
+// inpaint sends (M3), and choosing a mask for Develop must not change that.
+// A mask that is gone shows "mask missing" and the adjustment does nothing
+// until another is chosen. Names are text only (a mask may be named after a
+// prompt word).
+// ========================================================================
+var LOCAL_ROWS = [
+    { key: "temperature", label: "Temperature" }, { key: "tint", label: "Tint" },
+    { key: "exposure", label: "Exposure" }, { key: "contrast", label: "Contrast" },
+    { key: "highlights", label: "Highlights" }, { key: "shadows", label: "Shadows" },
+    { key: "whites", label: "Whites" }, { key: "blacks", label: "Blacks" },
+    { key: "vibrance", label: "Vibrance" }, { key: "saturation", label: "Saturation" },
+];
+var _localListEl = null;
+
+function _localParams() {
+    var S = _S(); if (!S) return null;
+    if (!S.developParams) S.developParams = defaultParams();
+    _migrateParams(S.developParams);
+    return S.developParams;
+}
+
+// A change to a local adjustment: live while dragging, an undo step on release.
+function _localChanged(live, label) {
+    var p = _localParams(); if (!p) return;
+    if (!p.enabled) { p.enabled = true; if (_enableToggleEl) _enableToggleEl.classList.add("on"); }
+    if (live) { _scheduleProxyRedraw(); return; }
+    recordUndo(label || "Develop: Local adjustment");
+    _scheduleFullRedraw();
+}
+
+function _localMaskOptions(select, adj) {
+    var S = _S(), masks = (S && S.masks) || [];
+    select.replaceChildren();
+    if (!masks.some(function (m) { return m.id === adj.mask; })) {
+        var gone = document.createElement("option");
+        gone.value = ""; gone.textContent = adj.mask == null ? "Choose a mask" : "Mask missing";
+        gone.selected = true;
+        select.appendChild(gone);
+    }
+    masks.forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = String(m.id); o.textContent = m.name;
+        o.selected = m.id === adj.mask;
+        select.appendChild(o);
+    });
+}
+
+function _localSlider(label, value, min, max, onValue) {
+    var def = min === 0 ? 100 : 0;      // Amount rests at 100, a setting at 0
+    var row = document.createElement("div");
+    row.className = "develop-row" + (value !== def ? " modified" : "");
+    var lbl = document.createElement("span");
+    lbl.className = "develop-row-label"; lbl.textContent = label;
+    lbl.title = _t("develop.slider.resetHint", "Double-click to reset");
+    var range = document.createElement("input");
+    range.type = "range"; range.min = min; range.max = max; range.step = 1; range.value = value;
+    var num = document.createElement("input");
+    num.type = "number"; num.min = min; num.max = max; num.step = 1; num.value = value;
+    function commit(v, live) {
+        v = Number(v); if (isNaN(v)) v = 0;
+        v = Math.max(min, Math.min(max, Math.round(v)));
+        range.value = v; num.value = v;
+        row.classList.toggle("modified", v !== def);
+        onValue(v, live);
+    }
+    range.addEventListener("input",  function () { commit(range.value, true); });
+    range.addEventListener("change", function () { commit(range.value, false); });
+    num.addEventListener("input",    function () { if (!_numberIsPartial(num)) commit(num.value, true); });
+    num.addEventListener("change",   function () { commit(num.value, false); });
+    function reset() { commit(def, false); }
+    lbl.addEventListener("dblclick", reset);
+    range.addEventListener("dblclick", reset);
+    row.append(lbl, range, num);
+    return row;
+}
+
+function _renderLocal() {
+    if (!_localListEl) return;
+    var p = _localParams(); if (!p) return;
+    _localListEl.replaceChildren();
+    if (!p.local.length) {
+        var none = document.createElement("div");
+        none.className = "develop-local-empty";
+        none.textContent = _t("develop.local.empty",
+            "Adjust part of the picture through a mask. Make masks in the Canvas (Masks panel, or From words), then Add.");
+        _localListEl.appendChild(none);
+    }
+    p.local.forEach(function (adj, index) {
+        if (!adj.settings) adj.settings = {};
+        var card = document.createElement("div");
+        card.className = "develop-local-card" + (adj.enabled === false ? " off" : "");
+        var head = document.createElement("div");
+        head.className = "develop-local-head";
+        var select = document.createElement("select");
+        select.className = "develop-local-mask";
+        _localMaskOptions(select, adj);
+        // The list is read when it opens: a mask made meanwhile is offered.
+        select.addEventListener("mousedown", function () { _localMaskOptions(select, adj); });
+        select.addEventListener("focus", function () { _localMaskOptions(select, adj); });
+        select.addEventListener("change", function () {
+            adj.mask = select.value === "" ? adj.mask : Number(select.value);
+            _localChanged(false, "Develop: Local mask");
+            _renderLocal();
+        });
+        var on = document.createElement("input");
+        on.type = "checkbox"; on.checked = adj.enabled !== false;
+        on.title = _t("develop.local.on", "On");
+        on.addEventListener("change", function () {
+            adj.enabled = on.checked;
+            card.classList.toggle("off", !on.checked);
+            _localChanged(false, "Develop: Local on/off");
+        });
+        var remove = document.createElement("button");
+        remove.type = "button"; remove.className = "develop-header-btn develop-local-remove";
+        remove.textContent = "×"; remove.title = _t("develop.local.remove", "Remove this adjustment");
+        remove.addEventListener("click", function () {
+            p.local.splice(index, 1);
+            _localChanged(false, "Develop: Remove local adjustment");
+            _renderLocal();
+        });
+        head.append(select, on, remove);
+        card.appendChild(head);
+        if (!_localMask(adj.mask)) {
+            var missing = document.createElement("div");
+            missing.className = "develop-local-missing";
+            missing.textContent = adj.mask == null
+                ? _t("develop.local.choose", "Choose a mask for this adjustment.")
+                : _t("develop.local.missing", "Its mask is gone: this adjustment does nothing until you choose another.");
+            card.appendChild(missing);
+        }
+        card.appendChild(_localSlider(_t("develop.local.amount", "Amount"), adj.amount == null ? 100 : adj.amount, 0, 100,
+            function (v, live) { adj.amount = v; _localChanged(live, "Develop: Local amount"); }));
+        LOCAL_ROWS.forEach(function (r) {
+            card.appendChild(_localSlider(_t("develop.slider." + r.key, r.label), adj.settings[r.key] | 0, -100, 100,
+                function (v, live) { adj.settings[r.key] = v; _localChanged(live); }));
+        });
+        _localListEl.appendChild(card);
+    });
+}
+
+function _buildLocalSection(body) {
+    _localListEl = document.createElement("div");
+    _localListEl.className = "develop-local-list";
+    var add = document.createElement("button");
+    add.type = "button"; add.className = "develop-header-btn develop-local-add";
+    add.textContent = _t("develop.local.add", "Add local adjustment");
+    add.addEventListener("click", function () {
+        var p = _localParams(); if (!p) return;
+        var S = _S(), masks = (S && S.masks) || [];
+        var next = p.local.reduce(function (n, a) { return Math.max(n, a.id | 0); }, 0) + 1;
+        // Offer the newest mask first: the one most likely just made for this.
+        var pick = masks.length ? masks[masks.length - 1].id : null;
+        p.local.push({ id: next, mask: pick, enabled: true, amount: 100, settings: {} });
+        _localChanged(false, "Develop: Add local adjustment");
+        _renderLocal();
+    });
+    body.append(_localListEl, add);
+    _registerCustomSync(function () { _renderLocal(); });
+    _renderLocal();
+}
+
+// ========================================================================
 // SYNC PANEL ← S.developParams (called on doc tab switch and B/A toggle)
 // ========================================================================
 function syncPanel() {
@@ -3803,7 +4087,7 @@ function _resetAll() {
     blank.enabled = !!p.enabled;
     // Stash current for one-shot undo
     _resetUndoBuf = JSON.parse(JSON.stringify(p));
-    Object.keys(blank).forEach(function (k) { p[k] = blank[k]; });
+    Object.keys(blank).forEach(function (k) { if (k !== "local") p[k] = blank[k]; });   // M4: locals have their own Remove
     syncPanel();
     recordUndo("Develop: Reset all");
     _scheduleFullRedraw();
@@ -4201,7 +4485,7 @@ function _applyPreset(presetParams) {
     var p = S.developParams;
     var version = p._version || 1;
     Object.keys(presetParams).forEach(function (k) {
-        if (k === "_version") return;
+        if (k === "_version" || k === "local") return;   // M4: keep this document's
         p[k] = presetParams[k];
     });
     p._version = version;
@@ -4224,7 +4508,7 @@ function _savePreset() {
     var defaults = defaultParams();
     var partial = { _version: p._version || 1 };
     Object.keys(p).forEach(function (k) {
-        if (k === "_version" || k === "_dragging") return;
+        if (k === "_version" || k === "_dragging" || k === "local") return;   // M4: masks are per document
         if (p[k] !== defaults[k]) partial[k] = p[k];
     });
     fetch("/studio/develop/presets", {

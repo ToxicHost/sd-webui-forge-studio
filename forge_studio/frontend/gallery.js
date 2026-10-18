@@ -235,7 +235,15 @@ function updateWatcherIndicator() {
 
 async function pickAndAddFolder() {
     try {
-        const r = await api("/pick-folder", { method: "POST" });
+        // FP1: the same system folder dialog as every other Browse in Studio
+        // (app.js `_studioPickFolder`); the Gallery's own route where app.js
+        // is not loaded.
+        let r;
+        if (typeof window.studioPickFolder === "function") {
+            r = { path: await window.studioPickFolder({ purpose: "gallery" }) };
+        } else {
+            r = await api("/pick-folder", { method: "POST" });
+        }
         if (r.error) { toast("Error: " + r.error); return; }
         if (!r.path) return;
         const added = await api("/scan-folders", {
@@ -2290,6 +2298,39 @@ async function loadAttentionWords(img, ov) {
         list.appendChild(row);
     });
     panel.replaceChildren(title, hint, list);
+    // Extras (spec Q1, "optionally also"): make a mask from the word on show.
+    // Sends the picture to the Canvas, waits for its layer to record the
+    // picture, then opens Masks > From words with the word chosen -- the
+    // owner still picks Object / Area / Everything else by sight.
+    if (typeof sendToCanvas === "function") {
+        const make = document.createElement("button"); make.type = "button";
+        make.className = "gal-detail-btn gal-words-make";
+        make.textContent = _t("gallery.words.makeMask", "Make mask…");
+        make.title = _t("gallery.words.makeMaskTitle", "Send this picture to the Canvas and make a mask from the word on show");
+        const sync = () => { make.disabled = !/^w\d+$/.test(panel.dataset.showing || ""); };
+        sync();
+        panel.addEventListener("click", () => setTimeout(sync, 0));
+        make.addEventListener("click", async () => {
+            const index = Number((panel.dataset.showing || "").slice(1));
+            const word = data.words[index] && data.words[index].word;
+            if (!word) return;
+            const asked = Date.now();
+            make.disabled = true;
+            await sendToCanvas(img.id);
+            // The layer records its picture once the pixels have landed.
+            const C = window.StudioCore;
+            for (let i = 0; i < 100; i++) {
+                const L = C && C.activeLayer && C.activeLayer();
+                if (L && L.source && L.source.placed >= asked) {
+                    window.StudioUI?.openWordMaskDialog?.({ words: [word] });
+                    break;
+                }
+                await new Promise(r => setTimeout(r, 100));
+            }
+            sync();
+        });
+        panel.appendChild(make);
+    }
     if (data.text_used) {
         textUsedBtn = document.createElement("button"); textUsedBtn.type = "button"; textUsedBtn.className = "gal-detail-btn gal-words-textused";
         textUsedBtn.textContent = _t("gallery.words.textUsed", "Text used here");

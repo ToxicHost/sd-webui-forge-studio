@@ -180,6 +180,34 @@ def import_yolo(*, app_root: Path | str | None = None) -> Any:
     return YOLO
 
 
+def import_sam(*, app_root: Path | str | None = None) -> Any:
+    """The same door for MobileSAM (word masks, M2): configure, import,
+    verify, then hand back ultralytics' SAM `Predictor` class.
+
+    The caller passes the weights as an absolute path to a file that exists.
+    `models/sam/build.py` `_build_sam` hands any checkpoint to
+    `attempt_download_asset`, which DOWNLOADS a known name it cannot find
+    (`utils/downloads.py:441-442`, no `is_online` check on that branch), so a
+    missing file must be refused before ultralytics is asked to build.
+    """
+
+    configure_offline(app_root=app_root)
+
+    from ultralytics.models.sam import Predictor
+    import ultralytics.utils as uu
+
+    settings = getattr(uu, "SETTINGS", None)
+    if settings is not None:
+        try:
+            if settings.get("sync", False):
+                settings["sync"] = False
+        except Exception:  # noqa: BLE001 - a read-only settings store is fine
+            pass
+
+    assert_offline()
+    return Predictor
+
+
 def boundary_report(*, app_root: Path | str | None = None) -> dict[str, Any]:
     """What the boundary is, without importing anything. For diagnostics."""
 
@@ -206,5 +234,6 @@ __all__ = (
     "assert_offline",
     "boundary_report",
     "configure_offline",
+    "import_sam",
     "import_yolo",
 )

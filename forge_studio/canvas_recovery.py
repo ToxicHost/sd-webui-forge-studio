@@ -141,9 +141,18 @@ def _referenced_blobs(manifest: Mapping[str, Any]) -> set[str]:
     mask = manifest.get("mask")
     if isinstance(mask, Mapping) and mask.get("blob"):
         wanted.add(str(mask["blob"]))
+    if isinstance(mask, Mapping):
+        # M1. The named masks travel inside the mask entry, one blob each.
+        for named in mask.get("named") or []:
+            if isinstance(named, Mapping) and named.get("blob"):
+                wanted.add(str(named["blob"]))
     for region in manifest.get("regions") or []:
         if isinstance(region, Mapping) and region.get("blob"):
             wanted.add(str(region["blob"]))
+    # CT4. The document's committed selection, one blob (owner, 2026-10-16).
+    selection = manifest.get("selection")
+    if isinstance(selection, Mapping) and selection.get("blob"):
+        wanted.add(str(selection["blob"]))
     return wanted
 
 

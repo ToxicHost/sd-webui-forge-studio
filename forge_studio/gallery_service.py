@@ -467,6 +467,27 @@ class GalleryService:
         except Exception:  # noqa: BLE001 - see the docstring
             return []
 
+    def adopt_folder(self, folder: str | Path) -> bool:
+        """OF1. Scan a folder Studio is about to save into. Idempotent.
+
+        The Extension registers its Neo output tree the same way, from its
+        save pipeline (`studio_gallery.ensure_scan_folder`, `:603`): INSERT OR
+        IGNORE, never raising into the save. Studio does it for the owner's
+        trusted save folder too, so the Gallery shows every saved picture.
+        Returns whether the folder is now (or already was) a scan folder.
+        """
+
+        try:
+            if not self.capability().available:
+                return False
+            path = Path(folder)
+            if not path.is_dir():
+                return False
+            GalleryScanner(self.store()).add_folder(path, path.name)
+            return True
+        except Exception:  # noqa: BLE001 - see the docstring
+            return False
+
     def note_generation(self) -> None:
         """Studio just made a picture. Look for it, once the batch settles.
 
@@ -1472,61 +1493,23 @@ class GalleryService:
         The same choice the Extension makes, and the right one: the owner
         physically selects the folder, which is a stronger guarantee than any
         path they could type. Studio runs on their machine, so the dialog is
-        on their screen.
+        on their screen. The dialog itself is the shared one
+        (`folder_dialog.py`), which every Browse button in Studio uses.
 
         Refused with a reason where there is no desktop to put a dialog on --
         a container or a remote host -- rather than hanging on a window nobody
         can see.
         """
 
-        result: dict[str, Any] = {}
+        from .folder_dialog import shared_dialog
 
-        def ask() -> None:
-            try:
-                import tkinter
-                from tkinter import filedialog
-            except ImportError:
-                result["error"] = (
-                    "This Studio cannot open a folder chooser because tkinter "
-                    "is not installed."
-                )
-                return
-            try:
-                window = tkinter.Tk()
-                window.withdraw()
-                window.wm_attributes("-topmost", 1)
-                chosen = filedialog.askdirectory(title="Select image folder")
-                window.destroy()
-            except Exception as error:  # noqa: BLE001
-                result["error"] = (
-                    "The folder chooser could not be opened "
-                    f"({type(error).__name__}). There may be no desktop "
-                    "available on this machine."
-                )
-                return
-            # Cancelled is an empty path and NOT an error: `gallery.js` returns
-            # quietly on a blank path and shows a toast on an error, so
-            # reporting a cancel as a failure would scold the owner for
-            # changing their mind.
-            result["path"] = str(chosen or "").replace("/", os.sep)
-
-        # Its own thread, joined here. Tk wants to own whatever thread it is
-        # created on, and a server worker thread is reused for the next
-        # request.
-        worker = threading.Thread(target=ask, name="studio-gallery-pick",
-                                  daemon=True)
-        worker.start()
-        worker.join(timeout=PICK_FOLDER_TIMEOUT_SECONDS)
-        if worker.is_alive():
-            return _refusal(
-                "The folder chooser is still open. Finish choosing there, "
-                "then try again.",
-                int(HTTPStatus.SERVICE_UNAVAILABLE),
-            )
-        if "error" in result:
-            return _refusal(str(result["error"]),
-                            int(HTTPStatus.SERVICE_UNAVAILABLE))
-        return Reply(payload={"path": result.get("path", "")})
+        answer = shared_dialog().pick(None, "gallery")
+        if "path" in answer:
+            # Cancelled is an empty path and NOT an error: `gallery.js`
+            # returns quietly on a blank path.
+            return Reply(payload={"path": answer["path"]})
+        return _refusal(str(answer.get("error") or "The folder chooser could not be opened."),
+                        int(HTTPStatus.SERVICE_UNAVAILABLE))
 
     def _act_on_id(self, operation: Any, identifier: str) -> Reply:
         try:

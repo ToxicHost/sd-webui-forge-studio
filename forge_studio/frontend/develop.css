@@ -785,3 +785,15 @@ body.develop-active #canvasArea canvas {
   letter-spacing: 0.06em;
 }
 .develop-split-label.visible { display: block; }
+
+/* M4: local adjustments -- one card per adjustment, its mask chosen here. */
+.develop-local-list { display: flex; flex-direction: column; gap: 8px; }
+.develop-local-card { border: 1px solid var(--border-subtle, #333); border-radius: 6px; padding: 6px 6px 2px; }
+.develop-local-card.off { opacity: 0.55; }
+.develop-local-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.develop-local-mask { flex: 1 1 auto; min-width: 0; background: var(--bg-input, #222); color: inherit;
+  border: 1px solid var(--border-subtle, #333); border-radius: 4px; padding: 3px 4px; font: inherit; font-size: 12px; }
+.develop-local-remove { padding: 0 8px; }
+.develop-local-missing, .develop-local-empty { font-size: 11px; color: var(--text-3, #999); margin: 2px 0 6px; }
+.develop-local-missing { color: var(--yellow, #e0b050); }
+.develop-local-add { margin-top: 8px; width: 100%; }

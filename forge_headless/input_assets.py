@@ -183,7 +183,11 @@ def decode_source(asset: Any, *, required: bool) -> SourceImage | None:
     )
 
 
-def decode_mask(asset: Any, source: SourceImage) -> Any:
+#: S1: below this a soft mask is 0 (the page's `SOFT_MASK_FLOOR`, the same 8).
+SOFT_MASK_FLOOR = 8
+
+
+def decode_mask(asset: Any, source: SourceImage, *, soft: bool = False) -> Any:
     """One mask asset into the single-channel image the engine reads.
 
     ITS OWN REFUSAL CODES. Reusing `SOURCE_IMAGE_*` would tell an owner whose
@@ -270,6 +274,16 @@ def decode_mask(asset: Any, source: SourceImage) -> Any:
             "MASK_EMPTY",
             "The mask has nothing painted in it.")
 
+    # S1 (Evidence/NAMED-MASKS-DEFERRED-SPEC.md): with Soft Inpainting on, the
+    # grey is kept. Neo's `create_binary_mask` passes an opaque L mask through
+    # and Soft Inpainting clears the latent rounding (processing.py:1892), so
+    # a feathered named mask fades the inpaint in; measured on the GPU in
+    # Evidence/s1-soft-inpaint. The page drops values under the floor already;
+    # dropping them here too keeps "Only masked"'s crop off a faint tail
+    # whatever sent the mask. Without Soft Inpainting the cut above stays,
+    # because a double blur is still the hazard it guards against.
+    if soft:
+        return grey.point(lambda value: 0 if value < SOFT_MASK_FLOOR else value)
     return grey.point(lambda value: 255 if value > 128 else 0)
 
 

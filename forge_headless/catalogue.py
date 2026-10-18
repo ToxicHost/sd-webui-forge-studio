@@ -60,11 +60,18 @@ from .contracts import (
     ModelAvailability,
     ModelCandidate,
 )
+from . import remote_roots
+from .remote_roots import RootGate
 from .root_policy import (
     ROOT_OUTSIDE_WORKSPACE,
     ROOT_UNAVAILABLE,
+    is_network_location,
     validate_root,
 )
+
+#: Remembered per-model facts for a network root (a preview's location, a
+#: sidecar's contents), dropped on every rescan. Bounded like the catalogue.
+MAX_REMEMBERED_TOUCHES = 4 * 4_096
 
 CASE_POLICY_INCONCLUSIVE = "HEADLESS_CATALOGUE_CASE_POLICY_INCONCLUSIVE"
 
@@ -121,6 +128,7 @@ MODEL_ROLE_TEXT_ENCODER = "text_encoder"
 MODEL_ROLE_VAE = "vae"
 MODEL_ROLE_ADETAILER = "adetailer"
 MODEL_ROLE_LORA = "lora"
+MODEL_ROLE_EMBEDDING = "embedding"
 
 #: Every role with a configurable ROOT DIRECTORY, in presentation order.
 #:
@@ -143,6 +151,10 @@ MODEL_ROLES: tuple[str, ...] = (
     #: and applied per generation -- so it belongs here and NOT in
     #: `RESIDENT_MODEL_ROLES`.
     MODEL_ROLE_LORA,
+    #: EMB (2026-10-16). Textual-inversion embeddings, named in the prompt
+    #: and read by the engine's CLIP text encoders when a model loads -- the
+    #: same standing as a LoRA: a root, never part of the resident session.
+    MODEL_ROLE_EMBEDDING,
 )
 
 #: Retained name for the checkpoint role. ``model_kind`` on a candidate is the
@@ -174,12 +186,25 @@ LORA_FORMAT_SUPPORT: dict[str, LoadSupport] = {
     ".ckpt": LoadSupport.LOAD_PLUMBED,
 }
 
+#: What an embedding file may be: the files Neo's
+#: `backend/text_processing/textual_inversion.py` `load_from_file` reads as
+#: weights (`.pt`, `.bin` by torch, `.safetensors`). It also reads an
+#: embedding hidden in a PNG / WEBP, but a folder's pictures are mostly
+#: `.preview.png` images, so they are not listed (the engine still loads a
+#: real one).
+EMBEDDING_FORMAT_SUPPORT: dict[str, LoadSupport] = {
+    ".safetensors": LoadSupport.LOAD_PLUMBED,
+    ".pt": LoadSupport.LOAD_PLUMBED,
+    ".bin": LoadSupport.LOAD_PLUMBED,
+}
+
 ROLE_FORMAT_SUPPORT: dict[str, dict[str, LoadSupport]] = {
     MODEL_ROLE_CHECKPOINT: FORMAT_SUPPORT,
     MODEL_ROLE_TEXT_ENCODER: MODULE_FORMAT_SUPPORT,
     MODEL_ROLE_VAE: MODULE_FORMAT_SUPPORT,
     MODEL_ROLE_ADETAILER: DETECTOR_FORMAT_SUPPORT,
     MODEL_ROLE_LORA: LORA_FORMAT_SUPPORT,
+    MODEL_ROLE_EMBEDDING: EMBEDDING_FORMAT_SUPPORT,
 }
 
 #: The checkpoint blacklist exists to keep VAE files out of the *checkpoint*
@@ -191,6 +216,7 @@ ROLE_BLACKLISTED_SUFFIXES: dict[str, tuple[str, ...]] = {
     MODEL_ROLE_VAE: (),
     MODEL_ROLE_ADETAILER: (),
     MODEL_ROLE_LORA: (),
+    MODEL_ROLE_EMBEDDING: (),
 }
 
 #: Bounds on a single scan. A root is now owner-supplied and may be outside the
@@ -325,6 +351,7 @@ class ModelCatalogue:
         case_policy: CasePolicy | None = None,
         role: str = MODEL_ROLE_CHECKPOINT,
         allow_external: bool = False,
+        allow_network: bool = False,
     ) -> None:
         if role not in ROLE_FORMAT_SUPPORT:
             raise HeadlessError(
@@ -335,7 +362,23 @@ class ModelCatalogue:
         # Network, device-namespace, drive-root and remote-volume refusals all
         # happen inside validate_root, and the ones that could otherwise reach a
         # remote host happen before it stats anything.
-        resolved_root = validate_root(root, require_absolute=allow_external)
+        #
+        # `allow_network` is the owner's opt-in. It brings a GATE with it, and
+        # from here on every filesystem call this catalogue makes on a network
+        # root goes through that gate -- bounded in time, abandoned on timeout.
+        # A local root keeps `_gate = None` and every call stays direct.
+        self._gate: RootGate | None = RootGate() if allow_network else None
+        self._touches: dict[object, object] = {}
+        resolved_root = validate_root(
+            root,
+            require_absolute=allow_external,
+            allow_network=allow_network,
+            runner=self._gate.run if self._gate is not None else None,
+        )
+        if self._gate is not None and not (
+            is_network_location(root) or is_network_location(resolved_root)
+        ):
+            self._gate = None
 
         if not allow_external:
             # Default remains the Phase 2A restriction. Reaching outside the
@@ -363,9 +406,11 @@ class ModelCatalogue:
         self._case_policy = (
             case_policy
             if case_policy is not None
-            else detect_case_policy_readonly(resolved_root)
+            else self._bounded(lambda: detect_case_policy_readonly(resolved_root))
         )
-        if self._case_policy is CasePolicy.INCONCLUSIVE and _has_entries(resolved_root):
+        if self._case_policy is CasePolicy.INCONCLUSIVE and self._bounded(
+            lambda: _has_entries(resolved_root)
+        ):
             # Handoff section 9: an inconclusive probe must not guess, enumerate
             # or resolve. An *empty* root is exempt because there is nothing to
             # enumerate and nothing to resolve -- refusing it would turn "I made
@@ -398,6 +443,55 @@ class ModelCatalogue:
     def root_configured(self) -> bool:
         return True
 
+    # -- network roots -----------------------------------------------------
+
+    @property
+    def network(self) -> bool:
+        """Whether this root is on another machine (and so behind a gate)."""
+
+        return self._gate is not None
+
+    @property
+    def reachable(self) -> bool:
+        """False while a network root is not answering. Always True locally."""
+
+        return self._gate is None or self._gate.reachable
+
+    def retry(self) -> None:
+        """Let the next touch try a root that timed out. An owner's Rescan."""
+
+        if self._gate is not None:
+            self._gate.reset()
+
+    def _bounded(self, work, *, timeout: float | None = None):  # type: ignore[no-untyped-def]
+        if self._gate is None:
+            return work()
+        return self._gate.run(work, timeout=timeout)
+
+    def touch(self, key: object, work):  # type: ignore[no-untyped-def]
+        """Run filesystem work for something under this root.
+
+        Local: `work()`, directly, every time -- exactly what the caller did
+        before this existed. Network: bounded by the gate, and, when `key` is
+        not None, REMEMBERED until the next rescan, so browsing the same
+        folder twice does not touch the share twice. A write passes None.
+        Raises `ROOT_UNREACHABLE` when the share does not answer in time.
+        """
+
+        if self._gate is None:
+            return work()
+        if key is not None and key in self._touches:
+            return self._touches[key]
+        value = self._gate.run(work)
+        if key is not None and len(self._touches) < MAX_REMEMBERED_TOUCHES:
+            self._touches[key] = value
+        return value
+
+    def forget_touches(self) -> None:
+        """Drop remembered facts -- after a write changed one of them."""
+
+        self._touches.clear()
+
     @property
     def case_policy(self) -> CasePolicy:
         return self._case_policy
@@ -425,7 +519,7 @@ class ModelCatalogue:
         then refuse would be worse than an honest empty list.
         """
         if self._case_policy is CasePolicy.INCONCLUSIVE and not self._policy_pinned:
-            probed = detect_case_policy_readonly(self._root)
+            probed = self._bounded(lambda: detect_case_policy_readonly(self._root))
             if probed is not CasePolicy.INCONCLUSIVE:
                 self._case_policy = probed
         if self._case_policy is CasePolicy.INCONCLUSIVE:
@@ -441,15 +535,13 @@ class ModelCatalogue:
             self._snapshot = snapshot
             return snapshot
 
-        found, budget = self._walk()
-        candidates: list[ModelCandidate] = []
-        for relative, entry_path in found:
-            candidate = self._describe(relative, entry_path)
-            if candidate is not None:
-                candidates.append(candidate)
-        # Deterministic ordering that does not depend on directory order or on
-        # locale: root-relative location, then id as a tiebreak.
-        candidates.sort(key=lambda item: (item.relative_location, item.model_id))
+        # One bounded call for the whole walk on a network root: the worker
+        # only COMPUTES, and the snapshot is published here, so a scan that
+        # times out and finishes later changes nothing.
+        candidates, budget = self._bounded(
+            self._collect, timeout=remote_roots.SCAN_TIMEOUT_SECONDS
+        )
+        self._touches.clear()
         self._generation += 1
         snapshot = CatalogueSnapshot(
             role=self._role,
@@ -463,6 +555,29 @@ class ModelCatalogue:
         )
         self._snapshot = snapshot
         return snapshot
+
+    def _collect(self) -> tuple[list[ModelCandidate], "_ScanBudget"]:
+        if self._gate is not None:
+            # `_scan` skips a directory it cannot list, which is right for one
+            # bad subfolder and wrong for the share itself: a host that went
+            # away would publish as an EMPTY folder and every model would
+            # vanish from the dropdowns. Unreachable keeps the last snapshot.
+            try:
+                os.stat(self._root)
+            except OSError:
+                from .remote_roots import unreachable
+
+                raise unreachable() from None
+        found, budget = self._walk()
+        candidates: list[ModelCandidate] = []
+        for relative, entry_path in found:
+            candidate = self._describe(relative, entry_path)
+            if candidate is not None:
+                candidates.append(candidate)
+        # Deterministic ordering that does not depend on directory order or on
+        # locale: root-relative location, then id as a tiebreak.
+        candidates.sort(key=lambda item: (item.relative_location, item.model_id))
+        return candidates, budget
 
     def snapshot(self) -> CatalogueSnapshot:
         """The current snapshot, reading the root once if there is none yet."""
@@ -495,6 +610,18 @@ class ModelCatalogue:
                 "HEADLESS_MODEL_UNKNOWN",
                 "That model is not in the catalogue.",
             )
+        # The id was answered from the snapshot with no filesystem call. What
+        # follows re-verifies against the disk, and on a network root that is
+        # the stat before a load -- so it is bounded.
+        return self._bounded(lambda: self._reverify(relative))
+
+    def owns(self, model_id: str) -> bool:
+        """Whether an id is in this catalogue's snapshot. No filesystem call."""
+
+        snapshot = self._snapshot
+        return snapshot is not None and model_id in snapshot.entries_by_id
+
+    def _reverify(self, relative: str) -> tuple[ModelCandidate, ContainedSource]:
         self._assert_root_unchanged()
         entry_path = self._root.joinpath(*relative.split("/"))
         candidate = self._describe(relative, entry_path)

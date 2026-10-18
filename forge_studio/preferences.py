@@ -105,6 +105,8 @@ PREFERENCE_KEYS = frozenset({
     "gpu_device",
     "gpu_tile_compositing",
     "layout_preset",
+    # CT9. Outpaint's "Refine new area": off unless the owner chose it.
+    "outpaint_refine",
     "panel_ui",
     "remember_session",
     "save_dir",
@@ -147,6 +149,7 @@ PREFERENCE_SHAPES: dict[str, Any] = {
     "gpu_device": str,
     "gpu_tile_compositing": bool,
     "layout_preset": str,
+    "outpaint_refine": bool,
     "panel_ui": dict,
     "remember_session": bool,
     "save_dir": str,

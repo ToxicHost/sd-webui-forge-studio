@@ -58,6 +58,31 @@ elsewhere. It is deliberately not bundled, and the catalogue will not offer it.
 
 ---
 
+## MobileSAM — `models/sam/` (word masks, M2)
+
+```text
+file       mobile_sam.pt
+sha256     6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f
+bytes      40728226  (38.8 MiB)
+source     https://github.com/ChaoningZhang/MobileSAM, weights/mobile_sam.pt
+licence    Apache-2.0  (the repository's LICENSE, confirmed by the owner
+                        2026-10-15; no NOTICE file)
+```
+
+**Provenance, checked byte for byte (2026-10-15).** The file was taken from
+Ultralytics' asset release (`ultralytics/assets` `v8.3.0`, the name its SAM
+loader resolves) for the prompt-masks research. Its git blob hash,
+`7ef2d090979fd9853adf17b7a99c8b94a1c5a6a7`, and its size are exactly those the
+GitHub API lists for `weights/mobile_sam.pt` in the MobileSAM repository: the
+same bytes as upstream, not a repackaging.
+
+**Attribution.** MobileSAM (Chaoning Zhang et al.), built on Meta's Segment
+Anything (Apache-2.0) and TinyViT (MIT). Studio loads it on the CPU through
+`forge_headless/ultralytics_boundary.py` `import_sam` (offline), and refuses
+to build without this file rather than letting Ultralytics download one.
+
+---
+
 ## Upscaler — `models/ESRGAN/`
 
 ```text

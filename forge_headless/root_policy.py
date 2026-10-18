@@ -20,12 +20,21 @@ Steps 1 and 2 run before step 3 because ``Path.resolve(strict=True)`` stats the
 target. Stat'ing ``\\\\server\\share\\models`` or a mapped network drive is
 itself the harm: it authenticates to a remote host and can hang. Refusing after
 resolution would refuse too late.
+
+**The network opt-in (2026-10-16).** ``allow_network=True`` admits a network
+location at steps 1, 2 and 4, and nothing else changes order: the location is
+still CLASSIFIED before anything stats it, because that classification is what
+decides that step 3 runs through ``runner`` -- a bounded call from
+``remote_roots`` -- instead of on the caller's thread. Device and
+extended-length namespaces stay refused with or without it. Off, every
+refusal below is exactly what it was.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path, PurePath
+from typing import Callable
 
 from .contracts import HeadlessError
 
@@ -56,12 +65,15 @@ ACCEPTED_DRIVE_TYPES: frozenset[int] = frozenset(
 )
 
 
-def _refuse_by_syntax(text: str) -> None:
+def _refuse_by_syntax(text: str, *, allow_network: bool = False) -> bool:
     """Refuse network and device namespaces from the path text alone.
 
     Both separator spellings are normalized first, so ``//server/share`` is
     refused exactly like ``\\\\server\\share``. On POSIX a leading ``//`` is
     implementation-defined, which is reason enough to refuse it too.
+
+    Returns True for a UNC location admitted under ``allow_network`` -- the
+    caller must then touch it only through a bounded runner.
     """
     if not text.strip():
         raise HeadlessError(ROOT_NOT_SUPPLIED, "No model root was supplied.")
@@ -75,10 +87,16 @@ def _refuse_by_syntax(text: str) -> None:
             "That model root uses a device or extended-length namespace.",
         )
     if normalized.startswith("\\\\"):
+        if allow_network and os.name == "nt":
+            # Only where `\\host\share` MEANS a share. On POSIX a leading `//`
+            # is implementation-defined; a network folder there is a mount,
+            # and the mount table classifies it.
+            return True
         raise HeadlessError(
             ROOT_NETWORK_LOCATION,
             "That model root is a network location.",
         )
+    return False
 
 
 def drive_type(path: PurePath) -> int | None:
@@ -108,8 +126,18 @@ def drive_type(path: PurePath) -> int | None:
     return int(kernel32.GetDriveTypeW(f"{drive}\\"))
 
 
-def _refuse_by_volume(path: PurePath, *, allow_unclassified: bool = False) -> None:
+def _refuse_by_volume(
+    path: PurePath,
+    *,
+    allow_unclassified: bool = False,
+    allow_network: bool = False,
+) -> bool:
     """Refuse a volume this root may not live on, on ANY platform.
+
+    Returns True when the volume is remote and ``allow_network`` admitted it,
+    so the caller knows to touch it only through a bounded runner. Callers
+    that do not pass ``allow_network`` -- the folder picker among them -- get
+    the refusal exactly as before.
 
     This used to be a no-op off Windows. `drive_type()` returns None where
     there is no drive letter, the function returned immediately, and a test
@@ -128,6 +156,8 @@ def _refuse_by_volume(path: PurePath, *, allow_unclassified: bool = False) -> No
     kind = drive_type(path)
     if kind is not None:
         if kind == DRIVE_REMOTE:
+            if allow_network:
+                return True
             raise HeadlessError(
                 ROOT_NETWORK_LOCATION,
                 "That model root is on a mapped network drive.",
@@ -137,7 +167,7 @@ def _refuse_by_volume(path: PurePath, *, allow_unclassified: bool = False) -> No
                 ROOT_DRIVE_TYPE_UNRECOGNIZED,
                 "The volume holding that model root could not be classified.",
             )
-        return
+        return False
 
     if os.name == "nt":
         # A Windows path with no drive component: relative, or drive-relative.
@@ -151,14 +181,16 @@ def _refuse_by_volume(path: PurePath, *, allow_unclassified: bool = False) -> No
         # mount table, classify as UNKNOWN and be refused -- a behaviour
         # change on the platform this runs on, introduced by a fix aimed at
         # the two it does not.
-        return
+        return False
 
-    _refuse_by_mount_table(path, allow_unclassified=allow_unclassified)
+    return _refuse_by_mount_table(
+        path, allow_unclassified=allow_unclassified, allow_network=allow_network
+    )
 
 
 def _refuse_by_mount_table(
-    path: PurePath, *, allow_unclassified: bool
-) -> None:
+    path: PurePath, *, allow_unclassified: bool, allow_network: bool = False
+) -> bool:
     """The POSIX half. Deferred import so Windows never pays for it."""
 
     from .volume_policy import (
@@ -179,10 +211,10 @@ def _refuse_by_mount_table(
         kind = mounts.kind_for(path)
 
     admitted, reason = admit_as_root(
-        kind, allow_unclassified=allow_unclassified
+        kind, allow_unclassified=allow_unclassified, allow_remote=allow_network
     )
     if admitted:
-        return
+        return kind is VolumeKind.REMOTE
     if reason == ROOT_VOLUME_REMOTE:
         raise HeadlessError(
             ROOT_NETWORK_LOCATION,
@@ -208,11 +240,43 @@ def _refuse_filesystem_root(resolved: Path) -> None:
         )
 
 
+#: Runs one piece of filesystem work, possibly bounded. `remote_roots.RootGate.run`
+#: is the real one; a local root uses `_direct`.
+Runner = Callable[[Callable[[], object]], object]
+
+
+def _direct(work):  # type: ignore[no-untyped-def]
+    return work()
+
+
+def is_network_location(
+    root: os.PathLike[str] | str, *, allow_unclassified_volume: bool = False
+) -> bool:
+    """Whether a root names another machine, decided WITHOUT touching it.
+
+    The same two classifications `validate_root` makes before its first stat
+    -- path text, then the local mount table or `GetDriveTypeW` -- asked with
+    the opt-in on, so the answer is a fact rather than a refusal. Anything
+    those checks would refuse outright (a device namespace) raises.
+    """
+
+    text = os.fspath(root) if not isinstance(root, str) else root
+    if _refuse_by_syntax(text, allow_network=True):
+        return True
+    return _refuse_by_volume(
+        PurePath(text),
+        allow_unclassified=allow_unclassified_volume,
+        allow_network=True,
+    )
+
+
 def validate_root(
     root: os.PathLike[str] | str,
     *,
     require_absolute: bool = False,
     allow_unclassified_volume: bool = False,
+    allow_network: bool = False,
+    runner: Runner | None = None,
 ) -> Path:
     """Return the resolved root, or raise ``HeadlessError``.
 
@@ -221,24 +285,40 @@ def validate_root(
     that legitimately resolve against the workspace leave it off.
 
     ``allow_unclassified_volume`` admits a volume whose kind could not be
-    determined. It does NOT admit one positively identified as remote: a dead
-    network mount hangs a request handler with no timeout, which is not a
-    preference an owner should be able to override. Defaulted off so the
-    behaviour of every existing caller is byte-identical.
+    determined. It does NOT admit one positively identified as remote: that
+    is ``allow_network``'s job, and only with a ``runner`` -- a dead network
+    mount hangs whoever stats it, so the stat has to happen somewhere that can
+    be abandoned. Both default off so every existing caller is byte-identical.
+
+    For a network root the failure to resolve is ``ROOT_UNREACHABLE`` rather
+    than ``ROOT_UNAVAILABLE``: "the server did not answer" and "the share is
+    not there" look the same from here, and the owner chose to keep a network
+    folder configured while its machine is off.
     """
     text = os.fspath(root) if not isinstance(root, str) else root
-    _refuse_by_syntax(text)
+    if allow_network and runner is None:
+        raise ValueError("allow_network needs a bounded runner")
+    remote = _refuse_by_syntax(text, allow_network=allow_network)
     supplied = PurePath(text)
     if require_absolute and not supplied.is_absolute():
         raise HeadlessError(
             ROOT_NOT_ABSOLUTE,
             "A model root must be an absolute path.",
         )
-    _refuse_by_volume(supplied, allow_unclassified=allow_unclassified_volume)
+    remote = _refuse_by_volume(
+        supplied,
+        allow_unclassified=allow_unclassified_volume,
+        allow_network=allow_network,
+    ) or remote
 
+    touch = runner if remote and runner is not None else _direct
     try:
-        resolved = Path(text).resolve(strict=True)
+        resolved = touch(lambda: Path(text).resolve(strict=True))
     except OSError:
+        if remote:
+            from .remote_roots import unreachable
+
+            raise unreachable() from None
         raise HeadlessError(
             ROOT_UNAVAILABLE,
             "The configured model root is not available.",
@@ -247,11 +327,28 @@ def validate_root(
     # Resolution can cross a junction, a subst'd drive or a symlinked parent
     # onto a different volume, so the same questions are asked again of the
     # answer. This second pass is the one that catches C:\Link -> \\host\share.
-    _refuse_by_syntax(str(resolved))
-    _refuse_by_volume(resolved, allow_unclassified=allow_unclassified_volume)
-    _refuse_filesystem_root(resolved)
+    #
+    # With the opt-in on, a LOCAL spelling that resolves onto a share becomes
+    # a network root here -- and every touch from now on goes through the
+    # runner. (A mapped drive resolves to its UNC form on Python 3.8+.)
+    remote = _refuse_by_syntax(str(resolved), allow_network=allow_network) or remote
+    remote = _refuse_by_volume(
+        resolved,
+        allow_unclassified=allow_unclassified_volume,
+        allow_network=allow_network,
+    ) or remote
+    if not remote:
+        # A share's own root (`\\host\models`, or `Z:\` mapped to it) is what
+        # the owner chose to export, not a whole disk, so the drive-root rule
+        # is for local volumes. Scans stay bounded by the catalogue's caps.
+        _refuse_filesystem_root(resolved)
 
-    if not resolved.is_dir():
+    touch = runner if remote and runner is not None else _direct
+    try:
+        is_directory = touch(resolved.is_dir)
+    except OSError:
+        is_directory = False
+    if not is_directory:
         raise HeadlessError(
             ROOT_NOT_A_DIRECTORY,
             "The configured model root is not a directory.",

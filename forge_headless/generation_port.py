@@ -28,9 +28,11 @@ GENERATION_NOT_AUTHORIZED = "HEADLESS_GENERATION_NOT_AUTHORIZED"
 class GenerationOutcome:
     """What a real backend will return: a job, and where its result lives.
 
-    `result_relative_location` is root-relative by construction. The absolute
-    path never leaves the backend, and the Studio projection carries only the
-    opaque handle the registry mints.
+    `result_relative_location` is root-relative, except for a result written
+    to the owner's trusted save folder outside the root, which has no relative
+    spelling and is absolute (OF1). Either way the path never leaves the
+    backend, and the Studio projection carries only the opaque handle the
+    registry mints.
     """
 
     job_id: str

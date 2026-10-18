@@ -173,7 +173,10 @@ function _saveToolSettings(tool) {
         brushCurves: (S.brushCurves || []).map(r => Object.assign({}, r)),
         brushAirbrush: S.brushAirbrush,
         brushAliased: S.brushAliased,
-        brushPixelPerfect: S.brushPixelPerfect
+        brushPixelPerfect: S.brushPixelPerfect,
+        // CT10 Paint Mixer.
+        brushMixOn: S.brushMixOn,
+        brushMix: S.brushMix
     };
     if (tool === "liquify") {
         _toolSettings[tool].liquifySpacing = S.liquifySpacing;
@@ -191,6 +194,7 @@ function _restoreToolSettings(tool) {
         S.brushBuildup = false; S.brushAngle = 0; S.brushTaperIn = 0; S.brushRatio = 1;
         S.brushSpikes = 2; S.brushFalloff = "default"; S.brushDensity = 1; S.brushGrain = 0; S.brushMaterial = null;
         S.brushCurves = []; S.brushAirbrush = false; S.brushAliased = false; S.brushPixelPerfect = false;
+        S.brushMixOn = false;
         S.pressureSensitivity = false; S.pressureAffects = "none"; S.symmetry = "none";
         S.brushDynamics = { sizeJitter: 0, opacityJitter: 0, scatter: 0, rotationJitter: 0, followStroke: false, spacing: 0.08 };
         return;
@@ -244,6 +248,9 @@ function _restoreToolSettings(tool) {
     S.brushAirbrush = saved.brushAirbrush ?? false;
     S.brushAliased = saved.brushAliased ?? false;
     S.brushPixelPerfect = saved.brushPixelPerfect ?? false;
+    // CT10 Paint Mixer. Off for settings saved before it existed.
+    S.brushMixOn = saved.brushMixOn ?? false;
+    S.brushMix = saved.brushMix ?? 0.5;
     // Sync falloff button UI
     document.querySelectorAll("[data-falloff]").forEach(b => {
         b.classList.toggle("active", b.dataset.falloff === S.brushFalloff);
@@ -292,16 +299,16 @@ function setTool(t) {
         // (2026-09-29), "Opacity is the only strength setting". CT3 had put it
         // on both brush and eraser.
         // SR2-2. Density on the bar for the brush (owner, V2 sign-off round 2).
-        brush:     ["size","opacity","hardness","density","smoothing","pixel-opts","sym-opts","pressure-opts"],
+        brush:     ["size","opacity","hardness","density","smoothing","pixel-opts","mix-opts","sym-opts","pressure-opts"],
         eraser:    ["size","opacity","hardness","smoothing","pixel-opts","pressure-opts"],
         mask:      ["mask-target","mask-operation","size","smoothing","mask-overlay","mask-clear","mask-selection"],
         smudge:    ["size","strength","sym-opts"],
-        blur:      ["size","strength"],
+        blur:      ["size","strength","blur-opts"],
         pixelate:  ["size","strength"],
         dodge:     ["size","strength","db-opts"],
         liquify:   ["size","strength","liquify-opts"],
-        clone:     ["size","opacity","hardness"],
-        fill:      ["opacity"],
+        clone:     ["size","opacity","hardness","clone-opts"],
+        fill:      ["opacity","fill-opts"],
         gradient:  ["opacity","grad-opts"],
         shape:     ["size","opacity","shape-opts"],
         eyedropper:["eye-opts"],
@@ -332,10 +339,20 @@ function setTool(t) {
     // survives. What that also touches is `_clip_to_mask`, which is on a
     // live-proven inpaint path and currently treats the mask as binary. That
     // is a scoped change with its own evidence, not a footnote to this one.
-    if (S.editingMask) {
+    //
+    // M1 KEEPS THAT FOR THE INPAINT MASK ONLY. A named mask may be soft --
+    // its brush takes Opacity and Hardness (owner, 2026-10-15, spec Q6) --
+    // because when it is sent (M3: the selected mask inpaints) it is cut to
+    // hard at 40 % first, or, with Soft Inpainting on, sent as its grey
+    // (S1), which is the soft-mask route described above, now built.
+    if (S.editingMask && C.paintingInpaintMask()) {
         visible.delete("opacity");
         visible.delete("hardness");
+    } else if (S.editingMask) {
+        visible.add("opacity");
+        visible.add("hardness");
     }
+    _syncMaskTargetLabel();
     document.querySelectorAll("#contextBar .ctx-item").forEach(el => {
         const ctx = el.dataset.ctx;
         el.style.display = visible.has(ctx) ? "" : "none";
@@ -376,6 +393,17 @@ function setTool(t) {
     document.querySelectorAll("#brushPresets .brush-preset-btn:not(#dynamicsToggle)").forEach((b, i) => b.classList.toggle("active", tips[i] === S.brushPreset));
 }
 
+// The Mask tool bar's first item: which mask the brush paints. Built from
+// text nodes: a mask's name is the owner's (or a prompt word).
+function _syncMaskTargetLabel() {
+    const el = document.querySelector('#contextBar [data-ctx="mask-target"]');
+    if (!el) return;
+    const named = !C.paintingInpaintMask() && S.editingMask;
+    const strong = document.createElement("strong");
+    strong.textContent = named ? C.maskTargetEntry().name : "Inpaint Mask";
+    el.replaceChildren(strong, document.createTextNode(named ? " · Named mask" : " · Generation mask"));
+}
+
 // Q retains its remappable action identity; the target is now a real tool.
 function toggleMaskMode() {
     setTool(S.tool === "mask" ? (S._maskReturnTool || "brush") : "mask");
@@ -389,7 +417,12 @@ function _updateMaskToggleUI() {
         _maskStatusVersion = version; _maskStatusCanvas = S.mask.canvas;
     }
     const status = document.getElementById("generationMaskStatus");
-    if (status) status.textContent = _maskHasCoverage
+    // M3: the selected named mask is what the next inpaint sends.
+    const source = C.inpaintSourceEntry();
+    if (status && source !== S.mask) {
+        status.textContent = "Inpainting with “" + source.name + "” (cut at 40%)"
+            + (S._userMaskMode ? "" : " · inactive");
+    } else if (status) status.textContent = _maskHasCoverage
         ? (S._userMaskMode ? "Generation mask: ready" : "Generation mask: saved, inactive") + (S.mask.visible ? "" : " · overlay hidden")
         : "Generation mask: empty";
     document.querySelectorAll("[data-mask-operation]").forEach(b => {
@@ -397,12 +430,16 @@ function _updateMaskToggleUI() {
         b.classList.toggle("active", selected); b.setAttribute("aria-pressed", String(selected));
     });
     const overlay = document.getElementById("maskOverlayToggle");
-    if (overlay) overlay.checked = !!S.mask.visible;
+    if (overlay) overlay.checked = !!C.shownMask().visible;
+    const named = S.editingMask && !C.paintingInpaintMask();
     for (const id of ["maskClearBtn", "clearMaskBtn"]) {
-        const button = document.getElementById(id); if (button) button.disabled = !_maskHasCoverage;
+        const button = document.getElementById(id);
+        if (button) button.disabled = (id === "maskClearBtn" && named) ? false : !_maskHasCoverage;
     }
     const selection = document.getElementById("maskSelectionStatus");
-    if (selection) selection.textContent = S.selection.active ? "Selection limits coverage; export is binary" : "Hard round · pressure off";
+    if (selection) selection.textContent = named
+        ? (S.selection.active ? "Selection limits coverage" : "Soft brush · sent cut at 40%")
+        : (S.selection.active ? "Selection limits coverage; export is binary" : "Hard round · pressure off");
     for (const id of ["inpaintBar", "softInpaintSection"]) {
         const bar = document.getElementById(id);
         if (bar) bar.style.display = S.tool === "mask" || S._userMaskMode ? "" : "none";
@@ -567,18 +604,26 @@ function drawMarchingAnts(c) {
         // Cache edge pixel positions — only recompute when mask changes
         const w = S.W, h = S.H, mask = S.selection.mask;
         if (!S.selection._edgeCache || S.selection._edgeCacheMask !== mask || S.selection._edgeCacheLen !== mask.length) {
-            const edges = [];
-            for (let py = 0; py < h; py++) {
-                for (let px = 0; px < w; px++) {
-                    if (mask[py * w + px] === 0) continue;
-                    const idx = py * w + px;
-                    if (px === 0 || px === w - 1 || py === 0 || py === h - 1 ||
-                        mask[idx - 1] === 0 || mask[idx + 1] === 0 ||
-                        mask[idx - w] === 0 || mask[idx + w] === 0) {
-                        edges.push(px, py);
+            // CT4: a soft selection's ants run where it is half selected,
+            // as Photoshop draws them; a selection nowhere half selected
+            // shows its outer edge instead of nothing.
+            const trace = (cut) => {
+                const edges = [];
+                for (let py = 0; py < h; py++) {
+                    for (let px = 0; px < w; px++) {
+                        const idx = py * w + px;
+                        if (mask[idx] < cut) continue;
+                        if (px === 0 || px === w - 1 || py === 0 || py === h - 1 ||
+                            mask[idx - 1] < cut || mask[idx + 1] < cut ||
+                            mask[idx - w] < cut || mask[idx + w] < cut) {
+                            edges.push(px, py);
+                        }
                     }
                 }
-            }
+                return edges;
+            };
+            let edges = trace(128);
+            if (!edges.length) edges = trace(1);
             S.selection._edgeCache = edges;
             S.selection._edgeCacheMask = mask;
             S.selection._edgeCacheLen = mask.length;
@@ -753,10 +798,16 @@ function _redraw() {
 
     // Draw overlays in zoom space
     if (S.selection.active && S.selection.mask) drawMarchingAnts(c);
+    // CT10 Patch: what the brush has marked so far, tinted.
+    if (S._patchMask && S._patchOverlay) {
+        C.applyDisplayTransform(c);
+        c.drawImage(S._patchOverlay, 0, 0);
+        c.setTransform(1, 0, 0, 1, 0, 0);
+    }
     if (S.transform.active) { drawTransformHandles(c); _syncTransformInputs(); }
     // Selection drag preview
-    if (S.selection.dragging && (S.tool === "select" || S.tool === "ellipse") && S.selection.rect) {
-        const z = S.zoom, r = S.selection.rect;
+    if (S.selection.dragging && (S.tool === "select" || S.tool === "ellipse") && S.selection.draft) {
+        const z = S.zoom, r = S.selection.draft;
         C.applyDisplayTransform(c);
         c.save();
         c.strokeStyle = "rgba(100,180,255,0.6)"; c.lineWidth = 1 / z.scale;
@@ -929,7 +980,11 @@ function posSamples(e) {
     return I.samplesFrom(e, C.screenToDoc);
 }
 
+const _SELECTION_TOOLS = new Set(["select", "ellipse", "lasso", "polylasso", "maglasso", "wand"]);
+// CT4: Shift adds, Alt subtracts, Shift+Alt intersects -- Photoshop's keys, and
+// the Masks panel's own (`_selectionModeOf`). Shift+Alt used to read as Add.
 function getSelModifier(e) {
+    if (e.shiftKey && e.altKey) return "intersect";
     if (e.shiftKey) return "add";
     if (e.altKey) return "subtract";
     return "replace";
@@ -963,8 +1018,13 @@ function bindCanvas() {
             e.preventDefault();
             return;
         }
+        // CT4: Alt+drag pans, except where Alt means something else: Clone
+        // (set the source) and the selection tools (Subtract; Shift+Alt
+        // Intersect). Before, the pan took every Alt drag and those modes
+        // were unreachable -- as in the Extension. Space, middle and right
+        // drag still pan everywhere.
         if (e.button === 2 || e.button === 1 || (e.button === 0 && _spaceHeld) ||
-            (e.button === 0 && e.altKey && S.tool !== "clone")) {
+            (e.button === 0 && e.altKey && S.tool !== "clone" && !_SELECTION_TOOLS.has(S.tool))) {
             S.zoom.panning = true;
             S.zoom.panStartX = e.clientX; S.zoom.panStartY = e.clientY;
             S.zoom.panOxStart = S.zoom.ox; S.zoom.panOyStart = S.zoom.oy;
@@ -1098,23 +1158,24 @@ function bindCanvas() {
         }
 
         if (S.tool === "eyedropper") { C.pickColor(p); updateColorUI(); _redraw(); return; }
-        if (S.tool === "fill") { C.saveUndo("Flood fill"); C.floodFill(p); renderHistoryPanel(); _redraw(); return; }
+        if (S.tool === "fill") {
+            // CT12: a fill that changes nothing leaves history as it was.
+            const undo = S.undoStack.slice(), redo = S.redoStack.slice(), dirty = S._canvasDirty;
+            C.saveUndo("Flood fill");
+            if (!C.floodFill(p)) { S.undoStack = undo; S.redoStack = redo; S._canvasDirty = dirty; }
+            renderHistoryPanel(); _redraw(); return;
+        }
 
         // Wand
         if (S.tool === "wand") {
             const mod = getSelModifier(e);
+            C.beginSelectionStep("Select: Magic wand");   // S6: closed below
             const result = C.magicWandSelect(p);
             if (result) {
-                if (mod !== "replace" && S.selection.mask) {
-                    C.selectionModify(result.mask, mod);
-                } else {
-                    S.selection.mask = result.mask;
-                    S.selection.rect = result.rect;
-                    S.selection.active = true;
-                    S.selection._isMaskBased = true;
-                }
-                startMarchingAnts();
+                if (C.applySelection(result.mask, mod, { maskBased: true })) startMarchingAnts();   // CT4
+                else stopMarchingAnts();
             }
+            C.endSelectionStep(); renderHistoryPanel();
             _redraw(); return;
         }
 
@@ -1124,16 +1185,27 @@ function bindCanvas() {
                 // Begin transform
                 const L = C.activeLayer(); if (!L) return;
                 let bounds;
-                if (S.selection.active && S.selection.rect) bounds = { ...S.selection.rect };
+                const partOfLayer = !!(S.selection.active && S.selection.rect);
+                if (partOfLayer) {
+                    // CT11: inside the document (a shape's rect may reach past it).
+                    const r = S.selection.rect;
+                    const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
+                    const x1 = Math.min(S.W, Math.ceil(r.x + r.w)), y1 = Math.min(S.H, Math.ceil(r.y + r.h));
+                    bounds = x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+                }
                 else bounds = C.getLayerContentBounds(L);
                 if (!bounds) return;
+                const redoBefore = S.redoStack.slice();
                 C.saveStructuralUndo("Transform");
+                const undoEntry = S.undoStack[S.undoStack.length - 1];
                 const origData = L.ctx.getImageData(0, 0, S.W, S.H);
-                const tc = document.createElement("canvas");
-                tc.width = bounds.w; tc.height = bounds.h;
-                tc.getContext("2d", { colorSpace: "srgb" }).drawImage(L.canvas, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
-                L.ctx.clearRect(bounds.x, bounds.y, bounds.w, bounds.h);
+                // CT11: the selected SHAPE lifts, not its rectangle; Escape
+                // gives the selection back with the pixels, and takes back
+                // the step this begin pushed.
+                const selectionBefore = partOfLayer ? C.selectionSnapshot() : null;
+                const tc = C.liftSelection(L, bounds);
                 S.transform = {
+                    selectionBefore, undoEntry, redoBefore,
                     active: true, bounds: { ...bounds }, origBounds: { ...bounds },
                     originalData: origData,
                     layerIdx: S.activeLayerIdx, canvas: tc, ctx: tc.getContext("2d", { colorSpace: "srgb" }),
@@ -1142,7 +1214,10 @@ function bindCanvas() {
                     skewX: 0, skewY: 0, skewMode: false,
                     perspective: false, grid: null, dragGridPt: null,
                     warp: false, warpGrid: null, warpOrigGrid: null,
-                    warpMode: "rigid", warpDensity: 3
+                    warpMode: "rigid", warpDensity: 3,
+                    // M2: document pixels -> the floating canvas's, when the
+                    // whole layer floats (a word mask can then follow it).
+                    sourcePre: partOfLayer ? null : [1, 0, 0, 1, -bounds.x, -bounds.y]
                 };
                 C.selectionClear(); stopMarchingAnts();
                 _redraw(); return;
@@ -1215,13 +1290,17 @@ function bindCanvas() {
         // Selection tools — preventDefault stops browser from re-rasterizing canvas
         if (S.tool === "select" || S.tool === "ellipse") {
             e.preventDefault();
+            C.beginSelectionStep(S.tool === "select" ? "Select: Rectangle" : "Select: Ellipse");   // S6
             S._selModifier = getSelModifier(e);
             S.selection.dragging = true; S.selection.startX = Math.round(p.x); S.selection.startY = Math.round(p.y);
-            S.selection.rect = { x: S.selection.startX, y: S.selection.startY, w: 0, h: 0 };
+            // CT4: the drag is a DRAFT. Writing it into `rect` overwrote the
+            // committed selection's bounds before the gesture was accepted.
+            S.selection.draft = { x: S.selection.startX, y: S.selection.startY, w: 0, h: 0 };
             _redraw(); return;
         }
         if (S.tool === "lasso") {
             e.preventDefault();
+            C.beginSelectionStep("Select: Lasso");   // S6
             S._selModifier = getSelModifier(e);
             S.selection.dragging = true;
             S.selection.lassoPoints = [{ x: Math.round(p.x), y: Math.round(p.y) }];
@@ -1230,10 +1309,10 @@ function bindCanvas() {
         if (S.tool === "polylasso") {
             e.preventDefault();
             const px2 = Math.round(p.x), py2 = Math.round(p.y);
-            if (!S._polyPoints) { S._polyPoints = [{ x: px2, y: py2 }]; _redraw(); return; }
+            if (!S._polyPoints) { C.beginSelectionStep("Select: Polygon lasso"); S._polyPoints = [{ x: px2, y: py2 }]; _redraw(); return; }
             const first = S._polyPoints[0];
             if (Math.hypot(px2 - first.x, py2 - first.y) < 10 || e.detail >= 2) {
-                _finishPolyLasso(e); return;
+                _finishPolyLasso(e); C.endSelectionStep(); renderHistoryPanel(); return;
             }
             S._polyPoints.push({ x: px2, y: py2 }); _redraw(); return;
         }
@@ -1243,6 +1322,7 @@ function bindCanvas() {
             e.preventDefault();
             const px2 = Math.round(p.x), py2 = Math.round(p.y);
             if (!S._magAnchors) {
+                C.beginSelectionStep("Select: Magnetic lasso");   // S6
                 // First click — compute edge map once, place first anchor
                 if (window.showToast) showToast(_i18n("canvas.inpaint.computingEdges", "Computing edges..."), "info");
                 setTimeout(() => {
@@ -1258,7 +1338,7 @@ function bindCanvas() {
             // Close if near first anchor or double-click
             const first = S._magAnchors[0];
             if (Math.hypot(px2 - first.x, py2 - first.y) < 12 || e.detail >= 2) {
-                _finishMagLasso(e); return;
+                _finishMagLasso(e); C.endSelectionStep(); renderHistoryPanel(); return;
             }
             // Add path from last anchor to click point
             const last = S._magAnchors[S._magAnchors.length - 1];
@@ -1273,7 +1353,7 @@ function bindCanvas() {
         if (S.tool === "crop") {
             e.preventDefault();
             S.selection.dragging = true; S.selection.startX = Math.round(p.x); S.selection.startY = Math.round(p.y);
-            S.selection.rect = { x: S.selection.startX, y: S.selection.startY, w: 0, h: 0 };
+            S.selection.draft = { x: S.selection.startX, y: S.selection.startY, w: 0, h: 0 };   // CT4
             _redraw(); return;
         }
 
@@ -1291,6 +1371,14 @@ function bindCanvas() {
 
         // Clone
         if (S.tool === "clone") {
+            // CT10 Patch: no source; the brush marks what Smart Patch fills.
+            if (S._cloneMode === "patch") {
+                if (!C.noteStrokeUndo("Smart Patch")) return;
+                S.stroke.points = [];
+                S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure;
+                _capture(cv, e.pointerId);
+                C.patchBegin(); C.patchDab(p.x, p.y, p.pressure); _redraw(); return;
+            }
             if (e.altKey) { S._cloneSource = { x: p.x, y: p.y }; S._cloneOffset = null; return; }
             if (!S._cloneSource) return;
             if (!C.noteStrokeUndo("Clone stamp")) return;
@@ -1536,7 +1624,7 @@ function bindCanvas() {
             if (e.shiftKey) { const sz = Math.max(w, h); w = sz; h = sz; }
             const sx = Math.round(p.x) < S.selection.startX ? S.selection.startX - w : S.selection.startX;
             const sy = Math.round(p.y) < S.selection.startY ? S.selection.startY - h : S.selection.startY;
-            S.selection.rect = { x: sx, y: sy, w: w, h: h };
+            S.selection.draft = { x: sx, y: sy, w: w, h: h };
             _redraw(); return;
         }
         if (S.tool === "lasso" && S.selection.dragging) {
@@ -1560,10 +1648,10 @@ function bindCanvas() {
             h = Math.max(8, Math.round(h / 8) * 8);
             const sx = Math.round(p.x) < S.selection.startX ? S.selection.startX - w : S.selection.startX;
             const sy = Math.round(p.y) < S.selection.startY ? S.selection.startY - h : S.selection.startY;
-            S.selection.rect = { x: sx, y: sy, w, h };
+            S.selection.draft = { x: sx, y: sy, w, h };
             // Draw crop preview
             C.composite();
-            const c = S.ctx, z = S.zoom, r = S.selection.rect;
+            const c = S.ctx, z = S.zoom, r = S.selection.draft;
             C.applyDisplayTransform(c);
             c.save();
             c.fillStyle = "rgba(0,0,0,0.5)";
@@ -1621,7 +1709,8 @@ function bindCanvas() {
             const dx = sp.x - S.stroke.lx, dy = sp.y - S.stroke.ly;
             const dist = Math.hypot(dx, dy), step = Math.max(2, C.brushPx() * 0.4);
             const steps = Math.max(1, Math.ceil(dist / step));
-            for (let i = 1; i <= steps; i++) { const t = i / steps; C.cloneStamp(S.stroke.lx + dx * t, S.stroke.ly + dy * t, sp.p); }
+            const dab = S._patchMask ? C.patchDab : C.cloneStamp;   // CT10 Patch
+            for (let i = 1; i <= steps; i++) { const t = i / steps; dab(S.stroke.lx + dx * t, S.stroke.ly + dy * t, sp.p); }
             S.stroke.lx = sp.x; S.stroke.ly = sp.y; S.stroke.lp = sp.p;
             _redraw(); return;
         }
@@ -1717,15 +1806,15 @@ function bindCanvas() {
         // Selection up
         if ((S.tool === "select") && S.selection.dragging) {
             S.selection.dragging = false;
-            _finalizeMarquee(); return;
+            _finalizeMarquee(); C.endSelectionStep(); renderHistoryPanel(); return;
         }
         if (S.tool === "ellipse" && S.selection.dragging) {
             S.selection.dragging = false;
-            _finalizeEllipse(); return;
+            _finalizeEllipse(); C.endSelectionStep(); renderHistoryPanel(); return;
         }
         if (S.tool === "lasso" && S.selection.dragging) {
             S.selection.dragging = false;
-            _finalizeLasso(); return;
+            _finalizeLasso(); C.endSelectionStep(); renderHistoryPanel(); return;
         }
         // Crop up
         if (S.tool === "crop" && S.selection.dragging) {
@@ -1764,6 +1853,7 @@ function bindCanvas() {
         }
         // Clone up
         if (S.tool === "clone" && S.drawing) {
+            if (S._patchMask) _smartPatchSaid(C.patchEnd());   // CT10 Patch
             C.clearStrokeUndo();
             S.drawing = false;
             _endWebGLLiveFallback();
@@ -1861,9 +1951,7 @@ function bindCanvas() {
             // Notify Live Painting of canvas change
             if (window.Live && Live.active) Live.onCanvasChanged();
         }
-        if (S.selection.dragging && !stillCaptured) {
-            S.selection.dragging = false; S.selection.lassoPoints = null;
-        }
+        if (S.selection.dragging && !stillCaptured) _abandonSelectionDrag();
         if (!stillCaptured) { S.drawing = false; _endWebGLLiveFallback(); }
         // The cursor preview follows the pointer out either way: a brush ring
         // hanging at the last position inside the Canvas is a lie about where
@@ -1890,7 +1978,7 @@ function bindCanvas() {
         if (S.drawing && S.stroke.pointerId != null && e.pointerId !== S.stroke.pointerId) return;
         if (window.StudioInput && e) window.StudioInput.release(cv, e.pointerId);
         _brushResizing = null;
-        if (S.selection.dragging) { S.selection.dragging = false; S.selection.lassoPoints = null; }
+        if (S.selection.dragging) _abandonSelectionDrag();
         if (window.StudioBrushV2Adapter) window.StudioBrushV2Adapter.cancel();
         C.abortStroke();
         _endWebGLLiveFallback();
@@ -1908,6 +1996,7 @@ function bindCanvas() {
         // No pointerId to release here -- a blur is not a pointer event -- but
         // the stroke still has to be rolled back rather than abandoned.
         _brushResizing = null;
+        if (S.selection.dragging) _abandonSelectionDrag();
         if (window.StudioBrushV2Adapter) window.StudioBrushV2Adapter.cancel();
         C.abortStroke();
         _endWebGLLiveFallback();
@@ -1923,29 +2012,61 @@ function bindCanvas() {
 // ========================================================================
 // SELECTION FINALIZATION
 // ========================================================================
+/** CT4: Feather / Grow / Shrink the selection by a number of pixels, one undo
+ *  step. Feather is the same Gaussian as a mask's Feather; Grow and Shrink the
+ *  same as a mask's Grow. */
+function _adjustSelection(kind) {
+    const label = { feather: "Feather", grow: "Grow", shrink: "Shrink" }[kind];
+    const ans = prompt(label + " the selection by how many pixels?", kind === "feather" ? "8" : "4");
+    if (ans === null) return;
+    const px = Math.round(Number(ans));
+    if (!(px >= 1 && px <= 500)) {
+        if (window.showToast) showToast("Enter a whole number of pixels from 1 to 500.", "error");
+        return;
+    }
+    C.selectionStep("Select: " + label + " " + px + " px",
+        () => kind === "feather" ? C.featherSelection(px) : C.growSelection(kind === "grow" ? px : -px));
+    if (S.selection.active) startMarchingAnts(); else stopMarchingAnts();
+    renderHistoryPanel(); _redraw();
+}
+
+/** CT4: a selection drag given up (pointer cancel, leave, window blur,
+ *  Escape): the committed selection is exactly what it was, and no step.
+ *  A crop box is simply dropped. */
+function _abandonSelectionDrag() {
+    S.selection.dragging = false; S.selection.lassoPoints = null; S.selection.draft = null;
+    if (S.tool !== "crop") C.cancelSelectionStep();
+    if (S.selection.active) startMarchingAnts(); else stopMarchingAnts();
+    _redraw(); renderHistoryPanel();
+}
+
+// CT4: every finalizer builds its shape's mask and hands it to
+// `C.applySelection`, which owns the four modes, the bounds and the empty
+// case. They used to combine inline and then overwrite the combined
+// selection's bounds with the new shape's, and mark an emptied selection
+// active.
+function _selectionDone(any) {
+    if (any) startMarchingAnts(); else stopMarchingAnts();
+    _redraw();
+}
+
 function _finalizeMarquee() {
-    const r = S.selection.rect;
-    if (!r || r.w < 2 || r.h < 2) { if (S._selModifier === "replace") C.selectionClear(); stopMarchingAnts(); _redraw(); return; }
+    const r = S.selection.draft;
+    S.selection.draft = null;
+    const mod = S._selModifier || "replace";
+    if (!r || r.w < 2 || r.h < 2) { if (mod === "replace") C.selectionClear(); _selectionDone(S.selection.active); return; }
     const x0 = Math.max(0, Math.round(r.x)), y0 = Math.max(0, Math.round(r.y));
     const x1 = Math.min(S.W, Math.round(r.x + r.w)), y1 = Math.min(S.H, Math.round(r.y + r.h));
     const newMask = new Uint8Array(S.W * S.H);
     for (let py = y0; py < y1; py++) for (let px = x0; px < x1; px++) newMask[py * S.W + px] = 255;
-    const mod = S._selModifier || "replace";
-    if (mod !== "replace" && S.selection.active && S.selection.mask) {
-        C.selectionModify(newMask, mod);
-        S.selection._isMaskBased = true; S.selection._isLasso = false; S.selection._isEllipse = false;
-    } else {
-        S.selection.rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-        S.selection.mask = newMask;
-        S.selection.active = true;
-        S.selection._isLasso = false; S.selection._isEllipse = false; S.selection._isMaskBased = false;
-    }
-    startMarchingAnts(); _redraw();
+    _selectionDone(C.applySelection(newMask, mod, { rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } }));
 }
 
 function _finalizeEllipse() {
-    const r = S.selection.rect;
-    if (!r || Math.abs(r.w) < 2 || Math.abs(r.h) < 2) { if (S._selModifier === "replace") C.selectionClear(); stopMarchingAnts(); _redraw(); return; }
+    const r = S.selection.draft;
+    S.selection.draft = null;
+    const mod = S._selModifier || "replace";
+    if (!r || Math.abs(r.w) < 2 || Math.abs(r.h) < 2) { if (mod === "replace") C.selectionClear(); _selectionDone(S.selection.active); return; }
     let x0 = r.x, y0 = r.y, w = r.w, h = r.h;
     if (w < 0) { x0 += w; w = -w; } if (h < 0) { y0 += h; h = -h; }
     x0 = Math.max(0, Math.round(x0)); y0 = Math.max(0, Math.round(y0));
@@ -1957,65 +2078,35 @@ function _finalizeEllipse() {
         const dx = (px - cx) / rx, dy = (py - cy) / ry;
         if (dx * dx + dy * dy <= 1) newMask[py * S.W + px] = 255;
     }
-    const mod = S._selModifier || "replace";
-    if (mod !== "replace" && S.selection.active && S.selection.mask) {
-        C.selectionModify(newMask, mod);
-        S.selection._isMaskBased = true; S.selection._isLasso = false; S.selection._isEllipse = false;
-    } else {
-        S.selection.rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-        S.selection.mask = newMask; S.selection.active = true; S.selection._isEllipse = true;
-    }
-    startMarchingAnts(); _redraw();
+    _selectionDone(C.applySelection(newMask, mod, { ellipse: true, rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } }));
+}
+
+/** A closed polygon (lasso, polygon, magnetic) into the selection. */
+function _applyPolygon(pts, mod) {
+    const newMask = new Uint8Array(S.W * S.H);
+    C.fillPolygonMask(pts, newMask, S.W, S.H);
+    return C.applySelection(newMask, mod, { contour: pts });
 }
 
 function _finalizeLasso() {
     const pts = S.selection.lassoPoints;
-    if (!pts || pts.length < 3) { if ((S._selModifier || "replace") === "replace") C.selectionClear(); stopMarchingAnts(); _redraw(); return; }
+    const mod = S._selModifier || "replace";
+    S.selection.lassoPoints = null;
+    if (!pts || pts.length < 3) { if (mod === "replace") C.selectionClear(); _selectionDone(S.selection.active); return; }
     const simplified = [pts[0]];
     for (let i = 1; i < pts.length; i++) {
         if (Math.hypot(pts[i].x - simplified[simplified.length - 1].x, pts[i].y - simplified[simplified.length - 1].y) >= 2)
             simplified.push(pts[i]);
     }
-    if (simplified.length < 3) { if ((S._selModifier || "replace") === "replace") C.selectionClear(); _redraw(); return; }
-    const newMask = new Uint8Array(S.W * S.H);
-    C.fillPolygonMask(simplified, newMask, S.W, S.H);
-    const mod = S._selModifier || "replace";
-    if (mod !== "replace" && S.selection.active && S.selection.mask) {
-        C.selectionModify(newMask, mod);
-        S.selection._isMaskBased = true; S.selection._isLasso = false; S.selection._isEllipse = false;
-        S.selection._contour = null;
-    } else {
-        S.selection.mask = newMask;
-    }
-    let x0 = S.W, y0 = S.H, x1 = 0, y1 = 0;
-    for (const p of simplified) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
-    S.selection.rect = { x: Math.max(0, x0), y: Math.max(0, y0), w: Math.min(S.W, x1) - Math.max(0, x0), h: Math.min(S.H, y1) - Math.max(0, y0) };
-    S.selection.active = true;
-    if (!S.selection._isMaskBased) { S.selection._isLasso = true; S.selection._contour = simplified; }
-    S.selection.lassoPoints = null;
-    startMarchingAnts(); _redraw();
+    if (simplified.length < 3) { if (mod === "replace") C.selectionClear(); _selectionDone(S.selection.active); return; }
+    _selectionDone(_applyPolygon(simplified, mod));
 }
 
 function _finishPolyLasso(e) {
     const pts = S._polyPoints;
-    if (!pts || pts.length < 3) { S._polyPoints = null; _redraw(); return; }
-    const mod = getSelModifier(e);
-    const newMask = new Uint8Array(S.W * S.H);
-    C.fillPolygonMask(pts, newMask, S.W, S.H);
-    if (mod !== "replace" && S.selection.mask) {
-        C.selectionModify(newMask, mod);
-        S.selection._isMaskBased = true; S.selection._isLasso = false; S.selection._isEllipse = false;
-        S.selection._contour = null;
-    } else {
-        S.selection.mask = newMask;
-    }
-    let x0 = S.W, y0 = S.H, x1 = 0, y1 = 0;
-    for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
-    S.selection.rect = { x: Math.max(0, x0), y: Math.max(0, y0), w: Math.min(S.W, x1) - Math.max(0, x0), h: Math.min(S.H, y1) - Math.max(0, y0) };
-    S.selection.active = true;
-    if (!S.selection._isMaskBased) { S.selection._isLasso = true; S.selection._contour = pts; }
     S._polyPoints = null;
-    startMarchingAnts(); _redraw();
+    if (!pts || pts.length < 3) { _redraw(); return; }
+    _selectionDone(_applyPolygon(pts, getSelModifier(e)));
 }
 
 function _finishMagLasso(e) {
@@ -2041,23 +2132,8 @@ function _finishMagLasso(e) {
             simplified.push(allPts[i]);
     }
     if (simplified.length < 3) { _clearMagLasso(); _redraw(); return; }
-    const mod = getSelModifier(e);
-    const newMask = new Uint8Array(S.W * S.H);
-    C.fillPolygonMask(simplified, newMask, S.W, S.H);
-    if (mod !== "replace" && S.selection.mask) {
-        C.selectionModify(newMask, mod);
-        S.selection._isMaskBased = true; S.selection._isLasso = false; S.selection._isEllipse = false;
-        S.selection._contour = null;
-    } else {
-        S.selection.mask = newMask;
-    }
-    let x0 = S.W, y0 = S.H, x1 = 0, y1 = 0;
-    for (const p of simplified) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
-    S.selection.rect = { x: Math.max(0, x0), y: Math.max(0, y0), w: Math.min(S.W, x1) - Math.max(0, x0), h: Math.min(S.H, y1) - Math.max(0, y0) };
-    S.selection.active = true;
-    S.selection._isLasso = true; S.selection._contour = simplified;
     _clearMagLasso();
-    startMarchingAnts(); _redraw();
+    _selectionDone(_applyPolygon(simplified, getSelModifier(e)));
 }
 
 function _clearMagLasso() {
@@ -2066,12 +2142,14 @@ function _clearMagLasso() {
 }
 
 function _finalizeCrop() {
-    const r = S.selection.rect;
-    if (!r || r.w < 8 || r.h < 8) { S.selection.rect = null; _redraw(); return; }
+    // CT4: the crop box is a draft; the selection's own bounds are left alone.
+    const r = S.selection.draft;
+    S.selection.draft = null;
+    if (!r || r.w < 8 || r.h < 8) { _redraw(); return; }
     const cx = Math.max(0, Math.round(r.x)), cy = Math.max(0, Math.round(r.y));
     const cw = Math.min(S.W - cx, Math.round(r.w)), ch = Math.min(S.H - cy, Math.round(r.h));
-    if (cw < 8 || ch < 8) { S.selection.rect = null; _redraw(); return; }
-    if (!confirm(`Crop to ${cw}×${ch}?`)) { S.selection.rect = null; _redraw(); return; }
+    if (cw < 8 || ch < 8) { _redraw(); return; }
+    if (!confirm(`Crop to ${cw}×${ch}?`)) { _redraw(); return; }
     C.saveStructuralUndo("Crop");
     // Extract crop from each layer
     const croppedLayers = S.layers.map(L => {
@@ -2086,13 +2164,25 @@ function _finalizeCrop() {
     S.stroke.canvas.width = cw; S.stroke.canvas.height = ch;
     S.mask.canvas.width = cw; S.mask.canvas.height = ch; S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
     S.mask.ctx.drawImage(croppedMask, 0, 0);
+    // M1. The named masks crop with the picture, as the Inpaint mask does.
+    for (const m of S.masks) {
+        const tc = document.createElement("canvas"); tc.width = cw; tc.height = ch;
+        tc.getContext("2d", { colorSpace: "srgb" }).drawImage(m.canvas, cx, cy, cw, ch, 0, 0, cw, ch);
+        m.canvas.width = cw; m.canvas.height = ch;
+        m.ctx = m.canvas.getContext("2d", { colorSpace: "srgb" });
+        m.ctx.drawImage(tc, 0, 0);
+    }
     for (let i = 0; i < S.layers.length; i++) {
         if (!S.layers[i].canvas) continue;
         S.layers[i].canvas.width = cw; S.layers[i].canvas.height = ch;
         S.layers[i].ctx = S.layers[i].canvas.getContext("2d", { colorSpace: "srgb" });
         if (croppedLayers[i]) S.layers[i].ctx.drawImage(croppedLayers[i], 0, 0);
     }
-    S.selection.rect = null;
+    // M2. Each layer's picture moved by the crop's corner.
+    C.followLayerSources([1, 0, 0, 1, -cx, -cy]);
+    // The selection was the old document's size; a crop clears it in passing,
+    // as a resize does (not a step: S6).
+    C.selectionClear(); stopMarchingAnts();
     // Update width/height params so gen uses correct dimensions
     const wEl = document.getElementById("paramWidth");
     const hEl = document.getElementById("paramHeight");
@@ -2299,6 +2389,10 @@ function smartRotate(angleRad) {
         perspective: false, grid: null, dragGridPt: null,
         warp: false, warpGrid: null, warpOrigGrid: null,
         warpMode: "rigid", warpDensity: 3,
+        // M2: document pixels -> the rotated floating canvas, as drawn above.
+        sourcePre: C.mulAffine([1, 0, 0, 1, tcW / 2, tcH / 2],
+            C.mulAffine([Math.cos(angleRad), Math.sin(angleRad), -Math.sin(angleRad), Math.cos(angleRad), 0, 0],
+                        [1, 0, 0, 1, -bw / 2 - bounds.x, -bh / 2 - bounds.y])),
     };
     C.selectionClear(); stopMarchingAnts();
 
@@ -2409,6 +2503,25 @@ function _commitTransform() {
         L.ctx.scale(fh ? -1 : 1, fv ? -1 : 1);
         L.ctx.drawImage(S.transform.canvas, -b.w / 2, -b.h / 2, b.w, b.h);
         L.ctx.restore();
+    }
+    // M2 (spec Q7). A picture on this layer moved with it: compose the same
+    // affine the draw above applied, after the begin's document -> floating
+    // canvas step. A warp, a perspective or a part of the layer cannot be
+    // followed, and a word mask made later is warned about.
+    if (L.source) {
+        const pre = S.transform.sourcePre;
+        if (!pre || S.transform.warp || S.transform.perspective) {
+            C.followLayerSource(L, null);
+        } else {
+            const b = S.transform.bounds, rot = S.transform.rotation || 0;
+            const tcw = S.transform.canvas.width, tch = S.transform.canvas.height;
+            let post = [1, 0, 0, 1, b.x + b.w / 2, b.y + b.h / 2];
+            post = C.mulAffine(post, [Math.cos(rot), Math.sin(rot), -Math.sin(rot), Math.cos(rot), 0, 0]);
+            post = C.mulAffine(post, [1, S.transform.skewY || 0, S.transform.skewX || 0, 1, 0, 0]);
+            post = C.mulAffine(post, [S.transform.flipH ? -1 : 1, 0, 0, S.transform.flipV ? -1 : 1, 0, 0]);
+            post = C.mulAffine(post, [b.w / tcw, 0, 0, b.h / tch, -b.w / 2, -b.h / 2]);
+            C.followLayerSource(L, C.mulAffine(post, pre));
+        }
     }
     // Bump the composite version so the cached composite buffer
     // (canvas-core's _compBufCache) and the WebGL preview texture both
@@ -2716,6 +2829,10 @@ async function savePSD() {
         });
     }
 
+    // S7: the named masks, as layer masks in a "Masks" group at the top.
+    const maskGroup = C.masksToPsdGroup();
+    if (maskGroup) children.push(maskGroup);
+
     // BE10. TOLD, NOT DISCOVERED. The grain is already in the layer pixels, so
     // the appearance travels. The paper SETTING does not -- a PSD has nowhere
     // to put it, the same reason Studio's adjustment layers travel as a name
@@ -2762,7 +2879,11 @@ async function savePSD() {
  *   layer groups     PSD folders are flattened away by taking only children
  *                    that carry pixels. Studio has no group concept, so
  *                    inventing one here would be a second layer model.
- *   effects/masks    layer styles, vector masks and clipping are not read.
+ *   effects/masks    layer styles, vector masks and clipping are not read,
+ *                    nor a layer mask on a layer with pixels. Studio's named
+ *                    masks ARE read (S7): `savePSD` writes them as layer
+ *                    masks in a "Masks" group, and they replace the
+ *                    document's masks, as the rest of the document is replaced.
  *   adjustments      Studio WRITES its own adjustment layers as a name tag
  *                    (`⚙ name |ADJ|{json}`) and reads that tag back, so a
  *                    Studio-written PSD keeps them. Photoshop's own adjustment
@@ -2849,13 +2970,15 @@ async function openPSD(file) {
     }
     S.activeLayerIdx = S.layers.length - 1;
     S.selection = { active: false, mask: null, rect: null, dragging: false };
+    const maskCount = C.replaceMasksFromPsd(C.masksFromPsd(doc));
     C.markCompositeDirty && C.markCompositeDirty();
     C.composite();
     syncCanvasToViewport();
     C.zoomFit();
-    renderLayerPanel(); renderHistoryPanel(); updateStatus(); _redraw();
+    renderLayerPanel(); renderMaskPanel(); renderHistoryPanel(); updateStatus(); _updateMaskToggleUI(); _redraw();
     if (window.showToast) {
         showToast(`Opened ${flat.length} layer${flat.length === 1 ? "" : "s"} `
+            + (maskCount ? `and ${maskCount} mask${maskCount === 1 ? "" : "s"} ` : "")
             + `at ${doc.width}\u00d7${doc.height}`, "success");
     }
     return true;
@@ -3549,7 +3672,763 @@ function _buildAdjEditor(L, redraw) {
 // ========================================================================
 // LAYER PANEL
 // ========================================================================
+// ---- the Masks panel (M1, Evidence/NAMED-MASKS-SPEC.md section 3) ----------
+// One row for the Inpaint mask (always first; cannot be renamed or deleted)
+// and one per named mask. Clicking a row makes it what the Mask tool paints;
+// Ctrl-click loads it as the selection (Shift adds, Alt subtracts, Shift+Alt
+// intersects). Names are text only: a word mask is named after a prompt word.
+function _maskOriginText(m) {
+    if (m === S.mask) return "Generation mask";
+    const o = m.origin || {};
+    if (o.kind === "word") return "Word: " + (o.word || "");
+    if (o.kind === "selection") return "From selection";
+    if (o.kind === "psd") return "From a PSD";
+    if (o.kind === "range") return o.band ? "Range: " + o.band : "Range: " + (o.colour || "colour");
+    return "Painted";
+}
+// CT9 groundwork: Canvas Size. Grow or trim the document around an anchor,
+// nothing scaled (`C.canvasSize`). Sizes are rounded to a multiple of 8, as
+// Crop rounds them, because that is what generation takes.
+function _openCanvasSizeDialog() {
+    if (document.getElementById("canvasSizeDialog")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "canvasSizeDialog";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;";
+    const box = document.createElement("div");
+    box.style.cssText = "background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:10px;";
+    box.innerHTML = `<strong>Canvas Size</strong>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <label>Width <input id="csWidth" type="number" min="8" step="8" style="width:80px" class="param-val"></label>
+          <label>Height <input id="csHeight" type="number" min="8" step="8" style="width:80px" class="param-val"></label>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <span>Anchor</span>
+          <div id="csAnchor" style="display:grid;grid-template-columns:repeat(3,22px);gap:3px;"></div>
+        </div>
+        <p style="margin:0;font-size:11px;color:var(--text-3,#999);">Nothing is scaled: new space is transparent, and a smaller size trims. Rounded to a multiple of 8.</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="defaults-btn" id="csCancel">Cancel</button>
+          <button class="defaults-btn" id="csApply">Apply</button>
+        </div>`;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    box.querySelector("#csWidth").value = S.W;
+    box.querySelector("#csHeight").value = S.H;
+    let anchor = [0.5, 0.5];
+    const grid = box.querySelector("#csAnchor");
+    for (const ay of [0, 0.5, 1]) for (const ax of [0, 0.5, 1]) {
+        const b = document.createElement("button");
+        b.className = "ctx-mode-btn"; b.dataset.ax = ax; b.dataset.ay = ay;
+        b.style.cssText = "width:22px;height:22px;padding:0;";
+        b.title = (ay === 0 ? "Top" : ay === 1 ? "Bottom" : "Middle") + " " + (ax === 0 ? "left" : ax === 1 ? "right" : "centre");
+        if (ax === 0.5 && ay === 0.5) b.classList.add("active");
+        b.addEventListener("click", () => {
+            grid.querySelectorAll("button").forEach(x => x.classList.remove("active"));
+            b.classList.add("active"); anchor = [ax, ay];
+        });
+        grid.appendChild(b);
+    }
+    const close = () => overlay.remove();
+    box.querySelector("#csCancel").addEventListener("click", close);
+    overlay.addEventListener("pointerdown", e => { if (e.target === overlay) close(); });
+    box.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); close(); } });
+    box.querySelector("#csApply").addEventListener("click", () => {
+        const w = Math.max(8, Math.round(Number(box.querySelector("#csWidth").value) / 8) * 8);
+        const h = Math.max(8, Math.round(Number(box.querySelector("#csHeight").value) / 8) * 8);
+        if (!Number.isFinite(w) || !Number.isFinite(h)) return;
+        close();
+        if (!C.canvasSize(w, h, anchor[0], anchor[1])) return;
+        stopMarchingAnts();
+        const wEl = document.getElementById("paramWidth"), hEl = document.getElementById("paramHeight");
+        if (wEl) wEl.value = w;
+        if (hEl) hEl.value = h;
+        syncCanvasToViewport(); C.zoomFit(); updateStatus();
+        renderLayerPanel(); renderMaskPanel(); renderHistoryPanel(); _redraw();
+        if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+    });
+    box.querySelector("#csWidth").focus();
+}
+
+// CT9: Outpaint. Grows the chosen sides, pre-fills them from the picture's
+// edge (a layer of its own), masks them plus an overlap and arms inpainting
+// (`C.outpaintPrepare`); the owner then presses Generate with their own
+// inpaint settings. Sides are rounded to a multiple of 8, as Crop is.
+function _openOutpaintDialog() {
+    if (document.getElementById("outpaintDialog")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "outpaintDialog";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;";
+    const box = document.createElement("div");
+    box.style.cssText = "background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;min-width:300px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:10px;";
+    const field = (id, label, value) => `<label style="display:flex;justify-content:space-between;gap:8px;align-items:center;">${label}
+        <input id="${id}" type="number" min="0" step="8" value="${value}" style="width:80px" class="param-val"></label>`;
+    box.innerHTML = `<strong>Outpaint</strong>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+          ${field("opLeft", "Left", 0)}${field("opRight", "Right", 256)}
+          ${field("opTop", "Top", 0)}${field("opBottom", "Bottom", 0)}
+        </div>
+        ${field("opOverlap", "Overlap into the picture", 32)}
+        <label style="display:flex;gap:8px;align-items:center;" title="A second, light pass over the new area at full detail. Off: one pass, faster.">
+          <input id="opRefine" type="checkbox"${window.Prefs?.get?.("outpaint_refine") ? " checked" : ""}> Refine new area (slower, crisper)</label>
+        <p style="margin:0;font-size:11px;color:var(--text-3,#999);max-width:300px;">The new area is filled from the picture's edge (a layer, "Outpaint fill") and masked with an overlap; then press Generate. Your inpaint settings are used as they are -- a high Denoise blends the new area best.</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="defaults-btn" id="opCancel">Cancel</button>
+          <button class="defaults-btn" id="opApply">Extend</button>
+        </div>`;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    box.querySelector("#opCancel").addEventListener("click", close);
+    overlay.addEventListener("pointerdown", e => { if (e.target === overlay) close(); });
+    box.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); close(); } });
+    const px = id => Math.max(0, Math.round((Number(box.querySelector("#" + id).value) || 0) / 8) * 8);
+    box.querySelector("#opApply").addEventListener("click", () => {
+        const sides = { left: px("opLeft"), right: px("opRight"), top: px("opTop"), bottom: px("opBottom") };
+        const overlap = Math.max(0, Math.round(Number(box.querySelector("#opOverlap").value) || 0));
+        // Owner: "Refine optional" -- off unless chosen, and remembered.
+        const refine = !!box.querySelector("#opRefine")?.checked;
+        try { window.Prefs?.set?.("outpaint_refine", refine); } catch (_) {}
+        close();
+        const done = C.outpaintPrepare(sides, overlap, { refine });
+        if (!done) { if (window.showToast) showToast("Choose at least one side to extend.", "info"); return; }
+        stopMarchingAnts();
+        const wEl = document.getElementById("paramWidth"), hEl = document.getElementById("paramHeight");
+        if (wEl) wEl.value = done.width;
+        if (hEl) hEl.value = done.height;
+        syncCanvasToViewport(); C.zoomFit(); updateStatus();
+        renderLayerPanel(); renderMaskPanel(); renderHistoryPanel(); _updateMaskToggleUI(); _redraw();
+        if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+        if (window.showToast) showToast("Ready to outpaint: " + done.width + "×" + done.height + ". Press Generate.", "success");
+    });
+    box.querySelector("#opRight").focus();
+}
+
+// CT5: "From range…" -- a small menu under the Masks panel button. Each entry
+// makes one soft named mask from the visible picture (Develop off).
+function _openRangeMenu(anchor) {
+    let menu = document.getElementById("maskRangeMenu");
+    if (menu) { menu.remove(); return; }
+    menu = document.createElement("div");
+    menu.id = "maskRangeMenu";
+    menu.style.cssText = "position:fixed;z-index:200;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:2px;";
+    const make = (spec) => {
+        menu.remove();
+        const m = C.createRangeMask(spec);
+        if (!m) return;
+        renderMaskPanel(); renderHistoryPanel(); _updateMaskToggleUI(); _redraw();
+        if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+    };
+    const items = [
+        ["Highlights", () => make({ kind: "luminance", band: "highlights" })],
+        ["Midtones", () => make({ kind: "luminance", band: "midtones" })],
+        ["Shadows", () => make({ kind: "luminance", band: "shadows" })],
+        ["Colour range (foreground colour)…", () => {
+            const ans = prompt("Fuzziness for " + S.color + "? (1-255: how far from the colour still counts)", "40");
+            if (ans === null) { menu.remove(); return; }
+            const fuzz = Math.round(Number(ans));
+            if (!(fuzz >= 1 && fuzz <= 255)) {
+                menu.remove();
+                if (window.showToast) showToast("Enter a whole number from 1 to 255.", "error");
+                return;
+            }
+            make({ kind: "colour", hex: S.color, fuzz });
+        }],
+    ];
+    for (const [label, fn] of items) {
+        const b = document.createElement("button");
+        b.className = "ctx-menu-item"; b.textContent = label;
+        b.style.cssText = "text-align:left;padding:5px 12px;background:transparent;border:0;color:inherit;cursor:pointer;border-radius:4px;";
+        b.addEventListener("mouseenter", () => b.style.background = "var(--accent-dim, #333)");
+        b.addEventListener("mouseleave", () => b.style.background = "transparent");
+        b.addEventListener("click", fn);
+        menu.appendChild(b);
+    }
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.left = Math.max(4, Math.min(r.left, window.innerWidth - 260)) + "px";
+    menu.style.top = Math.min(r.bottom + 4, window.innerHeight - 160) + "px";
+    setTimeout(() => document.addEventListener("pointerdown", function away(ev) {
+        if (menu.contains(ev.target) || anchor.contains(ev.target)) return;   // the button toggles it itself
+        menu.remove(); document.removeEventListener("pointerdown", away, true);
+    }, true), 0);
+}
+
+// S8a: remake a word mask from its recipe (words, view, part, Grow, Feather)
+// on the active layer's picture, in place.
+async function _remakeWordMask(m) {
+    const L = C.activeLayer(), o = m.origin || {};
+    const toast = (text, kind) => window.showToast?.(text, kind || "info");
+    if (!L || !L.source) { toast("The active layer has no word data: place a Studio picture on it first."); return; }
+    const words = Array.isArray(o.words) && o.words.length ? o.words : [o.word];
+    const body = { content_hash: L.source.content_hash, words };
+    if (o.view === "object" && o.part) body.part = o.part;
+    let data;
+    try {
+        data = await _wordMaskRequest(body);
+        if (!data.available && data.need_picture && C.layerSourceFresh(L)) {
+            const m0 = L.source.matrix || [1, 0, 0, 1, 0, 0];
+            if (m0[0] === 1 && !m0[1] && !m0[2] && m0[3] === 1 && !m0[4] && !m0[5]
+                    && S.W === L.source.width && S.H === L.source.height) {
+                data = await _wordMaskRequest({ ...body, image_b64: L.canvas.toDataURL("image/png") });
+            }
+        }
+    } catch (e) { toast("The mask could not be remade: " + e.message, "error"); return; }
+    if (!data.available) { toast(data.message || "That picture has no word data.", "error"); return; }
+    const p = data.previews[o.view];
+    if (!p) { toast("The mask could not be remade.", "error"); return; }
+    let cov;
+    try { cov = await _decodeGreyPng(p.png, data.width, data.height); } catch (_) { toast("The mask could not be remade.", "error"); return; }
+    cov = C.shapeCoverage(cov, data.width, data.height, o.grow || 0, o.feather || 0);
+    const made = C.remakeWordMask(m.id, L.id, cov, data.width, data.height);
+    if (!made) { toast("The mask could not be remade.", "error"); return; }
+    toast(made.stale ? "Remade “" + m.name + "”. The layer has been edited since its picture was made; the mask may not line up."
+                     : "Remade “" + m.name + "” on “" + L.name + "”.", made.stale ? "warning" : "success");
+    renderMaskPanel(); renderHistoryPanel(); _updateMaskToggleUI(); _redraw();
+    if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+}
+const _WORD_METHOD = { object: "Object", "object-small": "Object (small part)",
+                       "object-part": "Object (another shape)", "object-click": "Object (clicked)", area: "Area / light",
+                       everything: "Everything else" };
+function _maskTooltip(m, id) {
+    if (id == null) return "Inpaint mask: what inpaints while this row is selected";
+    const o = m.origin || {}, parts = [];
+    if (o.kind === "word") {
+        const words = Array.isArray(o.words) && o.words.length ? o.words.join(" + ") : (o.word || "");
+        parts.push("Word mask: " + words + (_WORD_METHOD[o.method] ? " (" + _WORD_METHOD[o.method] + ")" : ""));
+        if (o.grow || o.feather) parts.push("grow " + (o.grow | 0) + " px, feather " + (o.feather | 0) + " px");
+    } else {
+        parts.push(o.kind === "selection" ? "Mask from a selection"
+                   : o.kind === "psd" ? "Mask from a PSD layer mask"
+                   : o.kind === "range" ? (o.band ? "Mask of the picture's " + o.band
+                                                  : "Mask of colour " + (o.colour || "") + ", fuzziness " + (o.fuzz | 0))
+                   : "Painted mask");
+    }
+    for (const [key, verb] of [["created", "made"], ["remade", "remade"]]) {
+        const when = o[key] ? new Date(o[key]) : null;
+        if (when && !isNaN(when)) parts.push(verb + " " + when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }));
+    }
+    return parts.join(" · ");
+}
+function _selectionModeOf(e) {
+    if (e.shiftKey && e.altKey) return "intersect";
+    if (e.shiftKey) return "add";
+    if (e.altKey) return "subtract";
+    return "replace";
+}
+function _maskRow(m, id) {
+    const isTarget = S.editingMask && (id == null ? C.paintingInpaintMask() : S.maskTarget === id);
+    const row = document.createElement("div");
+    row.className = "layer-item" + (isTarget ? " selected" : "");
+    row.dataset.maskId = id == null ? "inpaint" : String(id);
+
+    const thumb = document.createElement("div");
+    thumb.className = "layer-thumb";
+    if (m.canvas) {
+        try {
+            const tc = document.createElement("canvas"); tc.width = 32; tc.height = 32;
+            const tx = tc.getContext("2d", { colorSpace: "srgb" });
+            tx.fillStyle = "#1a1a1e"; tx.fillRect(0, 0, 32, 32);
+            tx.drawImage(m.canvas, 0, 0, S.W, S.H, 0, 0, 32, 32);
+            thumb.style.backgroundImage = `url(${tc.toDataURL()})`;
+            thumb.style.backgroundSize = "cover";
+        } catch (_) {}
+    }
+
+    const info = document.createElement("div");
+    info.className = "layer-info";
+    const nameEl = document.createElement("div");
+    nameEl.className = "layer-name";
+    nameEl.textContent = id == null ? "Inpaint" : m.name;
+    const meta = document.createElement("div");
+    meta.className = "layer-meta";
+    meta.textContent = _maskOriginText(m);
+    // M3: the mask the next inpaint sends -- the selected one.
+    if (id == null ? S.maskTarget == null : S.maskTarget === id) {
+        const used = document.createElement("span");
+        used.className = "mask-inpaint-badge";
+        used.textContent = " · used for inpainting";
+        meta.appendChild(used);
+    }
+    info.appendChild(nameEl); info.appendChild(meta);
+    if (id != null) {
+        nameEl.addEventListener("dblclick", e => {
+            e.stopPropagation();
+            nameEl.contentEditable = "true"; nameEl.focus();
+            const range = document.createRange(); range.selectNodeContents(nameEl);
+            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+            nameEl.addEventListener("blur", () => {
+                nameEl.contentEditable = "false";
+                if (C.renameMask(id, nameEl.textContent)) renderHistoryPanel();
+                renderMaskPanel(); _syncMaskTargetLabel();
+            }, { once: true });
+            nameEl.addEventListener("keydown", ev => {
+                if (ev.key === "Enter") { ev.preventDefault(); nameEl.blur(); }
+                if (ev.key === "Escape") { nameEl.textContent = m.name; nameEl.blur(); }
+                ev.stopPropagation();
+            });
+        });
+    }
+
+    const vis = document.createElement("div");
+    vis.className = "layer-vis";
+    vis.title = m.visible ? "Hide overlay" : "Show overlay";
+    vis.style.opacity = m.visible ? "1" : "0.35";
+    vis.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    vis.addEventListener("click", e => {
+        e.stopPropagation();
+        m.visible = !m.visible;
+        if (C.markCompositeDirty) C.markCompositeDirty();
+        renderMaskPanel(); _redraw();
+        if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+    });
+
+    // Extras: the mask's colour (a named mask's can change), and a tooltip
+    // with what it is and when it was made. Text only.
+    const swatch = document.createElement(id == null ? "span" : "button");
+    swatch.className = "mask-swatch";
+    swatch.style.background = C.maskColorOf(m);
+    if (id != null) {
+        swatch.type = "button";
+        swatch.title = "Mask colour";
+        swatch.addEventListener("click", e => {
+            e.stopPropagation();
+            const pick = document.createElement("input");
+            pick.type = "color"; pick.value = C.maskColorOf(m);
+            pick.addEventListener("change", () => {
+                if (C.setMaskColor(id, pick.value)) {
+                    renderMaskPanel(); renderHistoryPanel(); _redraw();
+                    if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+                }
+            });
+            pick.click();
+        });
+    }
+    row.title = _maskTooltip(m, id);
+    row.appendChild(thumb); row.appendChild(info);
+    // S8a: a word mask's recipe remade on the active layer's picture.
+    const o = m.origin || {};
+    if (id != null && o.kind === "word" && o.view && o.method !== "object-click") {
+        const remake = document.createElement("button");
+        remake.type = "button"; remake.className = "mask-remake";
+        remake.textContent = "↻";
+        remake.title = "Remake from the same words on the active layer's picture (keeps this mask)";
+        remake.addEventListener("click", e => { e.stopPropagation(); _remakeWordMask(m); });
+        row.appendChild(remake);
+    }
+    row.appendChild(swatch); row.appendChild(vis);
+    row.addEventListener("click", e => {
+        if (e.ctrlKey || e.metaKey) {
+            C.selectionStep("Select: Load " + (id == null ? "Inpaint" : m.name), () => C.loadMaskAsSelection(id, _selectionModeOf(e)));
+            if (S.selection.active) startMarchingAnts(); else stopMarchingAnts();
+            renderHistoryPanel(); _redraw();
+            return;
+        }
+        C.setMaskTarget(id);
+        setTool("mask");
+        renderMaskPanel(); _redraw();
+    });
+    return row;
+}
+function renderMaskPanel() {
+    const panel = document.getElementById("masksList");
+    if (!panel) return;
+    panel.replaceChildren(_maskRow(S.mask, null), ...S.masks.map(m => _maskRow(m, m.id)));
+    // Delete removes a named mask. The Inpaint mask is always there, so with
+    // its row chosen Delete clears it instead (the owner, 2026-10-15: Delete
+    // did nothing on that row).
+    const del = document.getElementById("maskDel");
+    if (del) {
+        const inpaint = S.maskTarget == null;
+        del.disabled = inpaint && !(S.editingMask && C.hasGenerationMask());
+        del.title = inpaint ? "Clear the Inpaint mask (it cannot be deleted)" : "Delete";
+    }
+}
+
+// ---- "From word..." (M2, Evidence/NAMED-MASKS-SPEC.md section 6) -----------
+// For the active layer's picture: its words with strength bars; a word shows
+// three previews over the picture (Object / Area or light / Everything
+// else); clicking one makes a named mask through the layer's current
+// transform. A layer changed since its picture was placed is warned about,
+// and the mask is still made (6.5). Every name and word is text only.
+const _WORD_PREVIEWS = [
+    ["object", "Object", "Crisp edge: a person, a candle, a sun"],
+    ["area", "Area / light", "Soft: sky, glow, reflections"],
+    ["everything", "Everything else", "All but the picture's objects: room, background"],
+];
+async function _wordMaskRequest(body) {
+    const base = (window.API && window.API.base) || "";
+    const r = await fetch(base + "/studio/masks/word", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+    return data;
+}
+/** A greyscale PNG (base64) -> its 0..255 values, one per pixel. */
+function _decodeGreyPng(b64, w, h) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const c = document.createElement("canvas"); c.width = w; c.height = h;
+            const x = c.getContext("2d", { colorSpace: "srgb" });
+            x.drawImage(img, 0, 0, w, h);
+            const d = x.getImageData(0, 0, w, h).data, out = new Uint8Array(w * h);
+            for (let i = 0; i < out.length; i++) out[i] = d[i * 4];
+            resolve(out);
+        };
+        img.onerror = () => reject(new Error("preview did not decode"));
+        img.src = "data:image/png;base64," + b64;
+    });
+}
+// The previews' thumbnails: the layer, with a mask (`cw` x `ch`, covering the
+// picture's `pw` x `ph`) drawn over it through the layer's matrix.
+function _wordPreviewThumb(L, cov, cw, ch, pw, ph, size) {
+    const scale = size / Math.max(S.W, S.H);
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(S.W * scale)); c.height = Math.max(1, Math.round(S.H * scale));
+    const x = c.getContext("2d", { colorSpace: "srgb" });
+    x.fillStyle = "#1a1a1e"; x.fillRect(0, 0, c.width, c.height);
+    x.drawImage(L.canvas, 0, 0, c.width, c.height);
+    const mc = document.createElement("canvas"); mc.width = cw; mc.height = ch;
+    const mx = mc.getContext("2d", { colorSpace: "srgb" });
+    // Tinted in the colour the new mask will take (extras: a colour per mask).
+    const next = C.MASK_COLORS[(Math.max(1, S._nextMaskId) - 1) % C.MASK_COLORS.length];
+    const img = mx.createImageData(cw, ch), rgb = C.hexRgb(next);
+    for (let i = 0; i < cov.length; i++) {
+        const j = i * 4; img.data[j] = rgb.r; img.data[j + 1] = rgb.g; img.data[j + 2] = rgb.b; img.data[j + 3] = cov[i];
+    }
+    mx.putImageData(img, 0, 0);
+    const m = (L.source && L.source.matrix) || [1, 0, 0, 1, 0, 0];
+    x.save();
+    x.setTransform(m[0] * scale, m[1] * scale, m[2] * scale, m[3] * scale, m[4] * scale, m[5] * scale);
+    x.globalAlpha = 0.6;
+    x.drawImage(mc, 0, 0, pw, ph);
+    x.restore();
+    return c;
+}
+/** A coverage at most `long` pixels on its long side (area average), for
+ *  shaping the thumbnails quickly; the mask itself is shaped at full size. */
+function _smallCoverage(cov, w, h, long) {
+    const k = Math.max(1, Math.ceil(Math.max(w, h) / long));
+    const sw = Math.ceil(w / k), sh = Math.ceil(h / k), out = new Uint8Array(sw * sh);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+        let sum = 0, n = 0;
+        for (let yy = y * k; yy < Math.min(h, y * k + k); yy++)
+            for (let xx = x * k; xx < Math.min(w, x * k + k); xx++) { sum += cov[yy * w + xx]; n++; }
+        out[y * sw + x] = Math.round(sum / n);
+    }
+    return { cov: out, w: sw, h: sh, k };
+}
+// Grow and Feather as last chosen, kept while Studio is open.
+// and the preview on show (M2b: one large preview, switched).
+const _wordMaskShape = { grow: 0, feather: 0, view: "object" };
+function _openWordMaskDialog(opts = {}) {
+    const L = C.activeLayer();
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay word-mask-overlay";
+    const box = document.createElement("div");
+    box.className = "modal-box word-mask-box";
+    const title = document.createElement("h3");
+    title.textContent = "Mask from words";
+    const note = document.createElement("p");
+    note.className = "word-mask-note";
+    // The picture's slow part (MobileSAM reading it, then every word's
+    // object) runs in the background from the moment the words arrive; this
+    // bar shows it (the owner, 2026-10-15).
+    const loading = document.createElement("div");
+    loading.className = "word-mask-loading";
+    loading.hidden = true;
+    const loadingText = document.createElement("span");
+    const loadingBar = document.createElement("div");
+    loadingBar.className = "word-mask-loading-bar";
+    const loadingFill = document.createElement("div");
+    loadingFill.className = "word-mask-loading-fill";
+    loadingBar.append(loadingFill);
+    loading.append(loadingText, loadingBar);
+    const body = document.createElement("div");
+    body.className = "word-mask-body";
+    const words = document.createElement("div");
+    words.className = "word-mask-words";
+    const right = document.createElement("div");
+    right.className = "word-mask-right";
+    // One large preview, switched between the three (the owner, 2026-10-15:
+    // three side by side stayed too small to judge an edge).
+    const views = document.createElement("div");
+    views.className = "word-mask-views";
+    views.setAttribute("role", "tablist");
+    const viewButtons = _WORD_PREVIEWS.map(([key, label, hint]) => {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "word-mask-view"; b.dataset.view = key;
+        b.setAttribute("role", "tab"); b.title = hint;
+        const name = document.createElement("span"); name.textContent = label;
+        const pct = document.createElement("span"); pct.className = "word-mask-pct";
+        b.append(name, pct);
+        b.addEventListener("click", () => { _wordMaskShape.view = key; reshape(); });
+        return b;
+    });
+    views.append(...viewButtons);
+    // S4: step through SAM's shapes (larger / smaller part), or click the
+    // picture to make Object the thing there; the words still drive Area and
+    // Everything else.
+    const partsRow = document.createElement("div");
+    partsRow.className = "word-mask-parts";
+    const larger = document.createElement("button");
+    larger.type = "button"; larger.className = "ar-btn"; larger.textContent = "◂ Larger part";
+    const smaller = document.createElement("button");
+    smaller.type = "button"; smaller.className = "ar-btn"; smaller.textContent = "Smaller part ▸";
+    const partsText = document.createElement("span");
+    partsText.className = "word-mask-parts-text";
+    const backToWord = document.createElement("button");
+    backToWord.type = "button"; backToWord.className = "ar-btn"; backToWord.textContent = "Back to the word";
+    partsRow.append(larger, partsText, smaller, backToWord);
+    const stage = document.createElement("div");
+    stage.className = "word-mask-stage";
+    const makeRow = document.createElement("div");
+    makeRow.className = "word-mask-make-row";
+    const method = document.createElement("span");
+    method.className = "word-mask-method";
+    const makeButton = document.createElement("button");
+    makeButton.type = "button"; makeButton.className = "ar-btn primary word-mask-make";
+    makeButton.textContent = "Make mask";
+    makeButton.addEventListener("click", () => {
+        const t = shown && shown.tiles.find(x => x.key === _wordMaskShape.view);
+        if (t) make(t);
+    });
+    makeRow.append(method, makeButton);
+    // Grow (negative shrinks) and Feather, in the picture's pixels (M2b).
+    const shape = document.createElement("div");
+    shape.className = "word-mask-shape";
+    const slider = (label, key, min, max) => {
+        const row = document.createElement("label");
+        row.className = "word-mask-slider";
+        const name = document.createElement("span"); name.textContent = label;
+        const input = document.createElement("input");
+        input.type = "range"; input.min = String(min); input.max = String(max); input.step = "1";
+        input.value = String(_wordMaskShape[key]);
+        input.dataset.shape = key;
+        const value = document.createElement("span"); value.className = "word-mask-value";
+        const showValue = () => { value.textContent = input.value + " px"; };
+        showValue();
+        input.addEventListener("input", () => { _wordMaskShape[key] = Number(input.value); showValue(); reshapeSoon(); });
+        row.append(name, input, value);
+        return row;
+    };
+    shape.append(slider("Grow", "grow", -32, 64), slider("Feather", "feather", 0, 64));
+    for (const el of [views, makeRow, shape, partsRow]) el.hidden = true;
+    right.append(views, partsRow, stage, shape, makeRow);
+    body.append(words, right);
+    const help = document.createElement("p");
+    help.className = "word-mask-help";
+    help.textContent = "Click words to build one mask from several (a woman and her dress); click a word "
+        + "again to take it out. Parts the word's map covers whole (a filament in a bulb) come out as "
+        + "the whole; mist, dusk and night stay diffuse with every method.";
+    const actions = document.createElement("div");
+    actions.className = "modal-actions";
+    const cancel = document.createElement("button");
+    cancel.className = "ar-btn"; cancel.textContent = "Cancel";
+    actions.append(cancel);
+    box.append(title, note, loading, body, help, actions);
+    overlay.append(box);
+    const close = () => overlay.remove();
+    cancel.addEventListener("click", close);
+    overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
+    overlay.addEventListener("keydown", e => { if (e.key === "Escape") close(); e.stopPropagation(); });
+    document.body.append(overlay);
+    const say = (text) => { note.textContent = text; };
+
+    if (!L || L.type === "adjustment" || !L.source) {
+        say("This layer has no word data: it was not placed from a Studio picture.");
+        body.remove(); help.remove();
+        return;
+    }
+    const layerId = L.id, digest = L.source.content_hash;
+    const stale = !C.layerSourceFresh(L);
+    const staleText = "This layer has been edited since the picture was made; the mask may not line up.";
+    const intro = (stale ? staleText + " " : "") + "Choose words of “" + L.name + "”'s picture.";
+    let picture = "";
+    const identity = (m) => m && m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0;
+    async function ask(extra) {
+        let data = await _wordMaskRequest({ content_hash: digest, ...extra, image_b64: picture || undefined });
+        // An unsaved output: the layer IS the picture when it is unchanged and
+        // unmoved, so its pixels may stand in (the server checks the hash).
+        if (!data.available && data.need_picture && !picture && !stale && identity(L.source.matrix)
+                && S.W === L.source.width && S.H === L.source.height) {
+            picture = L.canvas.toDataURL("image/png");
+            data = await _wordMaskRequest({ content_hash: digest, ...extra, image_b64: picture });
+        }
+        return data;
+    }
+    say("Reading the picture's words…");
+    ask({}).then(data => {
+        if (!data.available) { say(data.message || "This picture has no word data."); body.remove(); return; }
+        say(intro);
+        track(data.progress);
+        const top = Math.max(1, ...data.words.map(w => w.strength));
+        for (const w of data.words) {
+            const b = document.createElement("button");
+            b.className = "word-mask-word"; b.type = "button";
+            b.dataset.word = w.word;
+            const name = document.createElement("span"); name.textContent = w.word;
+            const bar = document.createElement("span"); bar.className = "word-mask-bar";
+            const fill = document.createElement("span"); fill.className = "word-mask-fill";
+            fill.style.width = Math.round(Math.min(1, w.strength / top) * 100) + "%";
+            bar.append(fill); b.append(name, bar);
+            b.addEventListener("click", () => toggle(w.word));
+            words.append(b);
+        }
+        // Words asked for by the caller (the Gallery's Make mask…), if the
+        // picture has them.
+        for (const w of opts.words || []) {
+            if (data.words.some(x => x.word === w) && !selected.includes(w)) toggle(w);
+        }
+    }).catch(e => { say("Word data could not be read: " + e.message); body.remove(); });
+
+    // Poll the preparation until it is ready (or the dialog closes).
+    function showProgress(p) {
+        const ready = !p || p.stage === "ready" || p.stage === "error" || !(p.total > 0);
+        loading.hidden = ready;
+        if (ready) return;
+        const pct = Math.round(100 * (p.done || 0) / p.total);
+        loadingFill.style.width = pct + "%";
+        loadingText.textContent = (p.stage === "words"
+            ? "Finding the picture's objects… " + p.done + " / " + (p.total - 1)
+            : "Reading the picture…") + " " + pct + "%";
+    }
+    function track(p) {
+        showProgress(p);
+        if (!p || p.stage === "ready" || p.stage === "error") return;
+        setTimeout(async () => {
+            if (!overlay.isConnected) return;
+            let next = null;
+            try { next = await _wordMaskRequest({ content_hash: digest, progress: true }); } catch (_) {}
+            if (next && next.available) track(next); else showProgress(null);
+        }, 300);
+    }
+
+    // The words chosen, in the order clicked; the previews show them together
+    // (the owner, 2026-10-15: build one mask from several words).
+    const selected = [];
+    let asking = 0, shown = null;
+    let partStep = 0, clickPoint = null;          // S4
+    larger.addEventListener("click", () => { partStep--; show(); });
+    smaller.addEventListener("click", () => { partStep++; show(); });
+    backToWord.addEventListener("click", () => { clickPoint = null; partStep = 0; show(); });
+    function toggle(word) {
+        partStep = 0; clickPoint = null;
+        const i = selected.indexOf(word);
+        if (i >= 0) selected.splice(i, 1); else selected.push(word);
+        words.querySelectorAll(".word-mask-word").forEach(x => x.classList.toggle("active", selected.includes(x.dataset.word)));
+        show();
+    }
+    async function show() {
+        const mine = ++asking;
+        if (!selected.length) { shown = null; reshape(); say(intro); return; }
+        const name = selected.join(" + ");
+        say("Making the masks for “" + name + "”… (a picture's first word takes a few seconds)");
+        let data;
+        const extra = { words: selected.slice() };
+        if (partStep) extra.part = partStep;
+        if (clickPoint) extra.point = clickPoint;
+        try { data = await ask(extra); } catch (e) { say("The masks could not be made: " + e.message); return; }
+        if (mine !== asking) return;
+        if (!data.available) { say(data.message || "No masks for those words."); return; }
+        const pw = data.width, ph = data.height, tiles = [];
+        for (const [key, label, hint] of _WORD_PREVIEWS) {
+            const p = data.previews[key];
+            let cov;
+            try { cov = await _decodeGreyPng(p.png, pw, ph); } catch (_) { continue; }
+            if (mine !== asking) return;
+            tiles.push({ key, label, hint, p, cov, small: _smallCoverage(cov, pw, ph, 512) });
+        }
+        const parts = data.previews.object && data.previews.object.parts;
+        // Keep the step inside what the server has (it clamps; follow it).
+        if (parts) partStep = parts.index - parts.default;
+        shown = { name, words: data.words || selected.slice(), family: data.family, pw, ph, tiles, parts };
+        say(intro);
+        reshape();
+    }
+    // The shaped coverage of a preview (on its small copy) and its share.
+    function shaped(t) {
+        const k = t.small.k;
+        const cov = C.shapeCoverage(t.small.cov, t.small.w, t.small.h, _wordMaskShape.grow / k, _wordMaskShape.feather / k);
+        let sum = 0; for (let i = 0; i < cov.length; i++) sum += cov[i];
+        return { cov, pct: sum / (cov.length * 255) * 100 };
+    }
+    // The preview on show, as large as the space beside the words allows,
+    // with the current Grow and Feather; each switch shows its own share.
+    function reshape() {
+        for (const el of [views, makeRow, shape]) el.hidden = !shown;
+        if (!shown) { stage.replaceChildren(); return; }
+        const { pw, ph } = shown;
+        const t = shown.tiles.find(x => x.key === _wordMaskShape.view) || shown.tiles[0];
+        _wordMaskShape.view = t.key;
+        for (const b of viewButtons) {
+            const own = shown.tiles.find(x => x.key === b.dataset.view);
+            b.classList.toggle("active", b.dataset.view === t.key);
+            b.setAttribute("aria-selected", String(b.dataset.view === t.key));
+            b.disabled = !own;
+            b.querySelector(".word-mask-pct").textContent = own ? " · " + shaped(own).pct.toFixed(1) + "%" : "";
+        }
+        const fit = Math.min(stage.clientWidth || 600, window.innerHeight - 330);
+        const size = Math.max(260, Math.min(1000, Math.floor(fit)));
+        const view = _wordPreviewThumb(L, shaped(t).cov, t.small.w, t.small.h, pw, ph, size);
+        stage.replaceChildren(view);
+        method.textContent = t.hint + " — " + t.p.label;
+        // S4: on Object, the shape steps and a click on the picture.
+        const onObject = t.key === "object";
+        const parts = shown.parts;
+        partsRow.hidden = !onObject || !(parts || clickPoint);
+        if (onObject && parts) {
+            larger.disabled = parts.index <= 0;
+            smaller.disabled = parts.index >= parts.count - 1;
+            partsText.textContent = "shape " + (parts.index + 1) + " of " + parts.count;
+        }
+        backToWord.hidden = !clickPoint;
+        view.classList.toggle("word-mask-clickable", onObject);
+        view.title = onObject ? "Click the picture to make Object the thing there" : "";
+        if (onObject) view.addEventListener("click", e => {
+            const r = view.getBoundingClientRect();
+            const scale = view.width / Math.max(S.W, S.H);
+            const dx = (e.clientX - r.left) * (view.width / r.width) / scale;
+            const dy = (e.clientY - r.top) * (view.height / r.height) / scale;
+            // Document -> picture pixels, through the layer's matrix.
+            const m = (L.source && L.source.matrix) || [1, 0, 0, 1, 0, 0];
+            const det = m[0] * m[3] - m[1] * m[2];
+            if (!det) return;
+            const qx = dx - m[4], qy = dy - m[5];
+            const px = (m[3] * qx - m[2] * qy) / det, py = (-m[1] * qx + m[0] * qy) / det;
+            if (px < 0 || py < 0 || px >= pw || py >= ph) return;
+            clickPoint = [Math.round(px), Math.round(py)];
+            partStep = 0;
+            show();
+        });
+    }
+    // Slider drags redraw at most once a frame.
+    let pending = 0;
+    function reshapeSoon() {
+        if (pending) return;
+        pending = requestAnimationFrame(() => { pending = 0; reshape(); });
+    }
+    function make(t) {
+        const { pw, ph } = shown;
+        const cov = C.shapeCoverage(t.cov, pw, ph, _wordMaskShape.grow, _wordMaskShape.feather);
+        // A shape chosen by a click is not the word's own: its name says so (S4).
+        const name = t.key === "object" && t.p.method === "object-click" ? shown.name + " (clicked)" : shown.name;
+        const made = C.createWordMask(layerId, name, cov, pw, ph, {
+            family: shown.family, method: t.p.method, words: shown.words,
+            grow: _wordMaskShape.grow, feather: _wordMaskShape.feather,
+            view: t.key, part: t.key === "object" && !clickPoint ? partStep : 0 });
+        if (!made) { say("The layer is gone; the mask was not made."); return; }
+        if (made.stale) window.showToast?.(staleText, "warning");
+        setTool("mask");
+        renderMaskPanel(); renderHistoryPanel(); _syncMaskTargetLabel(); _redraw();
+        if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+        close();
+    }
+}
+
 function renderLayerPanel() {
+    renderMaskPanel();
     const panel = document.getElementById("layersList");
     if (!panel) return;
     panel.innerHTML = "";
@@ -3937,6 +4816,8 @@ C.onAirbrushDeposit = () => _redraw();
 // Wire undo/redo callback
 C.onUndoRedo = () => {
     const prevW = S.W, prevH = S.H;
+    // S6: a selection step may have come back, or gone.
+    if (S.selection.active) startMarchingAnts(); else stopMarchingAnts();
     renderLayerPanel(); renderHistoryPanel();
     // Structural undo may change canvas dimensions — sync everything
     var wEl = document.getElementById("paramWidth");
@@ -4051,15 +4932,37 @@ function _hideCtxMenu() {
     if (_ctxMenu) _ctxMenu.style.display = "none";
 }
 
+// CT10 Smart Patch (Evidence/canvas-ct10/SOURCE_REVIEW.md): a refusal is
+// said, never silent.
+function _smartPatchSaid(result) {
+    if (!result || result.changed || !window.showToast) return;
+    if (result.reason === "large") showToast("Smart Patch: that area is too large -- patch it in smaller pieces.", "info");
+    else if (result.reason === "mask") showToast("Smart Patch works on a layer, not on a mask or Regions.", "info");
+}
+/** Right-click › Smart Patch: fill the selection from the picture around it. */
+function _smartPatchSelection() {
+    const C = window.StudioCore, S = C.state;
+    if (!S.selection?.active || !S.selection.mask) return;
+    if (!C.noteStrokeUndo("Smart Patch")) return;
+    const result = C.smartPatch(S.selection.mask);
+    C.clearStrokeUndo();
+    _smartPatchSaid(result);
+    renderHistoryPanel(); _redraw();
+}
+
 function _showCtxMenu(x, y) {
     const C = window.StudioCore, S = C.state;
     const menu = _createCtxMenu();
     const hasSel = S.selection?.active;
 
     const items = [
-        { label: "Select All", shortcut: "Ctrl+A", action: () => { C.selectionAll(); startMarchingAnts(); _redraw(); } },
-        hasSel ? { label: "Deselect", shortcut: "Ctrl+D", action: () => { C.selectionClear(); stopMarchingAnts(); _redraw(); } } : null,
-        hasSel ? { label: "Invert Selection", shortcut: "Ctrl+Shift+I", action: () => { C.selectionInvert(); _redraw(); } } : null,
+        { label: "Select All", shortcut: "Ctrl+A", action: () => { C.selectionStep("Select: All", () => C.selectionAll()); startMarchingAnts(); renderHistoryPanel(); _redraw(); } },
+        hasSel ? { label: "Deselect", shortcut: "Ctrl+D", action: () => { C.selectionStep("Select: Deselect", () => C.selectionClear()); stopMarchingAnts(); renderHistoryPanel(); _redraw(); } } : null,
+        hasSel ? { label: "Invert Selection", shortcut: "Ctrl+Shift+I", action: () => { C.selectionStep("Select: Invert", () => C.selectionInvert()); renderHistoryPanel(); _redraw(); } } : null,
+        hasSel ? { label: "Feather Selection…", action: () => _adjustSelection("feather") } : null,
+        hasSel ? { label: "Grow Selection…", action: () => _adjustSelection("grow") } : null,
+        hasSel ? { label: "Shrink Selection…", action: () => _adjustSelection("shrink") } : null,
+        hasSel ? { label: "Smart Patch", action: _smartPatchSelection } : null,
         { type: "sep" },
         hasSel ? { label: "Copy", shortcut: "Ctrl+C", action: () => { C.selectionCopy(); } } : null,
         hasSel ? { label: "Cut", shortcut: "Ctrl+X", action: () => { C.selectionCut(); _redraw(); } } : null,
@@ -4070,6 +4973,8 @@ function _showCtxMenu(x, y) {
         { label: "Duplicate Layer", shortcut: "Ctrl+J", action: _duplicateLayer },
         { label: "Merge Down", shortcut: "Ctrl+E", action: _mergeDown },
         { label: "Flatten Visible", shortcut: "Ctrl+Shift+E", action: _flattenVisible },
+        { label: "Canvas Size…", action: _openCanvasSizeDialog },
+        { label: "Outpaint…", action: _openOutpaintDialog },
         { type: "sep" },
         { label: "Zoom to Fit", shortcut: "F", action: () => { C.zoomFit(); updateStatus(); _redraw(); } },
         { type: "sep" },
@@ -4402,8 +5307,8 @@ function bindKeys() {
                     renderLayerPanel(); renderHistoryPanel(); _redraw();
                     return;
                 }
-                case "a": e.preventDefault(); C.selectionAll(); startMarchingAnts(); _redraw(); return;
-                case "d": e.preventDefault(); C.selectionClear(); stopMarchingAnts(); _redraw(); return;
+                case "a": e.preventDefault(); C.selectionStep("Select: All", () => C.selectionAll()); startMarchingAnts(); renderHistoryPanel(); _redraw(); return;
+                case "d": e.preventDefault(); C.selectionStep("Select: Deselect", () => C.selectionClear()); stopMarchingAnts(); renderHistoryPanel(); _redraw(); return;
                 case "c": if (S.selection.active) { e.preventDefault(); C.selectionCopy(); } return;
                 case "x": if (S.selection.active) { e.preventDefault(); C.selectionCut(); _redraw(); } return;
                 case "v": if (S.clipboard) { e.preventDefault(); C.selectionPaste(); renderLayerPanel(); _redraw(); } return;
@@ -4440,7 +5345,7 @@ function bindKeys() {
                     }
                     return;
             }
-            if (e.shiftKey && e.key.toLowerCase() === "i") { e.preventDefault(); C.selectionInvert(); _redraw(); return; }
+            if (e.shiftKey && e.key.toLowerCase() === "i") { e.preventDefault(); C.selectionStep("Select: Invert", () => C.selectionInvert()); renderHistoryPanel(); _redraw(); return; }
             return;
         }
 
@@ -4516,8 +5421,11 @@ function bindKeys() {
         }
         if (e.key === "Escape") {
             if (S.drawing) { e.preventDefault(); C.abortStroke(); _redraw(); renderHistoryPanel(); return; }
-            if (S._polyPoints) { e.preventDefault(); S._polyPoints = null; _redraw(); return; }
-            if (S._magAnchors) { e.preventDefault(); _clearMagLasso(); _redraw(); return; }
+            // CT4: Escape mid-drag gives the drag up; it used to fall through
+            // to Deselect and lose the committed selection too.
+            if (S.selection.dragging) { e.preventDefault(); _abandonSelectionDrag(); return; }
+            if (S._polyPoints) { e.preventDefault(); S._polyPoints = null; C.cancelSelectionStep(); _redraw(); return; }
+            if (S._magAnchors) { e.preventDefault(); _clearMagLasso(); C.cancelSelectionStep(); _redraw(); return; }
             if (S.transform.active) {
                 e.preventDefault();
                 const L = S.layers[S.transform.layerIdx];
@@ -4530,11 +5438,20 @@ function bindKeys() {
                     // from the restored pixels.
                     C.markCompositeDirty();
                 }
+                // CT11: a cancelled transform leaves no step and keeps its
+                // selection.
+                const t = S.transform;
+                if (t.undoEntry && S.undoStack[S.undoStack.length - 1] === t.undoEntry) {
+                    S.undoStack.pop();
+                    S.redoStack = t.redoBefore || [];
+                }
+                if (t.selectionBefore) { C.restoreSelection(t.selectionBefore); startMarchingAnts(); }
                 _resetTransformState();
+                renderHistoryPanel();
                 _redraw(); return;
             }
             if (S.regionMode) { e.preventDefault(); S.regionMode = false; S.activeRegionId = null; renderRegionPanel(); _redraw(); return; }
-            if (S.selection.active) { e.preventDefault(); C.selectionClear(); stopMarchingAnts(); _redraw(); return; }
+            if (S.selection.active) { e.preventDefault(); C.selectionStep("Select: Deselect", () => C.selectionClear()); stopMarchingAnts(); renderHistoryPanel(); _redraw(); return; }
         }
 
         // Tool shortcuts are registry actions now — resolved above via
@@ -4567,6 +5484,10 @@ const _scrubMap = {
     padding:   { get: () => parseInt(document.getElementById("paramPadding")?.value)||0,
                  set: v => { const el=document.getElementById("paramPadding"); if(el) el.value=v; } },
     sampleRadius: { get: () => S.sampleRadius || 1, set: v => { S.sampleRadius = v; } },
+    // CT12: Fill's per-channel tolerance; 32 is what it always used.
+    fillTolerance: { get: () => S.fillTolerance ?? 32, set: v => { S.fillTolerance = v; } },
+    // CT10 Paint Mixer: how much of the picked-up colour the brush lays.
+    brushMix:  { get: () => Math.round((S.brushMix ?? 0.5) * 100), set: v => { S.brushMix = v / 100; } },
     symmetryAxes: { get: () => S.symmetryAxes || 4, set: v => { S.symmetryAxes = v; _redraw(); } },
     ratio:     { get: () => Math.round((S.brushRatio || 1.0) * 100), set: v => { S.brushRatio = v / 100; } },
     // SR2-2. A context-bar scrub now as well as the flyout slider, so it
@@ -4674,6 +5595,7 @@ window.addEventListener("i18n:change", () => {
 // silently does nothing is the defect BE1's whole guard set exists to catch,
 // and it would be a poor package that reintroduced it while fixing another.
 function _syncPixelButtons() {
+    document.getElementById("brushMixBtn")?.classList.toggle("active", !!S.brushMixOn);   // CT10
     const alias = document.getElementById("aliasedBtn");
     if (alias) alias.classList.toggle("active", !!S.brushAliased);
     const pp = document.getElementById("pixelPerfectBtn");
@@ -5030,6 +5952,11 @@ function bindToolbar() {
         S.brushAliased = !S.brushAliased;
         _syncPixelButtons();
     });
+    // CT10 Paint Mixer: the Brush's Mix toggle.
+    document.getElementById("brushMixBtn")?.addEventListener("click", () => {
+        S.brushMixOn = !S.brushMixOn;
+        _syncPixelButtons();
+    });
     document.getElementById("pixelPerfectBtn")?.addEventListener("click", () => {
         S.brushPixelPerfect = !S.brushPixelPerfect;
         _syncPixelButtons();
@@ -5110,6 +6037,17 @@ function bindToolbar() {
             S._dodgeMode = btn.dataset.dbmode;
         });
     });
+
+    // CT10: Blur/Sharpen and Clone/Heal sub-modes, as Dodge/Burn
+    for (const [attr, key] of [["data-blurmode", "_blurMode"], ["data-clonemode", "_cloneMode"]]) {
+        document.querySelectorAll("[" + attr + "]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                document.querySelectorAll("[" + attr + "]").forEach(b => b.classList.remove("active"));
+                btn.classList.add("active");
+                S[key] = btn.getAttribute(attr);
+            });
+        });
+    }
 
     // Liquify sub-mode buttons
     document.querySelectorAll("[data-liqmode]").forEach(btn => {
@@ -5270,6 +6208,38 @@ function bindToolbar() {
     });
 
     // Layer actions
+    // ---- Masks panel actions (M1). Each acts on the mask the Mask tool
+    // paints (the Inpaint mask when none is chosen).
+    const _afterMaskAction = () => { renderMaskPanel(); renderHistoryPanel(); _syncMaskTargetLabel(); _updateMaskToggleUI(); _redraw(); };
+    document.getElementById("maskNew")?.addEventListener("click", () => {
+        C.createMask(); setTool("mask"); _afterMaskAction();
+    });
+    document.getElementById("maskFromSelection")?.addEventListener("click", () => {
+        if (!C.saveSelectionAsMask()) { window.showToast?.("Make a selection first", "info"); return; }
+        setTool("mask"); _afterMaskAction();
+    });
+    document.getElementById("maskFromWord")?.addEventListener("click", () => _openWordMaskDialog());
+    document.getElementById("maskFromRange")?.addEventListener("click", e => _openRangeMenu(e.currentTarget));
+    document.getElementById("maskToSelection")?.addEventListener("click", e => {
+        C.selectionStep("Select: Load " + C.maskTargetEntry().name, () => C.loadMaskAsSelection(S.maskTarget, _selectionModeOf(e)));
+        if (S.selection.active) startMarchingAnts(); else stopMarchingAnts();
+        renderHistoryPanel(); _redraw();
+    });
+    document.getElementById("maskDupe")?.addEventListener("click", () => {
+        C.duplicateMask(S.maskTarget); setTool("mask"); _afterMaskAction();
+    });
+    document.getElementById("maskInvert")?.addEventListener("click", () => {
+        C.invertMask(S.maskTarget); _afterMaskAction();
+    });
+    document.getElementById("maskDel")?.addEventListener("click", () => {
+        if (S.maskTarget == null) {
+            if (S.editingMask) C.clearMask(null);
+            _afterMaskAction();
+            return;
+        }
+        C.deleteMask(S.maskTarget); _afterMaskAction();
+    });
+
     document.getElementById("layerAdd")?.addEventListener("click", () => {
         C.saveStructuralUndo("Add layer");
         const L = C.makeLayer("Layer " + (S.layers.length), "paint");
@@ -5374,6 +6344,12 @@ function bindToolbar() {
         S.sampleMerged = !S.sampleMerged;
         document.getElementById("sampleMergedBtn")?.classList.toggle("active", S.sampleMerged);
     });
+    // CT12: Fill's Contiguous toggle (on: the connected area; off: every
+    // matching pixel in the layer, or in the selection).
+    document.getElementById("fillContiguousBtn")?.addEventListener("click", () => {
+        S.fillContiguous = S.fillContiguous === false;
+        document.getElementById("fillContiguousBtn")?.classList.toggle("active", S.fillContiguous);
+    });
 
     // Crop ratio presets
     document.querySelectorAll("[data-cropratio]").forEach(btn => {
@@ -5472,11 +6448,17 @@ function bootUI() {
         _saveToolSettings("mask"); _redraw();
     }));
     document.getElementById("maskOverlayToggle")?.addEventListener("change", e => {
-        S.mask.visible = e.target.checked; _redraw();
+        // The mask on show: the Mask tool's target, else the Inpaint mask.
+        C.shownMask().visible = e.target.checked; _redraw(); renderMaskPanel();
         if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
     });
-    for (const id of ["maskClearBtn", "clearMaskBtn"]) document.getElementById(id)?.addEventListener("click", () => {
-        C.clearGenerationMask(); renderHistoryPanel(); _redraw();
+    // The bar's Clear clears what the Mask tool paints; the inpaint bar's
+    // Clear clears what the next inpaint sends -- the selected mask (M3).
+    document.getElementById("maskClearBtn")?.addEventListener("click", () => {
+        C.clearMask(S.editingMask ? S.maskTarget : null); renderHistoryPanel(); renderMaskPanel(); _redraw();
+    });
+    document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
+        C.clearMask(S.maskTarget); renderHistoryPanel(); renderMaskPanel(); _redraw();
     });
 
     // Initialize mask mode state
@@ -5583,6 +6565,9 @@ window.StudioUI = {
     offAfterRedraw: _offAfterRedraw,
     setTool,
     renderLayerPanel,
+    renderMaskPanel,
+    // Extras: the Gallery's Words panel opens From words with a word chosen.
+    openWordMaskDialog: _openWordMaskDialog,
     renderHistoryPanel,
     renderRegionPanel,
     updateRegionVisibility,

@@ -185,6 +185,27 @@ function _track(ctx) {
 // critical write path. The recovered document is editable and starts with an
 // empty history. That is a stated product fork, not an oversight.
 
+// CT4. FNV-1a over a selection's bytes: equal bytes, equal hash.
+function _bytesHash(bytes) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16) + ":" + bytes.length;
+}
+
+// CT4. A selection (0..255 per pixel) as an ImageData: white, its coverage
+// in the alpha, which survives PNG and the decode exactly.
+function _selectionImage(mask, w, h) {
+  var img = new ImageData(w, h), d = img.data;
+  for (var i = 0; i < mask.length; i++) {
+    var j = i * 4;
+    d[j] = 255; d[j + 1] = 255; d[j + 2] = 255; d[j + 3] = mask[i];
+  }
+  return img;
+}
+
 function _blobName(kind, id) {
   return kind + "-" + String(id).replace(/[^0-9a-z]/gi, "").toLowerCase() + ".png";
 }
@@ -277,6 +298,7 @@ function _snapshot(doc, fresh) {
       id: L.id, name: L.name, type: L.type,
       visible: L.visible, opacity: L.opacity,
       blendMode: L.blendMode, locked: L.locked, blob: null,
+      source: L.source ? JSON.parse(JSON.stringify(L.source)) : null,   // M2
     };
     if (L.type === "adjustment") {
       // No pixels at all -- an adjustment layer is its parameters.
@@ -291,6 +313,18 @@ function _snapshot(doc, fresh) {
   var mask = { blob: null, visible: doc.maskVisible, opacity: doc.maskOpacity };
   mask.blob = pixels("mask.png", doc.maskCtx, doc.maskData);
 
+  // M1. Named masks, each its own blob, carried forward like a layer.
+  mask.named = (doc.masks || []).map(function (m) {
+    return {
+      id: m.id, name: m.name, visible: m.visible, opacity: m.opacity,
+      origin: m.origin ? JSON.parse(JSON.stringify(m.origin)) : { kind: "painted" },
+      color: m.color || null,
+      blob: pixels(_blobName("nmask", m.id), m.ctx, m.imageData),
+    };
+  });
+  mask.target = doc.maskTarget != null ? doc.maskTarget : null;
+  mask.nextId = doc._nextMaskId || 1;
+
   var regions = [];
   for (var r = 0; r < (doc.regions || []).length; r++) {
     var R = doc.regions[r];
@@ -301,7 +335,26 @@ function _snapshot(doc, fresh) {
     });
   }
 
+  // CT4. The committed selection, as its own blob (its coverage in the
+  // alpha), carried forward while its content is the same: a selection has
+  // no canvas to track writes on, so a hash of its bytes stands in.
+  var selection = null;
+  if (doc.selection && doc.selection.mask && doc.selection.mask.length === doc.W * doc.H) {
+    var sel = doc.selection, hash = _bytesHash(sel.mask), sname = "selection.png";
+    var wasSel = prior && prior.commitId && prior.blobs[sname];
+    var seenSel = { selection: hash };
+    if (wasSel && wasSel.selection === hash) items.push({ name: sname, seen: seenSel, reuse: true });
+    else items.push({ name: sname, seen: seenSel, imageData: _selectionImage(sel.mask, doc.W, doc.H) });
+    var contour = sel.contour && sel.contour.length <= 20000 ? sel.contour : null;
+    selection = {
+      blob: sname, hash: hash, rect: sel.rect || null,
+      isLasso: !!sel.isLasso && !!contour, isEllipse: !!sel.isEllipse,
+      isMaskBased: !!sel.isMaskBased || (!!sel.isLasso && !contour), contour: contour,
+    };
+  }
+
   var manifest = _manifest(doc, layers, mask, regions);
+  manifest.selection = selection;
   var json = JSON.stringify(manifest);
   var reusing = items.some(function (it) { return it.reuse; });
   return {
@@ -383,6 +436,7 @@ async function _deserialize(manifest, blobData, docId) {
       id: L.id, name: L.name, type: L.type,
       visible: L.visible, opacity: L.opacity,
       blendMode: L.blendMode, locked: L.locked,
+      source: L.source || null,
       adjustType: L.adjustType,
       adjustParams: L.adjustParams,
       imageData: L.blob ? await _decode(blobData[L.blob], W, H) : null,
@@ -419,9 +473,35 @@ async function _deserialize(manifest, blobData, docId) {
   }
 
   var mask = manifest.mask || {};
+  var named = [];
+  for (var n = 0; n < (mask.named || []).length; n++) {
+    var M = mask.named[n];
+    named.push({
+      id: M.id, name: M.name, visible: M.visible, opacity: M.opacity,
+      origin: M.origin || { kind: "painted" }, color: M.color || null,
+      imageData: M.blob ? await _decode(blobData[M.blob], W, H) : null,
+    });
+  }
+  // CT4. The selection back from its blob's alpha, in the snapshot shape
+  // `restoreSelection` takes.
+  var selection = null;
+  var ms = manifest.selection;
+  if (ms && ms.blob && blobData[ms.blob]) {
+    var simg = await _decode(blobData[ms.blob], W, H);
+    if (simg) {
+      var smask = new Uint8Array(W * H);
+      for (var si = 0; si < smask.length; si++) smask[si] = simg.data[si * 4 + 3];
+      if (smask.some(function (v) { return v; })) {
+        selection = { active: true, rect: ms.rect || null, mask: smask,
+                      isLasso: !!ms.isLasso, isEllipse: !!ms.isEllipse,
+                      isMaskBased: !!ms.isMaskBased, contour: ms.contour || null };
+      }
+    }
+  }
   return {
     id: 0,                              // re-numbered by StudioDocs on adopt
     name: manifest.name || "Recovered",
+    selection: selection,
     documentId: docId,
     canvasRevision: manifest.canvas_revision | 0,
     W: W, H: H,
@@ -431,6 +511,9 @@ async function _deserialize(manifest, blobData, docId) {
     maskData: mask.blob ? await _decode(blobData[mask.blob], W, H) : null,
     maskVisible: mask.visible !== undefined ? mask.visible : true,
     maskOpacity: mask.opacity !== undefined ? mask.opacity : 0.5,
+    masks: named,
+    maskTarget: mask.target != null ? mask.target : null,
+    _nextMaskId: mask.nextId || 1,
     regions: regions,
     activeRegionId: manifest.activeRegionId,
     regionMode: !!manifest.regionMode,
@@ -830,6 +913,13 @@ window.StudioRecovery = {
   scheduleCapture: scheduleCapture,
   captureNow: _captureNow,
   discard: discard,
+  // M2. A context's write count, for a word mask's staleness check (spec
+  // 6.5): `{id, writes, exact}`, counting from the first call.
+  writeState: function (ctx) {
+    if (!ctx) return null;
+    var t = _track(ctx);
+    return { id: t.id, writes: t.writes, exact: t.exact };
+  },
   get writesEnabled() { return _writesEnabled; },
   get resolved() { return _resolved; },
 };

@@ -23,6 +23,11 @@ from typing import Any
 
 from .catalogue import MODEL_ROLES, CatalogueSnapshot, ModelCatalogue
 from .contracts import HeadlessError, ModelCandidate
+from .remote_roots import ROOT_UNREACHABLE
+
+#: Config key for the owner's "Allow network model folders". Written by the
+#: Settings page, never by hand; absent means off.
+ALLOW_NETWORK_KEY = "allow_network_model_roots"
 
 #: Roles a checkpoint may carry inside itself. See
 #: `forge_studio.model_selection.OPTIONAL_MODEL_ROLES` -- named again
@@ -48,6 +53,10 @@ ROOT_STATUS_PARTIAL = "partial"
 ROOT_STATUS_NOT_CONFIGURED = "not_configured"
 ROOT_STATUS_READY = "ready"
 ROOT_STATUS_REFUSED = "refused"
+#: A network folder whose machine is not answering. Kept configured -- the
+#: owner chose to keep it -- and retried by Rescan. Only network roots, and so
+#: only with the opt-in on, ever report it.
+ROOT_STATUS_UNREACHABLE = "unreachable"
 
 
 @dataclass(frozen=True)
@@ -209,9 +218,17 @@ def _role_entries(role: str, value: object) -> tuple[str, ...]:
 class ModelRootRegistry:
     """The three role catalogues, replaced atomically or not at all."""
 
-    def __init__(self, *, workspace_root: os.PathLike[str] | str) -> None:
+    def __init__(
+        self,
+        *,
+        workspace_root: os.PathLike[str] | str,
+        allow_network: bool = False,
+    ) -> None:
         self._workspace = Path(workspace_root)
         self._lock = RLock()
+        #: The owner's "Allow network model folders". Changed only together
+        #: with a configuration that validated under it (`configure`).
+        self._allow_network = bool(allow_network)
         self._catalogues: dict[str, ModelCatalogue] = {}
         self._configured: dict[str, str] = {}
         self._refusals: dict[str, str] = {}
@@ -248,6 +265,14 @@ class ModelRootRegistry:
 
         import sys
 
+        # EMB: the embedding roots, for the engine builder (no Neo import).
+        try:
+            from . import embedding_roots
+
+            embedding_roots.set_roots(self._engine_roots("embedding"))
+        except Exception:  # noqa: BLE001 - a model root is not worth a crash
+            pass
+
         shared = sys.modules.get("modules.shared")
         if shared is None:
             # NOT imported on purpose. Doing so here would drag the engine into
@@ -258,26 +283,65 @@ class ModelRootRegistry:
         if options is None:
             return
         try:
-            roots = self._configured.get("lora", ())
-            options.lora_dirs = [str(root) for root in roots if str(root)]
+            options.lora_dirs = self._engine_roots("lora")
         except Exception:  # noqa: BLE001 - a model root is not worth a crash
             return
 
-    def configure(self, roots: dict[str, tuple[str, ...]]) -> dict[str, RoleStatus]:
+    def _engine_roots(self, role: str) -> list[str]:
+        """The roots the ENGINE may walk for a role: configured, minus any
+        network folder that was not answering when it was configured.
+
+        The engine walks these itself (`networks.py:157`, the embedding
+        loader) with no timeout, on the generation thread. Handing it a dead
+        share would move the hang Studio's gate prevents into a generation.
+        A Rescan that brings the folder back re-projects it.
+        """
+
+        with self._lock:
+            roots = self._configured.get(role, ())
+            refused = self._refusals.get(role, {})
+            return [
+                str(root)
+                for ordinal, root in enumerate(roots)
+                if str(root) and refused.get(ordinal) != ROOT_UNREACHABLE
+            ]
+
+    @property
+    def allow_network(self) -> bool:
+        with self._lock:
+            return self._allow_network
+
+    def configure(
+        self,
+        roots: dict[str, tuple[str, ...]],
+        *,
+        allow_network: bool | None = None,
+    ) -> dict[str, RoleStatus]:
         """Replace every role at once. All-or-nothing.
 
         Construction validates and enumerates every directory *before*
         anything is published, so a refusal on the last directory of the last
         role leaves the previous configuration exactly as it was.
+
+        One exception, by the owner's decision (2026-10-16): a NETWORK folder
+        whose machine is off is saved and reported unreachable instead of
+        refusing the save. It is a fact about today, not a mistake in the
+        configuration. Every other refusal still refuses everything.
+
+        ``allow_network`` changes the opt-in in the same transaction, so a
+        refused save cannot leave the switch on without the folders it was
+        turned on for. None keeps the current value.
         """
-        built, _refused = self._build(roots, tolerant=False)
+        allow = self.allow_network if allow_network is None else bool(allow_network)
+        built, refused = self._build(roots, tolerant=False, allow_network=allow)
 
         with self._lock:
             self._catalogues = built
             self._configured = {
                 r: _role_entries(r, v) for r, v in roots.items()
             }
-            self._refusals = {}
+            self._refusals = refused
+            self._allow_network = allow
         self._project_lora_roots()
         return self.describe()
 
@@ -297,7 +361,9 @@ class ModelRootRegistry:
         ``partial`` instead of pretending it is whole or refusing the two that
         work.
         """
-        built, refused = self._build(roots, tolerant=True)
+        built, refused = self._build(
+            roots, tolerant=True, allow_network=self.allow_network
+        )
 
         with self._lock:
             self._catalogues = built
@@ -308,7 +374,38 @@ class ModelRootRegistry:
         self._project_lora_roots()
         return self.describe()
 
-    def _build(self, roots, tolerant: bool):
+    def retry_unreachable(self) -> bool:
+        """Try every network folder again. True if anything was retried.
+
+        Folders that were unreachable when configured have no catalogue, so
+        they are rebuilt -- tolerantly, as at startup, because a Rescan is not
+        the owner re-approving every directory. Folders that were built and
+        went quiet since are told to try on their next touch.
+        """
+
+        with self._lock:
+            pending = any(
+                code == ROOT_UNREACHABLE
+                for codes in self._refusals.values()
+                for code in codes.values()
+            )
+            configured = {r: tuple(v) for r, v in self._configured.items()}
+            served = [c for cs in self._catalogues.values() for c in cs]
+        for catalogue in served:
+            catalogue.retry()
+        if pending:
+            self.configure_tolerantly(configured)
+        return pending or any(c.network for c in served)
+
+    def has_network_roots(self, role: str) -> bool:
+        """Whether any folder for a role is on another machine. No I/O."""
+
+        with self._lock:
+            if any(c.network for c in self._catalogues.get(role, ())):
+                return True
+            return ROOT_UNREACHABLE in self._refusals.get(role, {}).values()
+
+    def _build(self, roots, tolerant: bool, allow_network: bool = False):
         """Construct every catalogue, or raise. Publishes nothing."""
 
         built: dict[str, tuple[ModelCatalogue, ...]] = {}
@@ -344,6 +441,7 @@ class ModelRootRegistry:
                         # in `_scan`, so this walks the owner's tree and not
                         # out of it.
                         recursive=True,
+                        allow_network=allow_network,
                     )
                     # Two spellings of ONE directory resolve to one root, and
                     # listing it twice would show every model twice under the
@@ -356,7 +454,9 @@ class ModelRootRegistry:
                         continue
                     catalogue.refresh()
                 except HeadlessError as error:
-                    if not tolerant:
+                    # Unreachable is recorded even on the strict path: the
+                    # owner asked for an offline network folder to be SAVED.
+                    if not tolerant and error.code != ROOT_UNREACHABLE:
                         raise
                     refused.setdefault(role, {})[ordinal] = error.code
                     continue
@@ -389,7 +489,11 @@ class ModelRootRegistry:
                 details.append(
                     RootStatus(
                         ordinal=ordinal,
-                        status=ROOT_STATUS_REFUSED,
+                        status=(
+                            ROOT_STATUS_UNREACHABLE
+                            if code == ROOT_UNREACHABLE
+                            else ROOT_STATUS_REFUSED
+                        ),
                         reason_code=code,
                     )
                 )
@@ -412,9 +516,17 @@ class ModelRootRegistry:
             details.append(
                 RootStatus(
                     ordinal=ordinal,
-                    status=ROOT_STATUS_READY,
+                    # A network folder that answered once and has stopped.
+                    # Its last scan still lists (a remembered selection keeps
+                    # resolving to a name), but a load will say why it fails.
+                    status=(
+                        ROOT_STATUS_READY
+                        if catalogue.reachable
+                        else ROOT_STATUS_UNREACHABLE
+                    ),
                     entry_count=count,
                     truncated=cut,
+                    reason_code=None if catalogue.reachable else ROOT_UNREACHABLE,
                 )
             )
 
@@ -422,10 +534,14 @@ class ModelRootRegistry:
         ready = [d for d in details if d.status == ROOT_STATUS_READY]
         if not ready:
             # Every directory refused. The role-level reason is the FIRST one,
-            # so a single-root role reports exactly what it always did.
+            # so a single-root role reports exactly what it always did. A role
+            # whose every folder is a network folder that is not answering
+            # says so, rather than "refused": nothing about it is wrong.
+            offline = all(d.status == ROOT_STATUS_UNREACHABLE for d in details)
             return RoleStatus(
                 role=role,
-                status=ROOT_STATUS_REFUSED,
+                status=ROOT_STATUS_UNREACHABLE if offline else ROOT_STATUS_REFUSED,
+                entry_count=total,
                 reason_code=first_reason,
                 roots=tuple(details),
             )
@@ -463,12 +579,67 @@ class ModelRootRegistry:
         catalogues = self.catalogues(role)
         return catalogues[0].snapshot() if catalogues else None
 
-    def refresh(self, role: str) -> CatalogueSnapshot | None:
-        """Re-enumerate every directory in the role. Returns the first."""
+    def refresh(self, role: str, *, include_network: bool = True) -> CatalogueSnapshot | None:
+        """Re-enumerate every directory in the role. Returns the first.
+
+        ``include_network=False`` is for a LISTING that rescans as a side
+        effect (`/studio/loras`): a network folder keeps its last scan there,
+        so browsing never re-walks a share. Rescan and a Settings save still
+        walk it. A network folder that does not answer keeps its last scan and
+        reports unreachable instead of failing the whole refresh.
+        """
 
         catalogues = self.catalogues(role)
-        snapshots = [catalogue.refresh() for catalogue in catalogues]
+        snapshots = []
+        for catalogue in catalogues:
+            if catalogue.network and not include_network:
+                snapshots.append(catalogue.snapshot())
+                continue
+            try:
+                snapshots.append(catalogue.refresh())
+            except HeadlessError as error:
+                if not catalogue.network or error.code != ROOT_UNREACHABLE:
+                    raise
+                snapshots.append(catalogue.snapshot())
         return snapshots[0] if snapshots else None
+
+    def touch_model(self, role: str, model_id: str, key, work, default=None):  # type: ignore[no-untyped-def]
+        """`work(path)` for the file behind an id, or `default`.
+
+        `path` is what `resolve` gives, or None for an id nothing resolves --
+        the contract `model_browser.model_file` always had. On a LOCAL root
+        this is exactly `work(path)`. On a network root the resolve and the
+        work run as one bounded call, remembered under `(key, model_id)` until
+        the next rescan when `key` is not None; a share that does not answer
+        yields `default` instead of a wait.
+        """
+
+        owner = next(
+            (c for c in self.catalogues(role) if c.owns(str(model_id))), None
+        )
+
+        def run() -> Any:
+            try:
+                _, source = self.resolve(role, str(model_id))
+                path = Path(source.resolved)
+            except Exception:  # noqa: BLE001 - unknown or unavailable is "none"
+                path = None
+            return work(path)
+
+        if owner is None or not owner.network:
+            return run()
+        try:
+            return owner.touch(None if key is None else (key, str(model_id)), run)
+        except HeadlessError as error:
+            if error.code != ROOT_UNREACHABLE:
+                raise
+            return default
+
+    def forget_touches(self, role: str) -> None:
+        """After a write beside a model, forget what was remembered about it."""
+
+        for catalogue in self.catalogues(role):
+            catalogue.forget_touches()
 
     def entries(self, role: str) -> tuple[ModelCandidate, ...]:
         """Every model in the role, roots in order, first spelling wins.
@@ -548,6 +719,22 @@ class ModelRootRegistry:
         text = str(model_id or "").strip()
         if not text:
             return dict(NEUTRAL)
+        owner = next(
+            (c for c in self.catalogues("checkpoint") if c.owns(text)), None
+        )
+        if owner is not None and owner.network:
+            # The header read is a read of the share. Bounded, and neutral on
+            # a share that does not answer -- the same answer as for an
+            # unknown title, which is what a dropdown needs.
+            try:
+                return owner.touch(None, lambda: self._inspect_now(text))
+            except HeadlessError:
+                return dict(NEUTRAL)
+        return self._inspect_now(text)
+
+    def _inspect_now(self, text: str) -> dict[str, Any]:
+        from .architecture import GGUF, NEUTRAL, inspect_checkpoint_file
+
         try:
             candidate, source = self.resolve("checkpoint", text)
         except HeadlessError:

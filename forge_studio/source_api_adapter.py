@@ -603,8 +603,15 @@ class SourceFrontendAdapter:
             # answer below reads the catalogue's CACHED scan, so the browser's
             # Refresh re-fetched this route and got the folder as it was at
             # startup: a LoRA the owner had just added never appeared.
+            #
+            # A NETWORK LoRA folder is the exception: it keeps its last scan
+            # here, so opening the browser never re-walks a share. Rescan and
+            # a Settings save still do.
             try:
-                registry.refresh("lora")
+                if getattr(registry, "has_network_roots", None) is not None:
+                    registry.refresh("lora", include_network=False)
+                else:
+                    registry.refresh("lora")
             except Exception:  # noqa: BLE001 - a UI list is never fatal
                 pass
             try:
@@ -618,8 +625,23 @@ class SourceFrontendAdapter:
 
             # P6: cached Civitai data only -- never a network call here.
             return enrich_cards(registry, lora_listing(registry, names))
+        # EMB. What the engine's CLIP text encoders load from the owner's
+        # embedding roots, in the Extension's `[{name, file}]` shape.
+        if route == "/studio/embeddings":
+            from forge_headless.embedding_roots import list_embeddings
+            from forge_headless.embedding_roots import list_catalogued
+
+            try:
+                registry = self._model_roots
+                has_network = getattr(registry, "has_network_roots", None)
+                if has_network is not None and has_network("embedding"):
+                    # A folder on another machine: answer from the cached
+                    # scan rather than walk the share on this thread.
+                    return list_catalogued(registry.entries("embedding"))
+                return list_embeddings()
+            except Exception:  # noqa: BLE001 - a UI list is never fatal
+                return []
         if route in {
-            "/studio/embeddings",
             "/studio/extensions",
             "/studio/workflows",
             "/studio/layouts",
@@ -778,6 +800,12 @@ class SourceFrontendAdapter:
             # registry is injected, rather than importing the role tuple and
             # pulling forge_headless into forge_studio's import surface.
             roles = tuple(registry.describe())
+            # Network folders first: one that was not answering is tried again
+            # (the owner pressed Rescan BECAUSE its machine is back), and one
+            # that answers is rebuilt into the catalogue before the walk below.
+            retry = getattr(registry, "retry_unreachable", None)
+            if retry is not None:
+                retry()
             for role in roles:
                 registry.refresh(role)
             return {
@@ -1056,13 +1084,74 @@ class SourceFrontendAdapter:
             # already branches on -- it reads `data.error` and toasts it.
             return {"ok": False, "error": error.message, "code": error.code}
 
-        return {
+        reply = {
             "ok": True,
             "image": result.image_b64,
             "width": result.width,
             "height": result.height,
             "upscaler": result.upscaler,
         }
+        if data.get("save") is True:
+            reply.update(self._save_upscale(result.image_b64, data.get("output")))
+        return reply
+
+    def _save_upscale(self, image_b64: str, output: Any) -> dict[str, Any]:
+        """OF1. Write an ESRGAN-only upscale where the owner's settings say.
+
+        The Extension saves every upscale (`studio_api.py:4513-4530`,
+        `save_outputs` defaults on) as `Studio-NNNNN-<seed>` under
+        `studio/upscaled/<date>`; Studio did not save it at all. The folder
+        and layout are the owner's, through the same trust policy and the same
+        layout as a generation -- the Extension ignores both here, which is
+        divergence D3 in the OF1 review. A refined upscale is saved by its
+        generation instead, so the page asks for this only when not refining.
+
+        Never fails the upscale: the picture is already on the Canvas, so a
+        save problem is reported beside it rather than replacing it.
+        """
+
+        from forge_headless.contracts import HeadlessError
+        from forge_headless.image_upscale import decode_canvas
+        from forge_headless.live_generation_port import (
+            output_save_kwargs,
+            resolve_output_format,
+            write_result,
+        )
+        from forge_headless.output_layout import PURPOSE_UPSCALED, output_folder
+
+        from .presentation import PresentationError, _validated_output
+
+        policy = getattr(self, "save_roots", None)
+        root = getattr(policy, "result_root", None)
+        if root is None:
+            return {"save_error": "Studio has no output folder to save the upscale into."}
+        try:
+            settings = _validated_output(output if output is not None else {})
+        except PresentationError as error:
+            return {"save_error": str(error)}
+        decision = policy.decide(settings.save_dir)
+        # The validated group IS the encoder options: format, quality and
+        # lossless are read off it by name, as the generation writer does.
+        options = settings
+        try:
+            encoder, extension, _media = resolve_output_format(options)
+            path = write_result(
+                decode_canvas(image_b64),
+                output_folder(root, save_dir=decision.folder, layout=settings.save_tree,
+                              operation="img2img", purpose=PURPOSE_UPSCALED),
+                # An upscale has no seed of its own; the Extension writes 0.
+                seed=0, extension=extension, encoder_format=encoder,
+                save_kwargs=output_save_kwargs(options, encoder),
+            )
+        except (HeadlessError, ValueError) as error:
+            return {"save_error": getattr(error, "message", str(error))}
+        gallery = getattr(self, "_gallery", None)
+        if gallery is not None:
+            gallery.note_generation()
+        saved: dict[str, Any] = {"filename": path.name}
+        if decision.notice:
+            saved["notice"] = decision.notice
+        return saved
 
     def update_preferences(self, payload: Any) -> dict[str, Any]:
         # The store's own lock covers read-merge-write, so `_state_lock` is

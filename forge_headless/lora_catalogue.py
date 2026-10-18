@@ -155,6 +155,16 @@ def available_loras(registry: Any) -> tuple[LoraEntry, ...]:
     roots = configured_roots(registry)
     if not roots:
         return ()
+    has_network = getattr(registry, "has_network_roots", None)
+    if has_network is not None and has_network("lora"):
+        # A LoRA folder on another machine. `list_available_networks()` walks
+        # every projected directory on THIS thread -- a request handler -- with
+        # no timeout, which is the hang the network opt-in exists to prevent.
+        # Studio's own scan already holds the same names (see
+        # `catalogued_loras`: the engine's name IS the file stem) and was
+        # taken under the folder's bound. The engine still resolves the names
+        # at generation, from the roots the registry projected for it.
+        return catalogued_loras(registry)
     if not project_roots(roots):
         return catalogued_loras(registry)
 

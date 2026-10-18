@@ -134,6 +134,9 @@ _HEADLESS_TO_STUDIO: dict[str, str] = {
     # Refusing to overwrite is a publication failure, not a bad request: the
     # owner asked for something reasonable and the result could not be placed.
     "GENERATION_RESULT_IDENTIFIER_COLLISION": RESULT_PUBLICATION_FAILED,
+    # OF1. The owner's save folder is set but cannot be written (an unplugged
+    # drive, permissions): the picture was made and could not be placed.
+    "GENERATION_RESULT_FOLDER_UNWRITABLE": RESULT_PUBLICATION_FAILED,
     "GENERATION_BACKEND_FAILED": GENERATION_FAILED,
     "HEADLESS_GENERATION_NOT_AUTHORIZED": BACKEND_NOT_READY,
     "HEADLESS_BACKEND_NOT_READY": BACKEND_NOT_READY,
@@ -423,8 +426,13 @@ def _auto_detail_fields(
         if not getattr(slot, "enabled", False):
             continue
         name = str(getattr(slot, "detector", "") or "")
+        # Word Detail: no detector file; the name the outcome and the log show
+        # is the words themselves.
+        words = tuple(str(w) for w in (getattr(slot, "words", ()) or ()) if str(w))
+        if words:
+            name = "words: " + " + ".join(words)
         path = ""
-        if resolve_detector is not None and name:
+        if resolve_detector is not None and name and not words:
             try:
                 resolved = resolve_detector(name)
             except Exception:  # noqa: BLE001 - an unresolved name is refused, not raised here
@@ -448,6 +456,7 @@ def _auto_detail_fields(
                 inpaint_padding=int(getattr(slot, "inpaint_padding", 32)),
                 steps=int(getattr(slot, "steps", 0)),
                 cfg=float(getattr(slot, "cfg", 0.0)),
+                words=words,
             )
         )
     # Enabled with no enabled slot is OFF. Otherwise the runtime would advance
@@ -482,6 +491,18 @@ def _hires_fields(hires: Any, *, base_cfg: float = 0.0) -> dict[str, Any]:
         # silently mean something else entirely.
         "hr_cfg": (float(getattr(hires, "cfg", 0.0)) or float(base_cfg)),
     }
+
+
+def _translated_refine(settings: Any) -> Any:
+    """Outpaint's refine pass (CT9), or None -- absent stays absent."""
+
+    if settings is None:
+        return None
+    from .generation_request import InpaintRefineOptions
+
+    return InpaintRefineOptions(
+        width=int(settings.width), height=int(settings.height),
+        denoising_strength=float(settings.denoising_strength))
 
 
 def _translated_soft(settings: Any) -> Any:
@@ -587,9 +608,11 @@ def translate_request(
         from .generation_request import InpaintOptions, SoftInpaintOptions
         from .input_assets import decode_mask
 
-        mask_image = decode_mask(getattr(request, "mask", None), source)
-        source = replace(source, mask=mask_image, mask_present=True)
         settings = getattr(request, "inpaint", None)
+        # S1: Soft Inpainting on keeps the mask's grey; off, it is cut as before.
+        mask_image = decode_mask(getattr(request, "mask", None), source,
+                                 soft=getattr(settings, "soft", None) is not None)
+        source = replace(source, mask=mask_image, mask_present=True)
         inpaint = InpaintOptions(
             mask_blur=int(getattr(settings, "mask_blur", 4) or 0),
             fill=int(getattr(settings, "fill", 1) or 0),
@@ -599,6 +622,7 @@ def translate_request(
             # Absent stays absent: no group means the port installs no bridge
             # and the engine keeps its own edge behaviour.
             soft=_translated_soft(getattr(settings, "soft", None)),
+            refine=_translated_refine(getattr(settings, "refine", None)),
         )
 
     # AR4.9. The owner's output format, carried across the boundary. Every
@@ -624,6 +648,12 @@ def translate_request(
                 getattr(_output_settings, "embed_metadata", True)),
             watermark=_watermark_options(
                 getattr(_output_settings, "watermark", None)),
+            # OF1. Where it is written. The same seam a third time: the page
+            # carried `save_dir` for months below the lifecycle `return`, so
+            # every field of this group is copied explicitly and guarded.
+            save_dir=str(getattr(_output_settings, "save_dir", "") or ""),
+            save_tree=str(getattr(_output_settings, "save_tree", "") or "studio"),
+            purpose=str(getattr(_output_settings, "purpose", "") or ""),
         )
 
     headless = FirstImageRequest(
@@ -1238,7 +1268,11 @@ class HeadlessGenerationSession:
                     message="No result root is configured.",
                 )
             )
-        path = root / outcome.result_relative_location
+        # Root-relative, or absolute for a file in the owner's trusted save
+        # folder outside the root (OF1, `live_generation_port.result_location`).
+        # Either way it stays here: the browser is given a handle.
+        location = Path(outcome.result_relative_location)
+        path = location if location.is_absolute() else root / location
         if self._result_writer is not None and not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             self._result_writer(outcome, path)
