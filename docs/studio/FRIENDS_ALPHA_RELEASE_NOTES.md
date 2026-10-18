@@ -3,6 +3,24 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Whole graphics card, updater fix — 2026-10-18 (second update)
+
+Update with `git pull --ff-only` in your Studio folder, then close Studio and
+run Start-Studio.bat again. If Git answers "detected dubious ownership", run
+the `git config --global --add safe.directory ...` line it prints, then pull
+again. After this update the in-app updater handles that case itself.
+
+- **Studio uses your whole graphics card.** It held itself to 14 GB of video
+  memory, so on a 16 GB card it lost 2 GB, and on a 24 GB card 10 GB. Large
+  pictures could then fail with "out of memory" where Forge Neo would have
+  moved part of the model off the card and carried on. Studio now uses the
+  card exactly as Forge Neo does. A `vram_ceiling_gib` left in an old
+  configuration file is ignored. Pictures that worked before are unchanged.
+- **Check for Updates works on a copy Git calls "dubious ownership"**, which
+  is common when Studio was cloned onto a second drive. It used to say the
+  copy "wasn't installed with Git". If Git cannot read the copy for another
+  reason, the message now says what Git reported.
+
 ## Masks, word masks, new canvas tools, folder dialogs — 2026-10-18
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

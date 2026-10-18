@@ -22,10 +22,18 @@ CUDA = "cuda"
 
 
 def initialize_cuda(authorization: ControlledLoadAuthorization) -> DeviceReport:
-    """Initialize CUDA and enforce the authorization's VRAM ceiling.
+    """Initialize CUDA and report the device. Fences nothing.
 
-    Raises rather than degrading: if CUDA is unavailable, or the ceiling cannot
-    be enforced, no checkpoint should be opened, so this is the place to stop.
+    VC1. This set `torch.cuda.set_per_process_memory_fraction` to a 14 GiB
+    ceiling from the first controlled load (2026-07-26) until 2026-10-18. Neo
+    sets no such fraction: its memory manager plans what stays on the card
+    from the card's real free memory (`backend/memory_management.py`), which
+    the fraction does not change, so the fence turned Neo's offload decisions
+    into out-of-memory errors and left every larger card's memory unused.
+    Studio now uses the whole card, as Neo does.
+
+    Raises rather than degrading when CUDA is unavailable: no checkpoint
+    should be opened, so this is the place to stop.
     """
 
     try:
@@ -46,38 +54,6 @@ def initialize_cuda(authorization: ControlledLoadAuthorization) -> DeviceReport:
     properties = torch.cuda.get_device_properties(device)
     total = int(properties.total_memory)
     free, _reported_total = torch.cuda.mem_get_info(device)
-
-    ceiling = int(authorization.vram_ceiling_bytes)
-    notes: list[str] = []
-
-    # Enforcement, not intention. `set_per_process_memory_fraction` makes the
-    # allocator refuse beyond the fraction, so exceeding the ceiling raises an
-    # OOM instead of quietly consuming the card.
-    if total <= 0:
-        raise HeadlessError(
-            "CONTROLLED_LOAD_CEILING_NOT_ENFORCEABLE",
-            "Total device memory could not be established.",
-        )
-    if ceiling >= total:
-        # The card is smaller than the ceiling, so the hardware enforces it.
-        fraction = 1.0
-        mechanism = "device_total_below_ceiling"
-        notes.append(
-            "ceiling exceeds total device memory; the device itself is the bound"
-        )
-        effective = total
-    else:
-        fraction = ceiling / total
-        mechanism = "torch.cuda.set_per_process_memory_fraction"
-        effective = ceiling
-
-    try:
-        torch.cuda.set_per_process_memory_fraction(fraction, device)
-    except (RuntimeError, ValueError, AttributeError) as exc:
-        raise HeadlessError(
-            "CONTROLLED_LOAD_CEILING_NOT_ENFORCEABLE",
-            "The VRAM ceiling could not be enforced before opening a checkpoint.",
-        ) from exc
 
     torch.cuda.reset_peak_memory_stats(device)
 
@@ -104,10 +80,12 @@ def initialize_cuda(authorization: ControlledLoadAuthorization) -> DeviceReport:
         free_vram_bytes=int(free),
         supports_fp16=True,
         supports_bf16=supports_bf16,
-        ceiling_bytes=effective,
-        ceiling_enforced=True,
-        ceiling_mechanism=mechanism,
-        notes=tuple(notes),
+        # The report's shape is kept; what it says is that the card is the
+        # only bound.
+        ceiling_bytes=total,
+        ceiling_enforced=False,
+        ceiling_mechanism="none",
+        notes=("no VRAM ceiling; Neo's memory manager uses the whole card",),
     )
 
 

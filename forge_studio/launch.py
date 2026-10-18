@@ -204,9 +204,13 @@ def load_config(path: Path) -> dict[str, Any]:
         raise _fail(
             f"load_access.timeout_seconds must be 1..{_MAX_TIMEOUT_SECONDS}."
         )
-    ceiling_gib = access.get("vram_ceiling_gib", _DEFAULT_VRAM_CEILING_GIB)
-    if not isinstance(ceiling_gib, int) or not (1 <= ceiling_gib <= 48):
-        raise _fail("load_access.vram_ceiling_gib must be 1..48.")
+    # VC1. No VRAM ceiling. Studio fenced the allocator at 14 GiB since the
+    # first controlled load (2026-07-26); Neo has no such fence and plans
+    # residency from the card's real free memory, so the fence only turned
+    # Neo's offload decisions into out-of-memory errors. The key is tolerated
+    # in old configs, never validated, and reported as retired.
+    if "vram_ceiling_gib" in access:
+        legacy_keys = (*legacy_keys, "load_access.vram_ceiling_gib")
 
     # -- the Studio state root (owner decision D1) ------------------------
     #
@@ -269,7 +273,8 @@ def load_config(path: Path) -> dict[str, Any]:
         "last_model_selection": last_model_selection,
         "legacy_keys": legacy_keys,
         "timeout_seconds": timeout,
-        "vram_ceiling_bytes": ceiling_gib * 1024**3,
+        # Carried for the payload opener's signature only; nothing enforces it.
+        "vram_ceiling_bytes": _DEFAULT_VRAM_CEILING_GIB * 1024**3,
     }
 
 
@@ -379,7 +384,8 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
     if config["legacy_keys"]:
         logger.info(
             "Ignoring retired configuration keys: %s. They are kept in the "
-            "file and do nothing; the model is chosen in the app.",
+            "file and do nothing; the model is chosen in the app, and Studio "
+            "uses the whole graphics card as Forge Neo does.",
             ", ".join(config["legacy_keys"]),
         )
     if config["last_model_selection"]:

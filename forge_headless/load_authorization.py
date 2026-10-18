@@ -45,6 +45,7 @@ AUTHORIZED_ROLES = (ROLE_CHECKPOINT, ROLE_TEXT_ENCODER, ROLE_VAE)
 REQUIRED_AUTHORIZED_ROLES = (ROLE_CHECKPOINT,)
 
 DEFAULT_TIMEOUT_SECONDS = 600
+#: VC1. Retired: recorded on an authorization, enforced nowhere.
 DEFAULT_VRAM_CEILING_BYTES = 14 * 1024**3
 
 
@@ -100,11 +101,9 @@ class ControlledLoadAuthorization:
                 "CONTROLLED_LOAD_TIMEOUT_INVALID",
                 "The authorization timeout is outside the permitted range.",
             )
-        if vram_ceiling_bytes < 1 or vram_ceiling_bytes > DEFAULT_VRAM_CEILING_BYTES:
-            raise HeadlessError(
-                "CONTROLLED_LOAD_CEILING_INVALID",
-                "The authorization VRAM ceiling is outside the permitted range.",
-            )
+        # VC1. `vram_ceiling_bytes` is retired: nothing enforces it
+        # (`controlled_device.initialize_cuda`), so no value is refused. It
+        # stays in the signature for callers that still pass one.
 
         # `os.path.abspath`, not `resolve()`: resolving would follow a link, and
         # link rejection is a separate explicit check at intake time.

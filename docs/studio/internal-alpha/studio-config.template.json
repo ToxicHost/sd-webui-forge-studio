@@ -10,7 +10,6 @@
     "vae": "<REPLACE-WITH-YOUR-VAE-DIRECTORY>"
   },
   "load_access": {
-    "timeout_seconds": 600,
-    "vram_ceiling_gib": 14
+    "timeout_seconds": 600
   }
 }

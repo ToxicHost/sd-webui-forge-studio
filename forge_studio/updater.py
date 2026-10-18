@@ -51,8 +51,18 @@ class UpdateService:
             raise _Refusal("Git isn't installed, so Studio can't update itself. "
                            "Install Git for Windows, or download the new version by hand.")
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "LC_ALL": "C"}
+        # U2. Git refuses a repository whose folder another Windows account
+        # owns ("dubious ownership") -- the usual state of a clone on a second
+        # drive or one made from an elevated prompt -- and every command,
+        # `rev-parse` included, fails. Studio then said the copy "wasn't
+        # installed with Git" to a tester who had just cloned it. Trusting the
+        # folder for THESE commands only is safe: `-C` pins them to Studio's
+        # own install, whose code is already running, and nothing is written
+        # to the owner's Git configuration. `-c` is protected configuration,
+        # which `safe.directory` honours.
+        trust = ["-c", f"safe.directory={self._root.resolve().as_posix()}"]
         try:
-            done = self._run([git, "-C", str(self._root), *args], capture_output=True,
+            done = self._run([git, *trust, "-C", str(self._root), *args], capture_output=True,
                              text=True, timeout=timeout, env=env, check=False)
         except subprocess.TimeoutExpired:
             raise _Refusal("Git took too long to answer.", offline=args[:1] == ("fetch",)) from None
@@ -63,8 +73,14 @@ class UpdateService:
     def _tracked(self) -> tuple[str, str, str]:
         """`(remote, branch, upstream)` for the checked-out branch, or a refusal."""
 
-        code, inside, _ = self._git("rev-parse", "--is-inside-work-tree")
+        code, inside, err = self._git("rev-parse", "--is-inside-work-tree")
         if code != 0 or inside != "true":
+            # U2. A `.git` that Git cannot read is not "not installed with
+            # Git"; say what Git said instead.
+            if (self._root / ".git").exists():
+                raise _Refusal("Git couldn't read this copy of Studio, so it can't update "
+                               "itself" + (f": {err.splitlines()[0][:200]}" if err else "."),
+                               detail=err)
             raise _Refusal("This copy of Studio wasn't installed with Git, so it can't "
                            "update itself. Download the new version from GitHub instead.")
         code, upstream, _ = self._git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
