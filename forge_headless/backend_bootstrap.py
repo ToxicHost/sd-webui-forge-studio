@@ -161,6 +161,22 @@ def _unpack_tokenizers() -> None:
         print(f"Studio: could not unpack the bundled tokenizers: {type(error).__name__}: {error}"[:300])
 
 
+def _keep_torch_cache_inside(root: Path) -> None:
+    """Point torch's download cache at Studio's own `models/torch`. CN1.
+
+    `torch.hub` (weights fetched by `load_state_dict_from_url`, e.g. by
+    ControlNet's ZoeDepth annotator) defaults to `~/.cache/torch`, outside
+    every folder Studio otherwise writes to. Set here, with the rest of the
+    process environment and before anything imports torch, so where a
+    download lands never depends on which feature ran first. An owner's own
+    `TORCH_HOME` wins.
+    """
+
+    import os
+
+    os.environ.setdefault("TORCH_HOME", str(root / "models" / "torch"))
+
+
 def bootstrap_backend(
     repository_root: Path,
     *,
@@ -242,6 +258,7 @@ def bootstrap_backend(
 
     runtime = resolve(runtime_options)
     environment = apply_environment(runtime)
+    _keep_torch_cache_inside(root)
     projected: dict[str, Any] = {}
     try:
         from backend.args import args as _backend_args

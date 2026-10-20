@@ -130,6 +130,7 @@ MODEL_ROLE_ADETAILER = "adetailer"
 MODEL_ROLE_LORA = "lora"
 MODEL_ROLE_EMBEDDING = "embedding"
 MODEL_ROLE_UPSCALER = "upscaler"
+MODEL_ROLE_CONTROLNET = "controlnet"
 
 #: Every role with a configurable ROOT DIRECTORY, in presentation order.
 #:
@@ -162,6 +163,12 @@ MODEL_ROLES: tuple[str, ...] = (
     #: `load_upscalers`); `upscaler_roots` hands it the first and adds the
     #: rest. A root, never part of the resident session.
     MODEL_ROLE_UPSCALER,
+    #: CN1 (2026-10-20). ControlNet models (SD1.5/SDXL ControlNets,
+    #: Control-LoRA, T2I-Adapter, Control-LLLite incl. Anima). Neo lists them
+    #: from `cmd_opts.controlnet_dir` + `controlnet_dirs`
+    #: (`lib_controlnet/global_state.py`); `controlnet_port` hands each job's
+    #: chosen file to it by exact path. Loaded per job, never resident.
+    MODEL_ROLE_CONTROLNET,
 )
 
 #: Retained name for the checkpoint role. ``model_kind`` on a candidate is the
@@ -214,6 +221,17 @@ UPSCALER_FORMAT_SUPPORT: dict[str, LoadSupport] = {
     ".safetensors": LoadSupport.LOAD_PLUMBED,
 }
 
+#: What a ControlNet model may be: Neo's own filter
+#: (`lib_controlnet/global_state.py` `CNET_MODEL_EXTS`), so a folder already
+#: prepared for Forge lists unchanged.
+CONTROLNET_FORMAT_SUPPORT: dict[str, LoadSupport] = {
+    ".safetensors": LoadSupport.LOAD_PLUMBED,
+    ".pth": LoadSupport.LOAD_PLUMBED,
+    ".pt": LoadSupport.LOAD_PLUMBED,
+    ".ckpt": LoadSupport.LOAD_PLUMBED,
+    ".bin": LoadSupport.LOAD_PLUMBED,
+}
+
 ROLE_FORMAT_SUPPORT: dict[str, dict[str, LoadSupport]] = {
     MODEL_ROLE_CHECKPOINT: FORMAT_SUPPORT,
     MODEL_ROLE_TEXT_ENCODER: MODULE_FORMAT_SUPPORT,
@@ -222,6 +240,7 @@ ROLE_FORMAT_SUPPORT: dict[str, dict[str, LoadSupport]] = {
     MODEL_ROLE_LORA: LORA_FORMAT_SUPPORT,
     MODEL_ROLE_EMBEDDING: EMBEDDING_FORMAT_SUPPORT,
     MODEL_ROLE_UPSCALER: UPSCALER_FORMAT_SUPPORT,
+    MODEL_ROLE_CONTROLNET: CONTROLNET_FORMAT_SUPPORT,
 }
 
 #: The checkpoint blacklist exists to keep VAE files out of the *checkpoint*
@@ -235,6 +254,7 @@ ROLE_BLACKLISTED_SUFFIXES: dict[str, tuple[str, ...]] = {
     MODEL_ROLE_LORA: (),
     MODEL_ROLE_EMBEDDING: (),
     MODEL_ROLE_UPSCALER: (),
+    MODEL_ROLE_CONTROLNET: (),
 }
 
 #: Bounds on a single scan. A root is now owner-supplied and may be outside the

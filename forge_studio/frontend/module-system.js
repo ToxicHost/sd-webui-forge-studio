@@ -318,6 +318,10 @@ function _hookTabBar() {
 // PUBLIC API
 // ========================================================================
 
+// How soon a probe that said no is asked again, and the longest wait.
+const PROBE_RETRY_MS = 2000;
+const PROBE_RETRY_MAX_MS = 30000;
+
 const StudioModules = {
     /**
      * Register a module.
@@ -331,7 +335,10 @@ const StudioModules = {
      *   @param {function} [config.probe] - Optional async capability probe.
      *       Resolves truthy when the module's backing service exists. Until it
      *       does, the tab is HIDDEN; if it resolves falsy or rejects, the tab
-     *       stays hidden for the session.
+     *       stays hidden and the probe is asked again later (2 s, doubling to
+     *       30 s). It used to give up for the session, so one request that
+     *       failed while the server was busy or restarting hid a working tab
+     *       until the page was reloaded.
      *
      *       Registration was unconditional before this, so a module whose
      *       backend does not exist still drew a tab full of controls that
@@ -372,19 +379,27 @@ const StudioModules = {
         if (typeof config.probe === "function" && btn) {
             btn.hidden = true;
             btn.dataset.capability = "probing";
-            Promise.resolve()
+            let delay = PROBE_RETRY_MS;
+            const ask = () => Promise.resolve()
                 .then(() => config.probe())
                 .then(available => {
                     btn.hidden = !available;
                     btn.dataset.capability = available ? "available" : "absent";
                     if (available) _reorderTabs();
+                    else again();
                 })
                 .catch(() => {
                     // A probe that cannot answer is not evidence the service
                     // exists. Stay hidden.
                     btn.hidden = true;
                     btn.dataset.capability = "absent";
+                    again();
                 });
+            const again = () => {
+                setTimeout(ask, delay);
+                delay = Math.min(delay * 2, PROBE_RETRY_MAX_MS);
+            };
+            ask();
         }
 
         console.log(`[Modules] Registered "${id}" (${config.label})`);

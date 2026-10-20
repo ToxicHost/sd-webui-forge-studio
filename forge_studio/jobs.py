@@ -41,8 +41,9 @@ Import-safe, stdlib-only, and mutation is serialized behind one lock.
 
 from __future__ import annotations
 
+import contextlib
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from .contracts import StructuredError, StudioError
 from .job_log import JobLog
@@ -372,6 +373,30 @@ class JobCoordinator:
                 # this class does not observe would otherwise strand the
                 # queue. A one-second re-check costs nothing and cannot hang.
                 self._gate.wait(1.0)
+
+    @contextlib.contextmanager
+    def gpu_side_task(self, label: str) -> Iterator[None]:
+        """Hold the one-job gate for GPU work outside the queue. CN1.
+
+        A ControlNet preview loads its preprocessor's model onto the card. It
+        takes the same slot a job takes at admission, so no job can start
+        underneath it; a job submitted meanwhile waits at `_await_admission`
+        as it would behind another job. Refused rather than waited on when a
+        job is running or queued: the owner's queued work comes first. The
+        token is never a job id, and every reader of `_admitted` checks
+        against `_jobs`.
+        """
+
+        token = f"side-task:{label}"
+        with self._gate:
+            if self._admitted is not None or self._pending:
+                raise _error("GPU_BUSY",
+                             "Studio is generating. Try again when it finishes.")
+            self._admitted = token
+        try:
+            yield
+        finally:
+            self._finish_admission(token)
 
     def _finish_admission(self, public_id: str) -> None:
         with self._gate:

@@ -632,9 +632,17 @@
   }
 
   // ── About: version ────────────────────────────────────────────────────────
+  // Studio's own version, from the server (`forge_studio.__version__`).
+  // `window.__STUDIO_V` is the Extension's 4.17.0, kept only as the page's
+  // cache token: showing it called a 0.9 Studio "v4.17.0".
   function initAbout() {
     var el = $("aboutStudioVersion");
-    if (el && window.__STUDIO_V) el.textContent = "v" + window.__STUDIO_V;
+    if (!el || typeof fetch !== "function") return;
+    fetch("/api/version").then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && typeof data.version === "string" && data.version) el.textContent = "v" + data.version;
+      })
+      .catch(function () { /* the dash stays */ });
   }
 
   // ── activation / restore ──────────────────────────────────────────────────

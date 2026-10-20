@@ -273,6 +273,15 @@ class ModelRootRegistry:
         except Exception:  # noqa: BLE001 - a model root is not worth a crash
             pass
 
+        # CN1: ControlNet files are resolved per job by catalogue id, so the
+        # port needs the registry itself, not a projected folder list.
+        try:
+            from . import controlnet_port
+
+            controlnet_port.set_registry(self)
+        except Exception:  # noqa: BLE001 - a model root is not worth a crash
+            pass
+
         # UP1: the upscaler roots, and a rescan when they changed after the
         # engine already listed its upscalers (the Hires and Upscale menus).
         try:

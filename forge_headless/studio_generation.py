@@ -272,6 +272,8 @@ STUDIO_REQUEST_FIELDS = (
     # KR1. FLUX.2 Klein reference images; the port encodes them as Neo's
     # ImageStitch does.
     "reference_images",
+    # CN1. ControlNet units; the port drives Neo's ControlNet script.
+    "controlnet",
     "reference_max_side",
     "model_id",
     "positive_prompt",
@@ -568,6 +570,62 @@ def _watermark_options(settings: Any) -> Any:
     )
 
 
+def _translated_controlnet(units: Any) -> tuple[Any, ...]:
+    """CN1. Studio's ControlNet units, decoded and resolved for the port.
+
+    A unit's image is checked exactly as a reference image is (byte ceiling,
+    data URL, media type, Pillow's guard), transparency kept so the port can
+    flatten it onto white as the Extension does. A unit with no image reads
+    the operation's own source in Neo, so it is left None.
+    """
+
+    from .generation_request import ControlNetUnitOptions
+    from .input_assets import InputAssetRefused, decode_source
+
+    translated = []
+    for number, unit in enumerate(tuple(units or ()), start=1):
+        image = None
+        asset = getattr(unit, "image", None)
+        if asset is not None:
+            try:
+                image = decode_source(asset, required=True, keep_alpha=True).image
+            except InputAssetRefused as error:
+                message = str(getattr(error, "message", "") or error).replace(
+                    "source image", "ControlNet image")
+                raise HeadlessError(
+                    "CONTROLNET_IMAGE_INVALID",
+                    f"ControlNet unit {number}: {message}") from error
+        model_path = model_name = ""
+        model_id = str(getattr(unit, "model_id", "") or "")
+        if model_id:
+            from .controlnet_port import resolve_model
+
+            try:
+                model_path, model_name = resolve_model(model_id)
+            except HeadlessError as error:
+                raise HeadlessError(
+                    "CONTROLNET_MODEL_UNKNOWN",
+                    f"ControlNet unit {number}: that model is not in the "
+                    f"ControlNet folders ({error.message})") from error
+        translated.append(ControlNetUnitOptions(
+            preprocessor=str(getattr(unit, "preprocessor", "None") or "None"),
+            model_path=model_path,
+            model_name=model_name,
+            image=image,
+            weight=float(getattr(unit, "weight", 1.0)),
+            guidance_start=float(getattr(unit, "guidance_start", 0.0)),
+            guidance_end=float(getattr(unit, "guidance_end", 1.0)),
+            control_mode=str(getattr(unit, "control_mode", "Balanced")),
+            resize_mode=str(getattr(unit, "resize_mode", "Crop and Resize")),
+            processor_res=int(getattr(unit, "processor_res", -1)),
+            threshold_a=float(getattr(unit, "threshold_a", -1.0)),
+            threshold_b=float(getattr(unit, "threshold_b", -1.0)),
+            pixel_perfect=bool(getattr(unit, "pixel_perfect", False)),
+            hires_option=str(getattr(unit, "hires_option", "Both")),
+        ))
+    return tuple(translated)
+
+
 def translate_request(
     request: GenerationRequest,
     *,
@@ -688,12 +746,16 @@ def translate_request(
     references = decode_references(getattr(request, "reference_images", ()))
     # None is Neo's default; 0 is its "no limit" and must survive as 0.
     reference_side = getattr(request, "reference_max_side", None)
+    # CN1. Each unit's picture decoded and its catalogue id turned into a
+    # file here, for the same reason: refused by name before admission.
+    controlnet = _translated_controlnet(getattr(request, "controlnet", ()))
 
     headless = FirstImageRequest(
         request_id=request_id,
         operation=operation,
         source=source,
         reference_images=references,
+        controlnet=controlnet,
         **({"reference_max_side": int(reference_side)}
            if reference_side is not None else {}),
         inpaint=inpaint,
@@ -917,7 +979,9 @@ def project_progress(
         progress=percent,
         # The headless stage label is the only place the nine-state lifecycle
         # survives the five-state projection, so it is carried deliberately.
-        message=STAGE_LABELS.get(snapshot.state, snapshot.stage_label),
+        # CN1: a note (a first-use download) says more than the stage does.
+        message=(getattr(snapshot, "note", None)
+                 or STAGE_LABELS.get(snapshot.state, snapshot.stage_label)),
         error=error,
         step=snapshot.step or None,
         total_steps=snapshot.total_steps,

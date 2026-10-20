@@ -126,11 +126,11 @@ class WildcardEditor:
 
     def _real_root(self) -> Path:
         if self._root is None:
-            raise EditorRefused("No wildcard folder is chosen.")
+            raise EditorRefused("No wildcard folder is chosen. Choose one in Settings > Dynamic Prompts.")
         try:
             return self._root.resolve(strict=True)
         except OSError as error:
-            raise EditorRefused("The wildcard folder is not reachable.") from error
+            raise EditorRefused("The wildcard folder is not reachable. Check it in Settings > Dynamic Prompts.") from error
 
     def _resolve(self, relative: str, *, must_exist: bool = True) -> _Target:
         """Turn a caller's relative path into a place inside the root.

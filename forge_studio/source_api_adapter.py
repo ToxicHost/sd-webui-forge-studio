@@ -668,12 +668,18 @@ class SourceFrontendAdapter:
             # Names only. `Detector` deliberately carries no path, and the
             # dropdown sends the name straight back as the slot's choice.
             return [{"name": detector.name} for detector in detectors]
-        # ControlNet is NOT wired: no catalogue, no runtime, and its panel
-        # does not reach the request. Left answering "None" deliberately --
-        # offering real names for a feature that cannot dispatch them would
-        # be the defect this file has just finished removing three times.
-        if route in {"/studio/cn_models", "/studio/cn_preprocessors"}:
-            return [{"name": "None"}]
+        # CN1. The ControlNet folders' models, as opaque ids with display
+        # names (never a path), "None" first as Neo lists it.
+        if route == "/studio/cn_models":
+            catalogued = self._role_payload("controlnet") or []
+            return [{"name": "None", "model_id": ""}, *catalogued]
+        # CN1. Neo's preprocessors with what the page builds controls from.
+        # Answered only once the engine is up (registration imports Neo);
+        # before that the page gets "None" and `loading`, and asks again.
+        if route == "/studio/cn_preprocessors":
+            from forge_headless.controlnet_port import preprocessor_listing
+
+            return preprocessor_listing()
         if route == "/studio/vram":
             return {
                 "available": False,

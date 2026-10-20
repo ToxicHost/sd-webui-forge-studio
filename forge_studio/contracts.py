@@ -110,6 +110,18 @@ MAX_REFERENCE_IMAGES = 4
 #: KR1. ImageStitch's "Maximum Side Length" slider: 0 (no limit) to 2048.
 MAX_REFERENCE_SIDE = 2048
 
+#: CN1. ControlNet units one job may carry: Neo's own default
+#: (`control_net_unit_count`, 3) and the owner's choice (2026-10-20).
+MAX_CONTROLNET_UNITS = 3
+
+#: CN1. Neo's own option strings (`lib_controlnet/external_code.py`
+#: `ControlMode`, `ResizeMode`; `enums.py` `HiResFixOption`), so a unit
+#: reaches the engine spelled exactly as Forge's UI spells it.
+CONTROLNET_CONTROL_MODES = (
+    "Balanced", "My prompt is more important", "ControlNet is more important")
+CONTROLNET_RESIZE_MODES = ("Just Resize", "Crop and Resize", "Resize and Fill")
+CONTROLNET_HIRES_OPTIONS = ("Both", "Low res only", "High res only")
+
 
 @dataclass(frozen=True)
 class CanvasDocument(Contract):
@@ -425,6 +437,10 @@ class GenerationRequest(Contract):
     #: byte-identical image it did before the field existed. That is the
     #: acceptance criterion every additive group in this contract has had.
     variation: "VariationSettings | None" = None
+    #: CN1. Up to `MAX_CONTROLNET_UNITS` ControlNet units, in the owner's
+    #: order. Empty means none: no ControlNet script is installed and the job
+    #: is byte-identical to one made before this field existed.
+    controlnet: tuple["ControlNetUnitSettings", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -713,6 +729,38 @@ class VariationSettings(Contract):
     #: Both must be > 0 or Neo ignores the pair.
     seed_resize_from_w: int = -1
     seed_resize_from_h: int = -1
+
+
+@dataclass(frozen=True)
+class ControlNetUnitSettings(Contract):
+    """One ControlNet unit, as the owner set it. CN1.
+
+    Field for field Neo's `ControlNetUnit` (`external_code.py`), minus the
+    Gradio-only fields, with Neo's defaults. Mapped onto that type at the
+    headless boundary, where Neo's names are allowed.
+    """
+
+    #: An opaque catalogue id from `/studio/cn_models`, or "" when the
+    #: preprocessor needs no model (Neo's `do_not_need_model`, e.g. Reference).
+    #: Never a path.
+    model_id: str = ""
+    #: A name from `/studio/cn_preprocessors`; "None" passes the image as is.
+    #: Membership is checked where Neo's registry is loaded.
+    preprocessor: str = "None"
+    #: The picture this unit reads, inline. None means the operation's own
+    #: source image, which is Neo's behaviour for a unit with no image.
+    image: "InputAsset | None" = None
+    weight: float = 1.0
+    guidance_start: float = 0.0
+    guidance_end: float = 1.0
+    control_mode: str = "Balanced"
+    resize_mode: str = "Crop and Resize"
+    #: -1 means the preprocessor's own default (Neo's `bound_check_params`).
+    processor_res: int = -1
+    threshold_a: float = -1.0
+    threshold_b: float = -1.0
+    pixel_perfect: bool = False
+    hires_option: str = "Both"
 
 
 @dataclass(frozen=True)

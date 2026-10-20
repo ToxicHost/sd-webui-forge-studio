@@ -183,6 +183,38 @@ MAX_HIRES_DIMENSION = None
 #: ceiling: a bound on both sides of a boundary should be visible on both.
 MAX_REFERENCE_IMAGES = 4
 
+#: CN1. Mirrors `forge_studio.contracts.MAX_CONTROLNET_UNITS`, for the same
+#: reason.
+MAX_CONTROLNET_UNITS = 3
+
+
+@dataclass(frozen=True)
+class ControlNetUnitOptions:
+    """One ControlNet unit, ready for the port. CN1.
+
+    The owner's settings with the two things admission cannot do already
+    done: the picture decoded (`image`, PIL RGB, or None for "the operation's
+    own source") and the catalogue id turned into a file (`model_path`, or ""
+    when the preprocessor needs none). Studio's names; the port maps them onto
+    Neo's `ControlNetUnit`.
+    """
+
+    preprocessor: str = "None"
+    model_path: str = ""
+    #: The catalogue's display name, for messages. Never a path.
+    model_name: str = ""
+    image: Any = None
+    weight: float = 1.0
+    guidance_start: float = 0.0
+    guidance_end: float = 1.0
+    control_mode: str = "Balanced"
+    resize_mode: str = "Crop and Resize"
+    processor_res: int = -1
+    threshold_a: float = -1.0
+    threshold_b: float = -1.0
+    pixel_perfect: bool = False
+    hires_option: str = "Both"
+
 
 @dataclass(frozen=True)
 class OutputOptions:
@@ -346,6 +378,9 @@ class FirstImageRequest:
     reference_images: tuple[Any, ...] = ()
     #: KR1. ImageStitch's "Maximum Side Length" (0: no limit); its default.
     reference_max_side: int = 1024
+    #: CN1. ControlNet units, in the owner's order. Empty for every job that
+    #: named none, which then installs no ControlNet and runs as before.
+    controlnet: tuple[ControlNetUnitOptions, ...] = ()
     #: Only read when a source exists. Forge's own default is 0.75.
     denoising_strength: float = 0.75
     #: Present only for INPAINT, in STUDIO's vocabulary -- the port maps it to
@@ -470,6 +505,12 @@ class FirstImageRequest:
             ],
             # The COUNT. Never the pictures.
             "reference_images": len(self.reference_images),
+            # CN1. What each unit does, never its picture or path.
+            "controlnet": [
+                {"preprocessor": unit.preprocessor, "model": unit.model_name,
+                 "weight": unit.weight}
+                for unit in self.controlnet
+            ],
         }
 
 
@@ -662,6 +703,16 @@ def validate_request(
             )
         )
 
+    # CN1. Same rule for ControlNet units.
+    if len(request.controlnet) > MAX_CONTROLNET_UNITS:
+        problems.append(
+            _problem(
+                "GENERATION_CONTROLNET_TOO_MANY",
+                f"{len(request.controlnet)} ControlNet units were supplied; "
+                f"at most {MAX_CONTROLNET_UNITS}",
+            )
+        )
+
     if request.enable_adetailer and not request.ad_slots:
         # On with nothing to do. `translate_request` cannot produce this --
         # it derives the flag from the slots -- but a hand-built request can,
@@ -834,6 +885,8 @@ __all__ = (
     "FirstImageRequest",
     "InpaintOptions",
     "MAX_REFERENCE_IMAGES",
+    "MAX_CONTROLNET_UNITS",
+    "ControlNetUnitOptions",
     "Operation",
     "ResidentModel",
     "ValidationResult",

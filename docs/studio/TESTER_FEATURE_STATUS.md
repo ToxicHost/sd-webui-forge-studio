@@ -1,6 +1,6 @@
 # Studio Standalone — feature status for testers
 
-Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30; Workshop, saving and in-app updates added 2026-10-05; Develop fixes, inpaint-aware Auto Detail and a GPU choice added 2026-10-10. This describes the current Standalone source and the
+Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30; Workshop, saving and in-app updates added 2026-10-05; Develop fixes, inpaint-aware Auto Detail and a GPU choice added 2026-10-10; ControlNet, the memory warning and crash recovery added 2026-10-20. This describes the current Standalone source and the
 verification performed for this candidate, not the inherited Neo README.
 
 **Available** means there is an implemented Standalone path. **Contract-tested**
@@ -33,12 +33,13 @@ generation-model paths were accessed.
 | GPU choice | Available on machines with two or more GPUs (2026-10-10) | Settings > Performance & VRAM > GPU; applied at the next start. Tested in code only; no two-card hardware check yet. |
 | Check for Updates | Available for Git installations (2026-10-05) | Fast-forward update of the tracked branch, then a restart. It refuses copies with edited or own-committed files. Tested against real Git repositories, including a shallow clone. |
 | Support report | Available | Script is supplied; report is created locally for inspection before sharing. |
+| ControlNet | Available for testing (2026-10-20) | Three units for SD 1.5, SDXL and Anima (Control-LLLite), with Forge Neo's own ControlNet code and preprocessors; Klein through "Use as Klein reference". Checked on a real GPU: SDXL Union canny, Anima line art and depth follow their control picture (measured against the same seed without ControlNet), Anima pose runs but is weak, Hires at 1536, map previews, first-use downloads. Preprocessors needing mediapipe or insightface are not installed; Depth Anything V1 is withheld. Covered by tests. |
+| Low-memory warning and crash recovery | Available for testing (2026-10-20) | A console warning, once per job, when RAM use reaches 95 % while a picture is being made; after an unexpected stop the launcher restarts Studio and the page says why. Crash recovery checked with the real launcher and server (a forced stop, restart, the notice once); the warning is covered by tests. A real out-of-memory crash was not reproduced. |
 
 ## Unavailable, incomplete or outside this candidate
 
 | Area | Status |
 |---|---|
-| ControlNet | Unavailable in the Standalone generation path. The adapter returns only None for model/preprocessor catalogues. Retained Neo code does not make this a working Studio feature. |
 | Live Painting generation | Unavailable. Live status explicitly reports available: false. Ordinary Canvas painting is separate and available. |
 | Regional / attention-couple generation | Unavailable in the supported generation request. Saving/editing regional document state does not prove regional inference. |
 | High Precision float output | Not available. Export EXR (Standard) converts the 8-bit image; no float capture is offered. |
@@ -55,6 +56,10 @@ generation-model paths were accessed.
 
 ## Verification scope
 
+- 2026-10-20 update: the full development suite passed. On a real GPU the
+  previous update and this one gave byte-identical Anima, Anima Hires, Auto
+  Detail, Outpaint and SDXL pictures; ControlNet was checked on a real GPU
+  for SDXL and Anima (see the ControlNet row).
 - 2026-10-18 update: the full development suite passed apart from the same
   development-guide text checks as before. On a real GPU the previous build
   and this one gave byte-identical plain Anima, SDXL and Outpaint pictures;

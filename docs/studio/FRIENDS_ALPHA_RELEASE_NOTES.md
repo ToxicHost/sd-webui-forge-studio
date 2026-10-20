@@ -1,7 +1,78 @@
 # Studio Standalone — Git tester candidate
 
-Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
-exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
+Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
+exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
+when Regional prompting and Live are in.
+
+## 0.9.0: ControlNet, a memory warning, crash recovery, licence notices — 2026-10-20
+
+**Studio has its own version number now: 0.9.0.** Settings > About used to
+say v4.17.0, the Studio Extension's number. Each update counts up from here
+(0.9.1, 0.9.2 ...) until 1.0.
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. **The first start after
+this update installs five small Python packages** (addict, ftfy, fvcore,
+timm, yapf) that ControlNet's preprocessors use; it needs the internet once.
+Pictures from the models you already use are unchanged: checked on a real
+GPU against the previous update, five jobs (Anima, Anima with Hires, Auto
+Detail, Outpaint with Refine, SDXL), all byte-identical.
+
+- **ControlNet.** The Generate panel has a ControlNet section with three
+  units, for SD 1.5, SDXL and Anima models. Each unit takes the canvas, the
+  active layer or an uploaded picture, a preprocessor and a ControlNet model,
+  with Weight, Start/End, Control mode, Resize mode, Resolution and which
+  passes it applies to when Hires is on. Put your ControlNet models in a
+  folder and choose it in Settings > Model folders > ControlNet. Union models
+  (one model, many control types) pick their type from the preprocessor.
+  - **Anima** uses Control-LLLite models (line art, depth, pose). For line
+    art, give it black lines on white with the preprocessor set to None;
+    for depth, use depth_anything_v2. Pose is weak on Anima: treat it as a
+    hint.
+  - **Preview map** shows what the preprocessor makes of your picture
+    before you generate.
+  - **FLUX.2 Klein has no ControlNet.** With a Klein model selected, "Use as
+    Klein reference" adds a unit's map to Reference Images; then say in the
+    prompt what to follow ("match the pose from image 2").
+  - A preprocessor's own model is **downloaded the first time you use it**;
+    the Generate button says "Downloading <file>…" while it does.
+  - A few preprocessors are greyed out: the ones that need mediapipe or
+    insightface (not installed), and Depth Anything V1, which downloads and
+    runs code from the internet. Depth Anything V2 works.
+- **A warning when memory runs low.** If your computer's RAM is nearly full
+  (95 %) while a picture is being made, the console window says so once for
+  that job, with what to do about it. Nothing is asked before Generate.
+- **If Studio crashes, it comes back and says why.** When the engine stops
+  unexpectedly in the middle of a job (for example when the computer runs
+  out of memory), the launcher restarts it on the same address and the page
+  tells you what happened: out of memory or the error code, and what was
+  being made. Your canvas is untouched. It stops restarting after three
+  crashes in ten minutes.
+- **The Wildcards tab no longer disappears.** It could vanish until the page
+  was reloaded, even with a working wildcard folder. It is always there
+  now; without a folder it says to choose one in Settings > Dynamic Prompts.
+  Gallery and Workshop could disappear the same way and now come back by
+  themselves.
+- **Inpainting after an Outpaint is a normal inpaint again.** Once a picture
+  had been outpainted, every later inpaint on it (a face, a hand) was quietly
+  made as another outpaint: the whole picture at about 1 megapixel, without
+  your padding or Hires, so it came out softer. Only a re-roll of the
+  outpaint itself is made that way now.
+- **Dropdowns show what is selected.** After switching to a different kind
+  of model, Text Encoder, VAE, Sampler and Scheduler could keep showing the
+  previous choice, and picking the right one again did nothing. Fixed.
+- **Progress you can believe.** The Generate button counts every pass from
+  the start, Auto Detail included; before, a later pass kept the previous
+  pass's last step (for example "29 / 11"). The console's progress bars
+  redraw in place as normal bars instead of printing a new line of digits
+  and # signs at every step, and two harmless warnings no longer print
+  at every start.
+- **How long it took.** Saved pictures note it in their parameters, as
+  "Time taken: 2 min. 17.3 sec." (from the start of the job to the saved
+  file, not counting time in the queue), and the Gallery's details show it.
+- **Licence notices.** Studio is AGPL-3.0-or-later. A new NOTICE.md says
+  what Studio adds to Forge Neo and where the source is, and the third-party
+  notices now cover every component that ships.
 
 ## Klein reference images, MOSS-Image, Close all tabs — 2026-10-19
 

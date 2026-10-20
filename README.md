@@ -12,7 +12,7 @@ cd Studio-Standalone
 .\Start-Studio.bat
 ```
 
-First launch prepares a local Python environment and downloads six verified
+First launch prepares a local Python environment and downloads seven verified
 auxiliary models. Supply your own checkpoint, VAE and text encoders, then select
 their folders in Settings. Later launches reuse the installed environment/models.
 
@@ -24,7 +24,7 @@ To update, close Studio and run `git pull --ff-only` inside the checkout.
 - [Testing, backups and problem reports](docs/studio/FRIENDS_ALPHA_TESTER_GUIDE.md)
 - [Release notes](docs/studio/FRIENDS_ALPHA_RELEASE_NOTES.md)
 - [Dependency review notes](docs/studio/DEPENDENCY_NOTES.md)
-- [License](LICENSE), [credits](docs/studio/THIRD_PARTY_NOTICES.md) and [model provenance](docs/studio/BUNDLED_MODEL_ASSETS.md)
+- [License](LICENSE) (AGPL-3.0-or-later), [notice](NOTICE.md), [credits](docs/studio/THIRD_PARTY_NOTICES.md) and [model provenance](docs/studio/BUNDLED_MODEL_ASSETS.md)
 
 The launcher creates empty models/Stable-diffusion, models/VAE and
 models/text_encoder folders. Generation models and personal settings are not in Git.

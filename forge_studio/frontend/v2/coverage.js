@@ -2,6 +2,14 @@
  * Forge Studio — Brush Engine V2 coverage kernel (V2-05 / spec BE5)
  * by ToxicHost & Moritz
  *
+ * Licensed under the GNU AGPL-3.0-or-later (see LICENSE).
+ * Portions are derived from Krita (https://krita.org, 6.1.0-prealpha),
+ * combined with AGPL-3.0 under GPLv3/AGPLv3 section 13
+ * (docs/studio/THIRD_PARTY_NOTICES.md):
+ *   libs/image/kis_gauss_circle_mask_generator.cpp     GPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2010 Lukáš Tvrdý, 2011 Geoffry Song
+ *   libs/image/kis_circle_mask_generator.cpp           GPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2004, 2007-2009 Cyrille Berger, 2010 Lukáš Tvrdý, 2012 Sven Langkamp
  * `Reference/STUDIO_BRUSH_ENGINE_V2_SPEC_2026-08-24.md` §§7.4, 10, 11, 12.5, 13.
  * Turns placed marks into INTRINSIC coverage, and merges that coverage into a
  * target exactly once.

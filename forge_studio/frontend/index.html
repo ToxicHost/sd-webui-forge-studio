@@ -1034,112 +1034,235 @@
             </div>
           </div>
 
-          <!-- ControlNet.
-
-               HIDDEN, not disabled. Nothing here reaches generation: the
-               canonical request has no ControlNet group, `buildCNJson()` in
-               app.js is only reachable after an earlier `return`, and the
-               header badge that reads "1 unit" / "2 units" is computed from
-               local DOM state alone. Sixteen controls that remembered their
-               values and changed nothing.
-
-               This is a static hide rather than a capability probe because
-               there is no service to ask. The absence is a fact about the
-               generation contract, not about a running host.
-
-               TO RESTORE: the canonical request needs a ControlNet group
-               (presentation.py `_GENERATION_FIELDS` and the frozen
-               `FirstImageRequest`), an offline-safe preprocessor catalogue,
-               and owned model/image handles. The slot count -- two here, three
-               in some planning documents -- is an owner decision, not an
-               implementation detail to be settled by whoever unhides this. -->
-          <div class="collapse-section" data-block="controlnet" hidden>
+          <!-- ControlNet (CN1). Three units, Neo's own ControlNet run by the
+               server (forge_headless/controlnet_port.py). Lists come from
+               /studio/cn_models (the ControlNet folder) and
+               /studio/cn_preprocessors (Neo's registry, with each
+               preprocessor's slider labels and ranges). ControlNetPanel in
+               app.js gates it on the selected checkpoint: SD 1.5, SDXL and
+               Anima use it; on FLUX.2 Klein a unit's map can be handed to the
+               Reference Images instead; any other model is told it cannot. -->
+          <div class="collapse-section" data-block="controlnet">
             <div class="collapse-header">
               <div class="collapse-check" id="checkCN"></div>
-              <span class="collapse-title">ControlNet</span>
+              <span class="collapse-title" data-i18n="ui.controlnet.title">ControlNet</span>
               <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body" id="panelCN">
-              <div style="margin-top:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+              <div class="cn-note" id="cnFamilyNote" hidden></div>
+              <div class="cn-unit" id="cnUnit1">
+                <div class="cn-unit-head">
                   <div class="collapse-check cn-unit-check" id="checkCN1"></div>
-                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 1</span>
+                  <span class="cn-unit-label" data-i18n="ui.controlnet.unit1">Unit 1</span>
                 </div>
+                <div class="enable-gated" data-gate="checkCN1">
                 <div class="param-grid cols-2">
-                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN1Module"><option>None</option></select></div>
-                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN1Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label data-i18n="ui.controlnet.preprocessor">Preprocessor</label><select class="param-select" id="paramCN1Module"><option value="None">None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label data-i18n="ui.controlnet.model">Model</label><select class="param-select" id="paramCN1Model"><option value="">None</option></select></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
+                <div class="param-grid cols-2 cn-row">
+                  <div class="param-cell" data-help="help.controlnet.source"><label data-i18n="ui.controlnet.source">Source</label>
                     <select class="param-select" id="paramCN1Source">
-                      <option value="Canvas">Canvas</option>
-                      <option value="Active Layer">Active Layer</option>
-                      <option value="Upload">Upload</option>
+                      <option value="Canvas" data-i18n="ui.controlnet.source.canvas">Canvas</option>
+                      <option value="Active Layer" data-i18n="ui.controlnet.source.layer">Active layer</option>
+                      <option value="Upload" data-i18n="ui.controlnet.source.upload">Upload</option>
                     </select>
                   </div>
-                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN1Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label data-i18n="ui.controlnet.weight">Weight</label><input class="param-val" id="paramCN1Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
                 </div>
+                <div class="cn-upload-row" id="cnUpload1" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnUploadBtn1" data-i18n="actions.chooseImage">Choose Image...</button>
+                  <input type="file" id="cnUploadInput1" accept="image/*" hidden>
+                  <img class="cn-upload-thumb" id="cnUploadThumb1" alt="" hidden>
+                  <button class="cn-upload-clear" type="button" id="cnUploadClear1" data-i18n-title="ui.controlnet.removeUpload" title="Remove" hidden>&#x2715;</button>
+                </div>
+                <div class="cn-actions">
+                  <button class="cn-upload-btn" type="button" id="cnPreviewBtn1" data-i18n="ui.controlnet.preview">Preview map</button>
+                  <button class="cn-upload-btn" type="button" id="cnKleinBtn1" data-i18n="ui.controlnet.toKlein" hidden>Use as Klein reference</button>
+                </div>
+                <img class="cn-preview" id="cnPreviewImg1" alt="" hidden>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
-                <div class="cn-upload-row param-advanced" id="cnUpload1" style="display:none;margin-top:4px;">
-                  <button class="cn-upload-btn" id="cnUploadBtn1">Choose Image...</button>
-                  <input type="file" id="cnUploadInput1" accept="image/*" style="display:none;">
-                  <img class="cn-upload-thumb" id="cnUploadThumb1" style="display:none;">
-                  <button class="cn-upload-clear" id="cnUploadClear1" style="display:none;" title="Remove">&#x2715;</button>
-                </div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN1Start" data-min="0" data-max="1" data-step="0.05" value="0.0"></div>
-                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN1End" data-min="0" data-max="1" data-step="0.05" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.start"><label data-i18n="ui.controlnet.start">Start</label><input class="param-val" id="paramCN1Start" data-min="0" data-max="1" data-step="0.05" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label data-i18n="ui.controlnet.end">End</label><input class="param-val" id="paramCN1End" data-min="0" data-max="1" data-step="0.05" value="1.0"></div>
                 </div>
-                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
+                <div class="param-grid cols-2 secondary param-advanced cn-row">
+                  <div class="param-cell" data-help="help.controlnet.mode"><label data-i18n="ui.controlnet.mode">Control mode</label>
                     <select class="param-select" id="paramCN1Mode">
-                      <option>Balanced</option>
-                      <option>My prompt is more important</option>
-                      <option>ControlNet is more important</option>
+                      <option value="Balanced" data-i18n="ui.controlnet.mode.balanced">Balanced</option>
+                      <option value="My prompt is more important" data-i18n="ui.controlnet.mode.prompt">My prompt is more important</option>
+                      <option value="ControlNet is more important" data-i18n="ui.controlnet.mode.control">ControlNet is more important</option>
                     </select>
                   </div>
+                  <div class="param-cell" data-help="help.controlnet.resize"><label data-i18n="ui.controlnet.resize">Resize mode</label>
+                    <select class="param-select" id="paramCN1Resize">
+                      <option value="Just Resize" data-i18n="ui.controlnet.resize.just">Just resize</option>
+                      <option value="Crop and Resize" selected data-i18n="ui.controlnet.resize.crop">Crop and resize</option>
+                      <option value="Resize and Fill" data-i18n="ui.controlnet.resize.fill">Resize and fill</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced cn-row">
+                  <div class="param-cell" data-help="help.controlnet.resolution"><label data-i18n="ui.controlnet.resolution">Resolution</label><input class="param-val" id="paramCN1Res" data-min="64" data-max="2048" data-step="8" value="512"></div>
+                  <div class="param-cell" data-help="help.controlnet.hires"><label data-i18n="ui.controlnet.hires">Hires</label>
+                    <select class="param-select" id="paramCN1Hires">
+                      <option value="Both" data-i18n="ui.controlnet.hires.both">Both passes</option>
+                      <option value="Low res only" data-i18n="ui.controlnet.hires.low">Base pass only</option>
+                      <option value="High res only" data-i18n="ui.controlnet.hires.high">Hires pass only</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced cn-row" id="cnSliders1">
+                  <div class="param-cell" id="cnThrACell1" hidden><label id="cnThrALabel1">Threshold A</label><input class="param-val" id="paramCN1ThrA" data-min="0" data-max="256" data-step="1" value="-1"></div>
+                  <div class="param-cell" id="cnThrBCell1" hidden><label id="cnThrBLabel1">Threshold B</label><input class="param-val" id="paramCN1ThrB" data-min="0" data-max="256" data-step="1" value="-1"></div>
+                </div>
+                <div class="cn-flag-row secondary param-advanced" data-help="help.controlnet.pixelPerfect">
+                  <div class="collapse-check cn-flag" id="checkCN1PP"></div>
+                  <span data-i18n="ui.controlnet.pixelPerfect">Pixel perfect</span>
+                </div>
                 </div>
               </div>
-              <!-- Unit 2 -->
-              <div>
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+              <div class="cn-unit" id="cnUnit2">
+                <div class="cn-unit-head">
                   <div class="collapse-check cn-unit-check" id="checkCN2"></div>
-                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 2</span>
+                  <span class="cn-unit-label" data-i18n="ui.controlnet.unit2">Unit 2</span>
                 </div>
-                <div class="enable-gated" data-gate="checkCN2" style="display:none;">
+                <div class="enable-gated" data-gate="checkCN2">
                 <div class="param-grid cols-2">
-                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN2Module"><option>None</option></select></div>
-                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN2Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label data-i18n="ui.controlnet.preprocessor">Preprocessor</label><select class="param-select" id="paramCN2Module"><option value="None">None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label data-i18n="ui.controlnet.model">Model</label><select class="param-select" id="paramCN2Model"><option value="">None</option></select></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
+                <div class="param-grid cols-2 cn-row">
+                  <div class="param-cell" data-help="help.controlnet.source"><label data-i18n="ui.controlnet.source">Source</label>
                     <select class="param-select" id="paramCN2Source">
-                      <option value="Canvas">Canvas</option>
-                      <option value="Active Layer">Active Layer</option>
-                      <option value="Upload">Upload</option>
+                      <option value="Canvas" data-i18n="ui.controlnet.source.canvas">Canvas</option>
+                      <option value="Active Layer" data-i18n="ui.controlnet.source.layer">Active layer</option>
+                      <option value="Upload" data-i18n="ui.controlnet.source.upload">Upload</option>
                     </select>
                   </div>
-                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN2Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label data-i18n="ui.controlnet.weight">Weight</label><input class="param-val" id="paramCN2Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
                 </div>
+                <div class="cn-upload-row" id="cnUpload2" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnUploadBtn2" data-i18n="actions.chooseImage">Choose Image...</button>
+                  <input type="file" id="cnUploadInput2" accept="image/*" hidden>
+                  <img class="cn-upload-thumb" id="cnUploadThumb2" alt="" hidden>
+                  <button class="cn-upload-clear" type="button" id="cnUploadClear2" data-i18n-title="ui.controlnet.removeUpload" title="Remove" hidden>&#x2715;</button>
+                </div>
+                <div class="cn-actions">
+                  <button class="cn-upload-btn" type="button" id="cnPreviewBtn2" data-i18n="ui.controlnet.preview">Preview map</button>
+                  <button class="cn-upload-btn" type="button" id="cnKleinBtn2" data-i18n="ui.controlnet.toKlein" hidden>Use as Klein reference</button>
+                </div>
+                <img class="cn-preview" id="cnPreviewImg2" alt="" hidden>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
-                <div class="cn-upload-row param-advanced" id="cnUpload2" style="display:none;margin-top:4px;">
-                  <button class="cn-upload-btn" id="cnUploadBtn2">Choose Image...</button>
-                  <input type="file" id="cnUploadInput2" accept="image/*" style="display:none;">
-                  <img class="cn-upload-thumb" id="cnUploadThumb2" style="display:none;">
-                  <button class="cn-upload-clear" id="cnUploadClear2" style="display:none;" title="Remove">&#x2715;</button>
-                </div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN2Start" data-min="0" data-max="1" data-step="0.05" value="0.0"></div>
-                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN2End" data-min="0" data-max="1" data-step="0.05" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.start"><label data-i18n="ui.controlnet.start">Start</label><input class="param-val" id="paramCN2Start" data-min="0" data-max="1" data-step="0.05" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label data-i18n="ui.controlnet.end">End</label><input class="param-val" id="paramCN2End" data-min="0" data-max="1" data-step="0.05" value="1.0"></div>
                 </div>
-                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
+                <div class="param-grid cols-2 secondary param-advanced cn-row">
+                  <div class="param-cell" data-help="help.controlnet.mode"><label data-i18n="ui.controlnet.mode">Control mode</label>
                     <select class="param-select" id="paramCN2Mode">
-                      <option>Balanced</option>
-                      <option>My prompt is more important</option>
-                      <option>ControlNet is more important</option>
+                      <option value="Balanced" data-i18n="ui.controlnet.mode.balanced">Balanced</option>
+                      <option value="My prompt is more important" data-i18n="ui.controlnet.mode.prompt">My prompt is more important</option>
+                      <option value="ControlNet is more important" data-i18n="ui.controlnet.mode.control">ControlNet is more important</option>
                     </select>
                   </div>
+                  <div class="param-cell" data-help="help.controlnet.resize"><label data-i18n="ui.controlnet.resize">Resize mode</label>
+                    <select class="param-select" id="paramCN2Resize">
+                      <option value="Just Resize" data-i18n="ui.controlnet.resize.just">Just resize</option>
+                      <option value="Crop and Resize" selected data-i18n="ui.controlnet.resize.crop">Crop and resize</option>
+                      <option value="Resize and Fill" data-i18n="ui.controlnet.resize.fill">Resize and fill</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced cn-row">
+                  <div class="param-cell" data-help="help.controlnet.resolution"><label data-i18n="ui.controlnet.resolution">Resolution</label><input class="param-val" id="paramCN2Res" data-min="64" data-max="2048" data-step="8" value="512"></div>
+                  <div class="param-cell" data-help="help.controlnet.hires"><label data-i18n="ui.controlnet.hires">Hires</label>
+                    <select class="param-select" id="paramCN2Hires">
+                      <option value="Both" data-i18n="ui.controlnet.hires.both">Both passes</option>
+                      <option value="Low res only" data-i18n="ui.controlnet.hires.low">Base pass only</option>
+                      <option value="High res only" data-i18n="ui.controlnet.hires.high">Hires pass only</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced cn-row" id="cnSliders2">
+                  <div class="param-cell" id="cnThrACell2" hidden><label id="cnThrALabel2">Threshold A</label><input class="param-val" id="paramCN2ThrA" data-min="0" data-max="256" data-step="1" value="-1"></div>
+                  <div class="param-cell" id="cnThrBCell2" hidden><label id="cnThrBLabel2">Threshold B</label><input class="param-val" id="paramCN2ThrB" data-min="0" data-max="256" data-step="1" value="-1"></div>
+                </div>
+                <div class="cn-flag-row secondary param-advanced" data-help="help.controlnet.pixelPerfect">
+                  <div class="collapse-check cn-flag" id="checkCN2PP"></div>
+                  <span data-i18n="ui.controlnet.pixelPerfect">Pixel perfect</span>
+                </div>
+                </div>
+              </div>
+              <div class="cn-unit" id="cnUnit3">
+                <div class="cn-unit-head">
+                  <div class="collapse-check cn-unit-check" id="checkCN3"></div>
+                  <span class="cn-unit-label" data-i18n="ui.controlnet.unit3">Unit 3</span>
+                </div>
+                <div class="enable-gated" data-gate="checkCN3">
+                <div class="param-grid cols-2">
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label data-i18n="ui.controlnet.preprocessor">Preprocessor</label><select class="param-select" id="paramCN3Module"><option value="None">None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label data-i18n="ui.controlnet.model">Model</label><select class="param-select" id="paramCN3Model"><option value="">None</option></select></div>
+                </div>
+                <div class="param-grid cols-2 cn-row">
+                  <div class="param-cell" data-help="help.controlnet.source"><label data-i18n="ui.controlnet.source">Source</label>
+                    <select class="param-select" id="paramCN3Source">
+                      <option value="Canvas" data-i18n="ui.controlnet.source.canvas">Canvas</option>
+                      <option value="Active Layer" data-i18n="ui.controlnet.source.layer">Active layer</option>
+                      <option value="Upload" data-i18n="ui.controlnet.source.upload">Upload</option>
+                    </select>
+                  </div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label data-i18n="ui.controlnet.weight">Weight</label><input class="param-val" id="paramCN3Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
+                </div>
+                <div class="cn-upload-row" id="cnUpload3" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnUploadBtn3" data-i18n="actions.chooseImage">Choose Image...</button>
+                  <input type="file" id="cnUploadInput3" accept="image/*" hidden>
+                  <img class="cn-upload-thumb" id="cnUploadThumb3" alt="" hidden>
+                  <button class="cn-upload-clear" type="button" id="cnUploadClear3" data-i18n-title="ui.controlnet.removeUpload" title="Remove" hidden>&#x2715;</button>
+                </div>
+                <div class="cn-actions">
+                  <button class="cn-upload-btn" type="button" id="cnPreviewBtn3" data-i18n="ui.controlnet.preview">Preview map</button>
+                  <button class="cn-upload-btn" type="button" id="cnKleinBtn3" data-i18n="ui.controlnet.toKlein" hidden>Use as Klein reference</button>
+                </div>
+                <img class="cn-preview" id="cnPreviewImg3" alt="" hidden>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.controlnet.start"><label data-i18n="ui.controlnet.start">Start</label><input class="param-val" id="paramCN3Start" data-min="0" data-max="1" data-step="0.05" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label data-i18n="ui.controlnet.end">End</label><input class="param-val" id="paramCN3End" data-min="0" data-max="1" data-step="0.05" value="1.0"></div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced cn-row">
+                  <div class="param-cell" data-help="help.controlnet.mode"><label data-i18n="ui.controlnet.mode">Control mode</label>
+                    <select class="param-select" id="paramCN3Mode">
+                      <option value="Balanced" data-i18n="ui.controlnet.mode.balanced">Balanced</option>
+                      <option value="My prompt is more important" data-i18n="ui.controlnet.mode.prompt">My prompt is more important</option>
+                      <option value="ControlNet is more important" data-i18n="ui.controlnet.mode.control">ControlNet is more important</option>
+                    </select>
+                  </div>
+                  <div class="param-cell" data-help="help.controlnet.resize"><label data-i18n="ui.controlnet.resize">Resize mode</label>
+                    <select class="param-select" id="paramCN3Resize">
+                      <option value="Just Resize" data-i18n="ui.controlnet.resize.just">Just resize</option>
+                      <option value="Crop and Resize" selected data-i18n="ui.controlnet.resize.crop">Crop and resize</option>
+                      <option value="Resize and Fill" data-i18n="ui.controlnet.resize.fill">Resize and fill</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced cn-row">
+                  <div class="param-cell" data-help="help.controlnet.resolution"><label data-i18n="ui.controlnet.resolution">Resolution</label><input class="param-val" id="paramCN3Res" data-min="64" data-max="2048" data-step="8" value="512"></div>
+                  <div class="param-cell" data-help="help.controlnet.hires"><label data-i18n="ui.controlnet.hires">Hires</label>
+                    <select class="param-select" id="paramCN3Hires">
+                      <option value="Both" data-i18n="ui.controlnet.hires.both">Both passes</option>
+                      <option value="Low res only" data-i18n="ui.controlnet.hires.low">Base pass only</option>
+                      <option value="High res only" data-i18n="ui.controlnet.hires.high">Hires pass only</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced cn-row" id="cnSliders3">
+                  <div class="param-cell" id="cnThrACell3" hidden><label id="cnThrALabel3">Threshold A</label><input class="param-val" id="paramCN3ThrA" data-min="0" data-max="256" data-step="1" value="-1"></div>
+                  <div class="param-cell" id="cnThrBCell3" hidden><label id="cnThrBLabel3">Threshold B</label><input class="param-val" id="paramCN3ThrB" data-min="0" data-max="256" data-step="1" value="-1"></div>
+                </div>
+                <div class="cn-flag-row secondary param-advanced" data-help="help.controlnet.pixelPerfect">
+                  <div class="collapse-check cn-flag" id="checkCN3PP"></div>
+                  <span data-i18n="ui.controlnet.pixelPerfect">Pixel perfect</span>
                 </div>
                 </div>
               </div>
@@ -1476,6 +1599,25 @@
                     <div class="settings-item-control settings-btn-group settings-btn-group-end">
                       <button class="defaults-btn" id="modelRootAddUpscaler" data-role="Upscaler" data-i18n="settings.modelFolders.add">Add folder</button>
                       <button class="defaults-btn" id="modelRootBrowseUpscaler" data-role="upscaler" data-i18n="settings.modelFolders.browse">Browse…</button>
+                    </div>
+                  </div>
+                  <!-- CN1. ControlNet models (SDXL/SD1.5 ControlNets, Control-LoRA,
+                       T2I-Adapter, Control-LLLite incl. Anima). Studio's own
+                       models/ControlNet stays listed too. -->
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootControlnet" data-setting-search="model folder controlnet control net lllite t2i adapter pose depth canny directory path">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.controlnet">ControlNet folder</span>
+                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusControlnet" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="modelRootControlnet" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                    </div>
+                  </div>
+                  <div class="settings-model-root-list" id="modelRootListControlnet"></div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="modelRootAddControlnet" data-role="Controlnet" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelRootBrowseControlnet" data-role="controlnet" data-i18n="settings.modelFolders.browse">Browse…</button>
                     </div>
                   </div>
                   <div class="settings-item-description" id="modelRootDetectorSummary"></div>
@@ -2355,6 +2497,9 @@
                 <div id="creditsBody" class="settings-card-body" style="display:none;">
                   <p class="settings-credits-by">by <strong>ToxicHost</strong> &amp; <strong>Moritz</strong></p>
                   <div id="creditsList" class="settings-credits-list"></div>
+                  <p class="settings-credits-by" data-i18n="settings.credits.builtWith">Built with</p>
+                  <div id="creditsComponents" class="settings-credits-list"></div>
+                  <p class="settings-credits-licence"><span data-i18n="settings.credits.licence">Forge Studio is free software under the GNU AGPL-3.0 or later. Its source code, licence and third-party notices (LICENSE, NOTICE.md, docs/studio/THIRD_PARTY_NOTICES.md) are published at</span> <span class="settings-credits-url">github.com/ToxicHost/sd-webui-forge-studio</span></p>
                 </div>
               </section>
 

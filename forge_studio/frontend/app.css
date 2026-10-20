@@ -2879,6 +2879,20 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
 .cn-upload-thumb { width:48px; height:48px; object-fit:cover; border-radius:4px; border:1px solid var(--border); }
 .cn-upload-clear { font-size:10px; padding:2px 5px; background:none; color:var(--text-4); border:1px solid var(--border); border-radius:3px; cursor:pointer; line-height:1; }
 .cn-upload-clear:hover { color:var(--red); border-color:var(--red); }
+/* CN1: the three-unit ControlNet panel. */
+.cn-upload-row[hidden] { display:none; }
+.cn-note { font-size:10px; color:var(--text-3); margin:4px 0 6px; line-height:1.4; }
+.cn-note[hidden] { display:none; }
+.cn-unit { margin-top:4px; padding-bottom:8px; border-bottom:1px solid var(--border-subtle); }
+.cn-unit:last-child { border-bottom:none; padding-bottom:0; }
+.cn-unit-head { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+.cn-unit-label { font-size:10px; color:var(--text-3); font-weight:500; }
+.cn-row { margin-top:4px; }
+.cn-actions { display:flex; gap:4px; margin-top:4px; }
+.cn-actions > * { flex:1; min-width:0; }
+.cn-preview { display:block; max-width:100%; max-height:160px; margin:4px auto 0; border-radius:4px; border:1px solid var(--border); background:var(--bg-inset); }
+.cn-preview[hidden] { display:none; }
+.cn-flag-row { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:10px; color:var(--text-3); }
 
 /* ═══════════════════════════════════════════
    RESPONSIVE SCALING — 1080p / 1440p / 4K

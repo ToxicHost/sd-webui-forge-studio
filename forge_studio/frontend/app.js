@@ -615,6 +615,371 @@ const KleinReferences = {
 };
 window.KleinReferences = KleinReferences;
 
+
+// ═══════════════════════════════════════════
+// CONTROLNET (CN1)
+// ═══════════════════════════════════════════
+//
+// Three units, run on the server by Neo's own ControlNet
+// (forge_headless/controlnet_port.py). Evidence/source-review/CN1-controlnet.md.
+//
+// Gated on the selected checkpoint's header, like KleinReferences: SD 1.5,
+// SDXL and Anima (Cosmos) take ControlNet, and a header that cannot be read
+// fails open (the server refuses by name). On FLUX.2 Klein, which has no
+// ControlNet, a unit's map can be handed to the Reference Images instead --
+// BFL's documented way to steer FLUX.2 by pose or layout. Any other model is
+// told it cannot use it, and nothing is sent.
+const ControlNetPanel = {
+  UNITS: [1, 2, 3],
+  CONTROL_ARCHES: ["sd15", "sdxl", "cosmos", "unknown"],
+  // Asked again until the server has its list: every 2 s at first, backing
+  // off to every 30 s. No limit, so a slow first start never leaves the
+  // panel stuck at "None" until a reload.
+  RETRY_MS: 2000,
+  RETRY_MAX_MS: 30000,
+  catalogue: {},     // preprocessor name -> Neo's entry (tags, sliders, needs_model)
+  uploads: {},       // unit -> WebP data URL
+  mode: "control",   // "control" | "klein" | "none"
+  _retries: 0,
+  _retry: null,
+  _bound: false,
+
+  _el(id) { return document.getElementById(id); },
+  _checked(id) { return !!this._el(id)?.classList.contains("checked"); },
+
+  // The checkpoint check's verdict, from `restoreTextEncoderForModel`.
+  fromCheck(check) {
+    const arch = (check && check.arch) || "unknown";
+    if (check && check.references === true) this.mode = "klein";
+    else this.mode = this.CONTROL_ARCHES.includes(arch) ? "control" : "none";
+    this.sync();
+  },
+
+  sync() {
+    const note = this._el("cnFamilyNote");
+    if (note) {
+      const text = this.mode === "klein"
+        ? _i18n("ui.controlnet.kleinNote",
+          "Klein has no ControlNet. Preview a unit's map and add it to Reference Images, then say in the prompt which image to follow, e.g. \"match the pose from image 2\".")
+        : this.mode === "none"
+          ? _i18n("ui.controlnet.unsupported",
+            "ControlNet works with SD 1.5, SDXL and Anima models. The selected model cannot use it, so these units are not sent.")
+          : "";
+      note.textContent = text;
+      note.hidden = !text;
+    }
+    this.UNITS.forEach(n => this._syncUnit(n, false));
+  },
+
+  // Lists. Preprocessors come from Neo's registry, which exists once the
+  // engine is up; until then the server answers `loading` and this asks
+  // again, so a page opened during startup fills in by itself.
+  async loadLists() {
+    const [models, procs] = await Promise.all([
+      API.cnModels().catch(() => [{ name: "None", model_id: "" }]),
+      API.cnPreprocessors().catch(() => [{ name: "None", loading: true }]),
+    ]);
+    this._fillModels(Array.isArray(models) ? models : []);
+    this._fillPreprocessors(Array.isArray(procs) ? procs : []);
+    clearTimeout(this._retry);
+    const loading = !Array.isArray(procs) || procs.some(p => p && p.loading);
+    if (loading) {
+      const wait = Math.min(this.RETRY_MAX_MS, this.RETRY_MS * 2 ** Math.min(this._retries, 4));
+      this._retries += 1;
+      this._retry = setTimeout(() => this.loadLists(), wait);
+    } else {
+      this._retries = 0;
+    }
+  },
+
+  _fill(select, entries, valueOf, labelOf) {
+    if (!select) return;
+    const keep = select.value;
+    select.textContent = "";
+    entries.forEach(entry => {
+      const option = document.createElement("option");
+      option.value = valueOf(entry);
+      option.textContent = labelOf(entry);
+      select.appendChild(option);
+    });
+    if ([...select.options].some(o => o.value === keep)) select.value = keep;
+  },
+
+  _fillModels(models) {
+    this.UNITS.forEach(n => {
+      const select = this._el(`paramCN${n}Model`);
+      this._fill(select, models, m => String(m.model_id || ""),
+        m => (m.model_id ? m.name : _i18n("ui.controlnet.noModel", "None")));
+      window.StudioSearchableSelect?.attach(select, {
+        placeholder: _i18n("ui.controlnet.pickModel", "— Select ControlNet model —"),
+        searchPlaceholder: _i18n("ui.controlnet.filterModels", "Filter models…"),
+      });
+    });
+  },
+
+  _fillPreprocessors(procs) {
+    this.catalogue = {};
+    procs.forEach(p => { if (p && p.name) this.catalogue[p.name] = p; });
+    this.UNITS.forEach(n => {
+      const select = this._el(`paramCN${n}Module`);
+      // A preprocessor whose Python package this install lacks is listed,
+      // greyed, with the package it needs, rather than offered to fail.
+      // Likewise one Studio withholds, with the server's reason as its title.
+      const needs = p => (Array.isArray(p.needs) && p.needs.length ? p.needs.join(", ") : "");
+      this._fill(select, procs.filter(p => p && p.name), p => p.name,
+        p => (p.withheld ? _i18n("ui.controlnet.withheld", "{name} (not available)", { name: p.name })
+          : needs(p) ? _i18n("ui.controlnet.needsPackage", "{name} (needs {packages})",
+            { name: p.name, packages: needs(p) }) : p.name));
+      [...(select?.options || [])].forEach(option => {
+        const entry = this.catalogue[option.value] || {};
+        option.disabled = !!(entry.withheld || needs(entry));
+        if (entry.withheld) option.title = entry.withheld;
+      });
+      window.StudioSearchableSelect?.attach(select, {
+        placeholder: _i18n("ui.controlnet.pickPreprocessor", "— Select preprocessor —"),
+        searchPlaceholder: _i18n("ui.controlnet.filterPreprocessors", "Filter preprocessors…"),
+      });
+      this._syncUnit(n, false);
+    });
+  },
+
+  // A unit's controls follow its preprocessor, as Forge's do: the two sliders
+  // take its labels and ranges (or hide), the model list is off when it needs
+  // no model, and `reset` puts each value back to its default.
+  _syncUnit(n, reset) {
+    const entry = this.catalogue[this._el(`paramCN${n}Module`)?.value || "None"];
+    const model = this._el(`paramCN${n}Model`);
+    if (model) model.disabled = !!entry && entry.needs_model === false;
+    [["A", "slider_1"], ["B", "slider_2"]].forEach(([letter, key]) => {
+      const slider = (entry && entry[key]) || {};
+      const cell = this._el(`cnThr${letter}Cell${n}`);
+      const label = this._el(`cnThr${letter}Label${n}`);
+      const input = this._el(`paramCN${n}Thr${letter}`);
+      if (cell) cell.hidden = !slider.visible;
+      if (label && slider.label) label.textContent = slider.label;
+      if (input && slider.visible) {
+        if (slider.minimum !== undefined) input.dataset.min = slider.minimum;
+        if (slider.maximum !== undefined) input.dataset.max = slider.maximum;
+        if (slider.step !== undefined) input.dataset.step = slider.step;
+        if (reset && slider.value !== undefined) input.value = slider.value;
+      }
+    });
+    const res = (entry && entry.resolution) || {};
+    const resInput = this._el(`paramCN${n}Res`);
+    // A new preprocessor shows its own default resolution, and that default
+    // is Neo's to apply (-1) until the owner sets one.
+    if (resInput && reset && res.value !== undefined) {
+      resInput.value = res.value;
+      delete resInput.dataset.ownerSet;
+    }
+    const mode = this._el(`paramCN${n}Mode`);
+    if (mode) mode.disabled = !!entry && entry.control_mode === false;
+    const upload = this._el(`cnUpload${n}`);
+    if (upload) upload.hidden = this._el(`paramCN${n}Source`)?.value !== "Upload";
+    const klein = this._el(`cnKleinBtn${n}`);
+    if (klein) klein.hidden = this.mode !== "klein";
+  },
+
+  bind() {
+    if (this._bound) return;
+    this._bound = true;
+    this.UNITS.forEach(n => {
+      this._el(`paramCN${n}Module`)?.addEventListener("change", () => this._syncUnit(n, true));
+      this._el(`paramCN${n}Source`)?.addEventListener("change", () => this._syncUnit(n, false));
+      // The owner's resolution, or a restored workflow's (restores fire
+      // `input`/`change`), is sent; an untouched one is Neo's default.
+      const res = this._el(`paramCN${n}Res`);
+      ["input", "change"].forEach(type => res?.addEventListener(type, () => {
+        res.dataset.ownerSet = "1";
+      }));
+      this._el(`checkCN${n}PP`)?.addEventListener("click", e => {
+        e.stopPropagation();
+        e.currentTarget.classList.toggle("checked");
+      });
+      const input = this._el(`cnUploadInput${n}`);
+      this._el(`cnUploadBtn${n}`)?.addEventListener("click", () => input?.click());
+      input?.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        input.value = "";
+        if (file && file.type.startsWith("image/")) await this._setUpload(n, file);
+      });
+      this._el(`cnUploadClear${n}`)?.addEventListener("click", () => this._setUpload(n, null));
+      this._el(`cnPreviewBtn${n}`)?.addEventListener("click", () => this.preview(n));
+      this._el(`cnKleinBtn${n}`)?.addEventListener("click", () => this.toKlein(n));
+    });
+    this.sync();
+  },
+
+  // WebP keeps transparency and stays small; the server flattens it onto
+  // white as the Extension does. At most MAX_SIDE on the long side, as Klein's
+  // references are kept: Neo resizes the map to the job's size anyway, and
+  // three full-size photos would push the job past the request's size limit.
+  MAX_SIDE: 2048,
+  _encode(source) {
+    return KleinReferences._scaled(source, this.MAX_SIDE).toDataURL("image/webp", 0.95);
+  },
+
+  async _setUpload(n, file) {
+    const thumb = this._el(`cnUploadThumb${n}`);
+    const clear = this._el(`cnUploadClear${n}`);
+    const button = this._el(`cnUploadBtn${n}`);
+    if (!file) {
+      delete this.uploads[n];
+      if (thumb) { thumb.removeAttribute("src"); thumb.hidden = true; }
+      if (clear) clear.hidden = true;
+      if (button) button.textContent = _i18n("actions.chooseImage", "Choose Image...");
+      return;
+    }
+    try {
+      const image = await KleinReferences._imageFromBlob(file);
+      this.uploads[n] = this._encode(image);
+    } catch (_) {
+      showToast(_i18n("ui.references.readFailed", "That file could not be read as an image."), "error");
+      return;
+    }
+    if (thumb) { thumb.src = this.uploads[n]; thumb.hidden = false; }
+    if (clear) clear.hidden = false;
+    if (button) button.textContent = file.name.length > 20 ? file.name.slice(0, 17) + "..." : file.name;
+  },
+
+  // The unit's own picture, or null for "the canvas" -- which the server
+  // reads as the operation's source image, Neo's behaviour for a unit
+  // without one. An Upload with nothing chosen reads the canvas too, as the
+  // Extension's did.
+  _ownImage(n) {
+    const source = this._el(`paramCN${n}Source`)?.value || "Canvas";
+    if (source === "Upload") return this.uploads[n] || null;
+    if (source === "Active Layer") {
+      const layer = window.StudioCore?.activeLayer?.();
+      return layer && layer.canvas ? this._encode(layer.canvas) : null;
+    }
+    return null;
+  },
+
+  _number(id, fallback) {
+    const value = parseFloat(this._el(id)?.value);
+    return Number.isFinite(value) ? value : fallback;
+  },
+
+  _settings(n) {
+    const entry = this.catalogue[this._el(`paramCN${n}Module`)?.value || "None"] || {};
+    const slider = key => (entry[key] && entry[key].visible);
+    return {
+      preprocessor: this._el(`paramCN${n}Module`)?.value || "None",
+      model_id: entry.needs_model === false ? "" : (this._el(`paramCN${n}Model`)?.value || ""),
+      weight: this._number(`paramCN${n}Weight`, 1.0),
+      guidance_start: this._number(`paramCN${n}Start`, 0.0),
+      guidance_end: this._number(`paramCN${n}End`, 1.0),
+      control_mode: this._el(`paramCN${n}Mode`)?.value || "Balanced",
+      resize_mode: this._el(`paramCN${n}Resize`)?.value || "Crop and Resize",
+      processor_res: this._el(`paramCN${n}Res`)?.dataset.ownerSet
+        ? Math.round(this._number(`paramCN${n}Res`, -1)) : -1,
+      threshold_a: slider("slider_1") ? this._number(`paramCN${n}ThrA`, -1) : -1,
+      threshold_b: slider("slider_2") ? this._number(`paramCN${n}ThrB`, -1) : -1,
+      pixel_perfect: this._checked(`checkCN${n}PP`),
+      hires_option: this._el(`paramCN${n}Hires`)?.value || "Both",
+    };
+  },
+
+  // Sent only on a model that takes ControlNet, with the panel and the unit
+  // switched on. Absent otherwise, so every other job is unchanged.
+  requestField() {
+    if (this.mode !== "control" || !this._checked("checkCN")) return {};
+    const units = [];
+    this.UNITS.forEach(n => {
+      if (!this._checked(`checkCN${n}`)) return;
+      const unit = this._settings(n);
+      if (unit.processor_res < 64) unit.processor_res = -1;
+      const image = this._ownImage(n);
+      if (image) unit.image = { data_url: image, origin: "canvas" };
+      units.push(unit);
+    });
+    return units.length ? { controlnet: units } : {};
+  },
+
+  // The map this unit's preprocessor makes from its picture -- the canvas
+  // composite when it reads the canvas. Forge's own preview.
+  async preview(n) {
+    const button = this._el(`cnPreviewBtn${n}`);
+    const shown = this._el(`cnPreviewImg${n}`);
+    const image = this._ownImage(n) || window.StudioCore?.exportCanvas?.();
+    if (!image) return null;
+    const label = button?.textContent;
+    if (button) { button.disabled = true; button.textContent = _i18n("ui.controlnet.previewing", "Preparing…"); }
+    try {
+      const settings = this._settings(n);
+      const r = await fetch(API.base + "/api/controlnet/preprocess", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          preprocessor: settings.preprocessor, image,
+          processor_res: settings.processor_res, threshold_a: settings.threshold_a,
+          threshold_b: settings.threshold_b, pixel_perfect: settings.pixel_perfect,
+          resize_mode: settings.resize_mode,
+          width: parseInt(this._el("paramWidth")?.value, 10) || 1024,
+          height: parseInt(this._el("paramHeight")?.value, 10) || 1024,
+        }),
+      });
+      let data = {};
+      try { data = await r.json(); } catch (_) { /* reported below */ }
+      if (!data.ok) {
+        showToast(data.error || _i18n("ui.controlnet.previewFailed", "The preview could not be made."), "error");
+        return null;
+      }
+      if (shown) { shown.src = data.image; shown.hidden = false; }
+      return data;
+    } catch (_) {
+      showToast(_i18n("ui.controlnet.previewFailed", "The preview could not be made."), "error");
+      return null;
+    } finally {
+      if (button) { button.disabled = false; button.textContent = label; }
+    }
+  },
+
+  // Klein: the map becomes the next Reference Image, and the owner is told
+  // its number so the prompt can name it.
+  async toKlein(n) {
+    const data = await this.preview(n);
+    if (!data) return;
+    if (!data.is_map) {
+      showToast(_i18n("ui.controlnet.noMap", "This preprocessor does not make a picture to use as a reference."), "info");
+      return;
+    }
+    if (KleinReferences.items.length >= KleinReferences.MAX) {
+      showToast(_i18n("ui.references.full", "Klein takes up to {max} reference images.",
+        { max: KleinReferences.MAX }), "info");
+      return;
+    }
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const loaded = new Image();
+        loaded.onload = () => resolve(loaded);
+        loaded.onerror = () => reject(new Error("decode"));
+        loaded.src = data.image;
+      });
+      KleinReferences._add(image, "canvas");
+    } catch (_) {
+      showToast(_i18n("ui.controlnet.previewFailed", "The preview could not be made."), "error");
+      return;
+    }
+    // In an image edit the canvas is image 1, so the references follow it.
+    const number = KleinReferences.items.length + (window.StudioCore?.isCanvasBlank?.() ? 0 : 1);
+    showToast(_i18n("ui.controlnet.addedToKlein",
+      "Added as reference image {n}. Say in the prompt how to use it, e.g. \"match the pose from image {n}\".",
+      { n: number }), "info");
+  },
+
+  // Badge text for the collapsed header.
+  badge() {
+    if (!this._checked("checkCN")) return "off";
+    const count = this.UNITS.filter(n => this._checked(`checkCN${n}`)).length;
+    if (!count) return "off";
+    return count === 1 ? _i18n("ui.controlnet.badge.one", "1 unit")
+      : _i18n("ui.controlnet.badge.many", "{n} units", { n: count });
+  },
+};
+window.ControlNetPanel = ControlNetPanel;
+
 // The token bar depends on the model's architecture and the weights mode as
 // well as the prompt (EM1's BREAK note), so those changes re-run it too.
 // Hoisted, and safe before `TokenCounter` exists further down this file.
@@ -627,6 +992,98 @@ function _refreshTokenCountSoon() {
 // WEBSOCKET PROGRESS
 // ═══════════════════════════════════════════
 
+// OOM1. A small choice dialog for the pages outside the Gallery. The
+// Gallery's `showConfirmMulti` is private to gallery.js (its script is
+// wrapped), so a `window.showConfirmMulti` check silently fell back to the
+// browser's bare confirm(). This reuses its styles (gallery.css loads on
+// every page): resolves the clicked key, or null on Escape/backdrop. The
+// crash notice is its one user.
+function _studioChoose(html, buttons) {
+  return new Promise((resolve) => {
+    const background = document.createElement("div");
+    background.className = "gal-confirm-bg";
+    const box = document.createElement("div");
+    box.className = "gal-confirm-box";
+    const message = document.createElement("div");
+    message.className = "gal-confirm-msg";
+    message.innerHTML = html;
+    const actions = document.createElement("div");
+    actions.className = "gal-confirm-actions";
+    const finish = (key) => {
+      document.removeEventListener("keydown", onKey, true);
+      background.remove();
+      resolve(key);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") { event.preventDefault(); finish(null); }
+      if (event.key === "Enter") {
+        const primary = buttons.find((b) => (b.cls || "").includes("primary"));
+        if (primary) { event.preventDefault(); finish(primary.key); }
+      }
+    };
+    for (const button of buttons) {
+      const element = document.createElement("button");
+      element.className = "gal-confirm-btn" + (button.cls ? " " + button.cls : "");
+      element.textContent = button.label;
+      element.addEventListener("click", () => finish(button.key));
+      actions.appendChild(element);
+    }
+    box.append(message, actions);
+    background.appendChild(box);
+    background.addEventListener("click", (event) => { if (event.target === background) finish(null); });
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(background);
+  });
+}
+
+// OOM1. If the launcher restarted Studio's server after an unexpected stop,
+// say so -- once -- when the page reaches it again. Asked on every WebSocket
+// connect, so a restart (which the socket survives by reconnecting) is seen
+// without a reload. The page itself never went away: the canvas is intact.
+async function _checkCrashNotice() {
+  let notice = null;
+  try {
+    const response = await fetch(`${window.location.origin}/api/crash_notice`);
+    if (!response.ok) return;
+    notice = (await response.json()).notice;
+  } catch (_) { return; }
+  if (!notice) return;
+  try {
+    await fetch(`${window.location.origin}/api/crash_notice/dismiss`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+  } catch (_) { /* shown anyway; a second showing beats none */ }
+  const esc = (value) => String(value ?? "").replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const parts = [_i18n("ui.crash.restarted", "Studio stopped unexpectedly and restarted itself.")];
+  if (notice.low_memory) {
+    parts.push(_i18n("ui.crash.lowMemory",
+      "The computer had run out of memory (RAM was {percent}% full).",
+      { percent: esc(Math.round(notice.ram_percent || 0)) }));
+  } else {
+    parts.push(_i18n("ui.crash.code", "Error code {code}.", { code: esc(notice.exit_code) }));
+  }
+  const job = notice.job;
+  if (job) {
+    let line = _i18n("ui.crash.job", "It was making a {size} picture, {steps} steps.",
+      { size: esc(job.size || "?"), steps: esc(job.steps || "?") });
+    const extras = [];
+    if (job.hires) extras.push(_i18n("ui.crash.jobHires", "Hires {scale}x", { scale: esc(job.hires) }));
+    if (job.auto_detail) extras.push(_i18n("ui.memory.extra.auto_detail", "Auto Detail"));
+    if (extras.length) line += " " + _i18n("ui.memory.extras", "Also on for this job: {extras}.", { extras: extras.join(", ") });
+    parts.push(line);
+  }
+  if (notice.low_memory) {
+    parts.push(_i18n("ui.memory.advice",
+      "To make room: close other programs, turn off Hires or Auto Detail, or pick a smaller model."));
+  }
+  parts.push(job
+    ? _i18n("ui.crash.kept", "Your canvas and settings are untouched; the job that was running is lost.")
+    : _i18n("ui.crash.keptIdle", "Your canvas and settings are untouched."));
+  const html = parts.join("<br><br>");
+  _studioChoose(html, [{ label: _i18n("ui.crash.ok", "OK"), key: "ok", cls: "primary" }]);
+}
+
 const Progress = {
   ws: null,
   listeners: [],
@@ -638,6 +1095,7 @@ const Progress = {
     this.ws.onopen = () => {
       console.log("[Studio] WebSocket connected");
       StatusBar.setStatus("ready");
+      _checkCrashNotice();
       // Declare this client's preview demand up front so the backend can
       // skip decoding previews nobody is watching.
       this.sendPreviewConfig();
@@ -2122,6 +2580,7 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   const teSelect = document.getElementById("paramTextEncoder");
   if (!modelTitle || !teSelect) {
     KleinReferences.fromCheck(null);
+    ControlNetPanel.fromCheck(null);
     return { needs_te: false, needs_vae: false, arch: "unknown" };
   }
 
@@ -2137,6 +2596,8 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   // KR1. Whether this checkpoint takes Klein reference images; shown or
   // hidden by `_applyArchRules`, which every caller runs next.
   KleinReferences.fromCheck(check);
+  // CN1. Whether this checkpoint takes ControlNet, or Klein's references.
+  ControlNetPanel.fromCheck(check);
   const needsTE = !!check.needs_te;
   const arch = check.arch || "unknown";
 
@@ -2726,34 +3187,8 @@ async function populateDropdowns() {
       });
     }).catch(() => {});
 
-    // ControlNet model + preprocessor dropdowns (async, non-blocking)
-    Promise.all([
-      API.cnModels().catch(() => [{ name: "None" }]),
-      API.cnPreprocessors().catch(() => [{ name: "None" }]),
-    ]).then(([cnModels, cnProcs]) => {
-      [1, 2].forEach(n => {
-        const modelSel = document.getElementById(`paramCN${n}Model`);
-        if (modelSel) {
-          modelSel.innerHTML = cnModels.map(m =>
-            `<option value="${m.name}">${m.name}</option>`
-          ).join("");
-          window.StudioSearchableSelect?.attach(modelSel, {
-            placeholder: "— Select ControlNet model —",
-            searchPlaceholder: "Filter models…",
-          });
-        }
-        const procSel = document.getElementById(`paramCN${n}Module`);
-        if (procSel) {
-          procSel.innerHTML = cnProcs.map(p =>
-            `<option value="${p.name}">${p.name}</option>`
-          ).join("");
-          window.StudioSearchableSelect?.attach(procSel, {
-            placeholder: "— Select preprocessor —",
-            searchPlaceholder: "Filter preprocessors…",
-          });
-        }
-      });
-    }).catch(() => {});
+    // ControlNet model + preprocessor dropdowns (async, non-blocking). CN1.
+    ControlNetPanel.loadLists().catch(() => {});
   } catch (e) {
     console.error("[Studio] Failed to load resources:", e);
     showToast(I18N.t("toast.connectionFailed", "Failed to connect to Forge backend"), "error");
@@ -3716,6 +4151,9 @@ async function doGenerate(overrides = {}) {
         // KR1. Klein reference images, only while the slot is showing and
         // holds any. Absent otherwise, so every other job is unchanged.
         ...KleinReferences.requestField(),
+        // CN1. ControlNet units, only on a model that takes them and with
+        // the panel and the unit on. Absent otherwise.
+        ...ControlNetPanel.requestField(),
         // An outpaint job's size is its strip-plus-context crop's at the
         // model's own area (CT9); Neo pastes it back at the canvas's size.
         width: _outpaint ? _outpaint.width
@@ -4513,7 +4951,13 @@ function handleProgress(data) {
   }
 
   var btn = document.getElementById("genBtn");
-  if (btn && data.total_steps > 0) {
+  // CN1. A preprocessor fetching its model on first use (as Forge does)
+  // says which file, instead of sitting at 0 steps.
+  var downloading = typeof data.textinfo === "string" && data.textinfo.indexOf("Downloading ") === 0
+    ? data.textinfo.slice("Downloading ".length).replace(/…$/, "") : "";
+  if (btn && downloading) {
+    btn.textContent = _i18n("ui.controlnet.downloading", "Downloading {file}…", { file: downloading });
+  } else if (btn && data.total_steps > 0) {
     btn.textContent = data.step + " / " + data.total_steps;
   }
 
@@ -5336,10 +5780,7 @@ const BADGE_FORMATTERS = {
     return `${scale}× ${document.getElementById("paramUpscaleModel")?.value || ""}`;
   },
   controlnet() {
-    if (!document.getElementById("checkCN")?.classList.contains("checked")) return "off";
-    const n = [1, 2].filter(i =>
-      document.getElementById(`checkCN${i}`)?.classList.contains("checked")).length;
-    return n ? `${n} unit${n === 1 ? "" : "s"}` : "off";
+    return ControlNetPanel.badge();
   },
 };
 
@@ -5546,7 +5987,7 @@ function bindUI() {
     el.addEventListener("input", _schedulePanelBadgeRefresh);
     el.addEventListener("change", _schedulePanelBadgeRefresh);
   });
-  ["checkAD1", "checkAD2", "checkAD3", "checkCN1", "checkCN2"].forEach(id => {
+  ["checkAD1", "checkAD2", "checkAD3", "checkCN1", "checkCN2", "checkCN3"].forEach(id => {
     document.getElementById(id)?.addEventListener("click", _schedulePanelBadgeRefresh);
   });
   _refreshPanelBadges();
@@ -7500,6 +7941,7 @@ function bindUI() {
     { role: "adetailer",    input: "modelRootAdetailer",   status: "modelRootStatusAdetailer",   browse: "modelRootBrowseAdetailer" },
     { role: "embedding",    input: "modelRootEmbedding",   status: "modelRootStatusEmbedding",   browse: "modelRootBrowseEmbedding" },
     { role: "upscaler",     input: "modelRootUpscaler",    status: "modelRootStatusUpscaler",    browse: "modelRootBrowseUpscaler" },
+    { role: "controlnet",   input: "modelRootControlnet",  status: "modelRootStatusControlnet",  browse: "modelRootBrowseControlnet" },
   ];
   // Held per process by the server and never persisted; refreshed on each read.
   let _modelRootToken = "";
@@ -9365,50 +9807,8 @@ function bindUI() {
 
   // --- Smoothing slider — now handled by ctx-scrub in canvas-ui.js ---
 
-  // --- ControlNet upload ---
-  // State: store base64 data for each CN unit upload
-  window._cnUploadData = { 1: null, 2: null };
-
-  [1, 2].forEach(n => {
-    const sourceSelect = document.getElementById(`paramCN${n}Source`);
-    const uploadRow = document.getElementById(`cnUpload${n}`);
-    const uploadBtn = document.getElementById(`cnUploadBtn${n}`);
-    const uploadInput = document.getElementById(`cnUploadInput${n}`);
-    const uploadThumb = document.getElementById(`cnUploadThumb${n}`);
-    const uploadClear = document.getElementById(`cnUploadClear${n}`);
-
-    // Show/hide upload row when source changes
-    sourceSelect?.addEventListener("change", () => {
-      if (uploadRow) uploadRow.style.display = sourceSelect.value === "Upload" ? "flex" : "none";
-    });
-
-    // Click "Choose Image" button
-    uploadBtn?.addEventListener("click", () => uploadInput?.click());
-
-    // File selected
-    uploadInput?.addEventListener("change", e => {
-      const file = e.target.files?.[0];
-      if (!file || !file.type.startsWith("image/")) return;
-      const r = new FileReader();
-      r.onload = ev => {
-        const b64 = ev.target.result;
-        window._cnUploadData[n] = b64.split(",")[1]; // strip data:image/...;base64, prefix
-        if (uploadThumb) { uploadThumb.src = b64; uploadThumb.style.display = "block"; }
-        if (uploadClear) uploadClear.style.display = "inline-block";
-        if (uploadBtn) uploadBtn.textContent = file.name.length > 20 ? file.name.slice(0, 17) + "..." : file.name;
-      };
-      r.readAsDataURL(file);
-      e.target.value = "";
-    });
-
-    // Clear upload
-    uploadClear?.addEventListener("click", () => {
-      window._cnUploadData[n] = null;
-      if (uploadThumb) { uploadThumb.src = ""; uploadThumb.style.display = "none"; }
-      if (uploadClear) uploadClear.style.display = "none";
-      if (uploadBtn) uploadBtn.textContent = _i18n("actions.chooseImage", "Choose Image...");
-    });
-  });
+  // ControlNet uploads, sources and previews are bound by ControlNetPanel
+  // (CN1), beside its request field.
 }
 
 
@@ -11249,6 +11649,7 @@ async function init() {
 
   bindUI();
   KleinReferences.bind();
+  ControlNetPanel.bind();
   _initParamScrub();
 
   // Add initial history entry
@@ -11629,6 +12030,27 @@ async function init() {
   const creditsList = document.getElementById("creditsList");
   if (creditsList) {
     creditsList.innerHTML = CREDITS.map(c =>
+      `<div><strong style="color:var(--text-2);">${c.name}</strong> <span style="color:var(--text-4);">&mdash; ${c.role}</span></div>`
+    ).join("");
+  }
+  // Third-party components, as docs/studio/THIRD_PARTY_NOTICES.md lists them
+  // (licensing pass, 2026-10-20). Names and licences stay in English, as the
+  // contributor list above does.
+  const COMPONENTS = [
+    { name: "Forge Neo", role: "engine, by Haoming02 (AGPL-3.0)" },
+    { name: "Stable Diffusion WebUI Forge / WebUI", role: "by lllyasviel and AUTOMATIC1111 (AGPL-3.0)" },
+    { name: "ComfyUI", role: "model and memory code, by Comfy Org (GPL-3.0)" },
+    { name: "TrackImage", role: "the Gallery, by Moritz" },
+    { name: "Krita", role: "brush, Smart Patch and Develop algorithms (GPL / LGPL)" },
+    { name: "ADetailer detectors", role: "by Bingsu (Apache-2.0)" },
+    { name: "MobileSAM", role: "word masks, by Chaoning Zhang et al. (Apache-2.0)" },
+    { name: "Remacri", role: "upscaler, by FoolhardyVEVO" },
+    { name: "ag-psd", role: "PSD files, by Agamnentzar (MIT)" },
+    { name: "Playfair Display", role: "font (SIL OFL 1.1)" },
+  ];
+  const creditsComponents = document.getElementById("creditsComponents");
+  if (creditsComponents) {
+    creditsComponents.innerHTML = COMPONENTS.map(c =>
       `<div><strong style="color:var(--text-2);">${c.name}</strong> <span style="color:var(--text-4);">&mdash; ${c.role}</span></div>`
     ).join("");
   }

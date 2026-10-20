@@ -88,4 +88,9 @@ __all__ = (
     "detect_case_policy",
 )
 
-__version__ = "0.1.0-alpha-s0"
+#: Studio's version, the ONE place it is written (owner, 2026-10-20: 0.9.x
+#: until 1.0, which comes with Regional and Live). Settings > About shows it
+#: through /api/version. Raise the last number with every tester update. The
+#: page's `?v=4.17.0` (index.html) is only a cache token inherited from the
+#: Extension, pinned by the loader's CSP hash; it is not shown anywhere.
+__version__ = "0.9.0"

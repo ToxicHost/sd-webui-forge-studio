@@ -3,7 +3,7 @@
 This is the source-install workflow: clone Studio, run its launcher, and update
 with Git. Python libraries and model weights stay out of the repository. The first
 setup still downloads several gigabytes for Torch and its GPU libraries, plus
-132.6 MB for six auxiliary models; this is a one-time setup for an unchanged
+173.4 MB for seven auxiliary models; this is a one-time setup for an unchanged
 environment. There is no giant portable ZIP to join or manually extract.
 
 ## First run
@@ -76,7 +76,7 @@ is preserved and reported rather than silently replaced.
 
 ## Offline preparation and verification
 
-A maintainer can supply the six exact model filenames in one local directory:
+A maintainer can supply the seven exact model filenames in one local directory:
 
 ```powershell
 $env:STUDIO_ASSET_DIR = 'C:\StudioAssets'
@@ -91,7 +91,7 @@ browser or starting a server.
 
 ## Features and review limits
 
-This is still an internal-alpha candidate. See
+This is still a test version (0.9.x; Settings > About shows which). See
 [TESTER_FEATURE_STATUS.md](TESTER_FEATURE_STATUS.md),
 [DEPENDENCY_NOTES.md](DEPENDENCY_NOTES.md) and
 [BUNDLED_MODEL_ASSETS.md](BUNDLED_MODEL_ASSETS.md).

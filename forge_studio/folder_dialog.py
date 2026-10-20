@@ -68,6 +68,7 @@ TITLES = {
     "lora": "Select LoRA folder",
     "embedding": "Select embeddings folder",
     "upscaler": "Select upscaler folder",
+    "controlnet": "Select ControlNet folder",
     "adetailer": "Select detector folder",
     "save": "Select save folder",
     "gallery": "Select image folder",

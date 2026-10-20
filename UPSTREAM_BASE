@@ -37,6 +37,11 @@ neo_comparisons_checked=2026-08-18
 # memory-management file is patched. Everything else in the 324 is
 # Studio-owned code that did not exist in Neo.
 #
+# 2026-10-20, PATCH-005: one UPSTREAM backport, Neo's own `bd1d015` (Anima
+# Control-LLLite block mapping), in backend/nn/anima.py and two
+# extensions-builtin/sd_forge_controlllite files. Upstream's code, not
+# Studio's; it leaves on the next sync.
+#
 # Read `neo_inference_paths_modified=0` narrowly. It means the DIFFUSION path
 # is unpatched, and that is still true. It does NOT mean no Neo compute
 # behaviour is patched: PATCH-003 changes upscale pixel handling and is the one
@@ -45,7 +50,7 @@ neo_comparisons_checked=2026-08-18
 # install-time. That was three days out of date and wrong about the third
 # family. Every number here is now recomputed from git by
 # tests/studio_alpha/test_patch_inventory.py rather than transcribed by hand.
-neo_owned_files_modified=37
+neo_owned_files_modified=38
 neo_inference_paths_modified=0
 neo_pixel_paths_modified=2
 

@@ -2,6 +2,22 @@
  * Forge Studio — Canvas Core (Standalone Clean Engine)
  * by ToxicHost & Moritz
  *
+ * Licensed under the GNU AGPL-3.0-or-later (see LICENSE).
+ * Portions are derived from Krita (https://krita.org, 6.1.0-prealpha), and
+ * carry those files' licences, combined with AGPL-3.0 under GPLv3/AGPLv3
+ * section 13 (see docs/studio/THIRD_PARTY_NOTICES.md):
+ *   libs/image/kis_gauss_circle_mask_generator.cpp     GPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2010 Lukáš Tvrdý, 2011 Geoffry Song
+ *   libs/image/kis_circle_mask_generator.cpp           GPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2004, 2007-2009 Cyrille Berger, 2010 Lukáš Tvrdý, 2012 Sven Langkamp
+ *   libs/ui/tool/strokes/KisMaskingBrushCompositeOp.h  GPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2017 Dmitry Kazakov, 2021 Deif Lou
+ *   plugins/paintops/colorsmudge/KisColorSmudgeStrategyBase.cpp  GPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2020 Peter Schatz, 2021 Dmitry Kazakov
+ *   plugins/tools/tool_smart_patch/kis_inpaint.cpp     GPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2017 Eugene Ingerman
+ *   plugins/color/colorspaceextensions/kis_hsv_adjustment.cpp     LGPL-2.0-only
+ *     SPDX-FileCopyrightText: 2007 Cyrille Berger
  * Phase 1: Pure algorithm module. No DOM queries, no event listeners,
  * no panel rendering. Functions take data, return data.
  *
@@ -8662,7 +8678,10 @@ function outpaintPrepare(sides, overlap = 32, opts = {}) {
     // (`outpaintJob`): an undo changes the size and so disarms it.
     if (!S.documentId) _startNewDocument();
     // `refine`: the dialog's "Refine new area" (owner: "Refine optional").
-    S._outpaintArmed = { W: nw, H: nh, documentId: S.documentId, refine: !!(opts && opts.refine) };
+    // `picture`: where the original picture sits, so `outpaintJob` can tell an
+    // outpaint (the mask covers the added area) from a later inpaint.
+    S._outpaintArmed = { W: nw, H: nh, documentId: S.documentId, refine: !!(opts && opts.refine),
+                         picture: { x: l, y: t, w: oldW, h: oldH } };
     markCompositeDirty();
     return { dx: l, dy: t, width: nw, height: nh };
 }
@@ -8708,18 +8727,34 @@ function outpaintRefinePlan(box, W, H, nativeArea) {
 }
 
 /** The outpaint job for Generate, or null: Outpaint armed this document at
- *  its current size and inpainting is on. The box is the CURRENT mask's, so
- *  an owner's edits to the mask are honoured. */
+ *  its current size, inpainting is on with the Inpaint mask, and that mask
+ *  still covers at least half of the area Outpaint added. The box is the
+ *  CURRENT mask's, so an owner's edits to the mask are honoured.
+ *
+ *  The last two conditions are the 2026-10-20 fix (owner: inpainting "not
+ *  nearly as clean as it used to be"): arming used to last until the size
+ *  changed, so every later inpaint on an outpainted document -- a face, a
+ *  hand -- went out as an outpaint: the whole canvas at ~1 MP, padding 0, no
+ *  Hires. Re-rolling the outpaint, or touching up its mask, still covers the
+ *  added area; a later inpaint elsewhere does not, and is a normal inpaint.
+ *  A selected named mask is what inpaints (M3), and the job was computed
+ *  from the Inpaint mask regardless. */
 function outpaintJob(nativeArea = 1024 * 1024) {
     const a = S._outpaintArmed;
     if (!a || a.W !== S.W || a.H !== S.H || a.documentId !== S.documentId || !S._userMaskMode) return null;
+    if (S.maskTarget != null) return null;
     const d = S.mask.ctx.getImageData(0, 0, S.W, S.H).data;
-    let x0 = S.W, y0 = S.H, x1 = -1, y1 = -1;
+    const p = a.picture || { x: 0, y: 0, w: 0, h: 0 };
+    const inPicture = (x, y) => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h;
+    let x0 = S.W, y0 = S.H, x1 = -1, y1 = -1, addedMasked = 0;
     for (let y = 0; y < S.H; y++) for (let x = 0; x < S.W; x++) {
         if (!d[(y * S.W + x) * 4 + 3]) continue;
         if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (!inPicture(x, y)) addedMasked++;
     }
     if (x1 < 0) return null;
+    const added = S.W * S.H - p.w * p.h;
+    if (addedMasked * 2 < added) return null;
     const box = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
     return { ...outpaintPlan(box, S.W, S.H, nativeArea),
              refine: a.refine ? outpaintRefinePlan(box, S.W, S.H, nativeArea) : null };

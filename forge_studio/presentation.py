@@ -306,7 +306,15 @@ _GENERATION_FIELDS = (
     # was assembled below the lifecycle `return`, no contract carried it, and
     # the writer hardcoded PNG in three places.
     "output",
+    # CN1. Up to three ControlNet units, each a group (`_CONTROLNET_FIELDS`).
+    "controlnet",
 )
+
+#: CN1. Every field a ControlNet unit may carry (`ControlNetUnitSettings`).
+_CONTROLNET_FIELDS = ("model_id", "preprocessor", "image", "weight",
+                      "guidance_start", "guidance_end", "control_mode",
+                      "resize_mode", "processor_res", "threshold_a",
+                      "threshold_b", "pixel_perfect", "hires_option")
 
 #: The three operations this product admits. A string here rather than the
 #: headless `Operation` enum: `forge_studio` does not import `forge_headless`,
@@ -565,6 +573,8 @@ def _validated_request_payload(payload: Any) -> dict[str, Any]:
         "output": _validated_output(payload.get("output")),
         "auto_detail": _validated_auto_detail(payload.get("auto_detail")),
         "variation": _validated_variation(payload.get("variation")),
+        # CN1. Absent stays absent: a job without units passes no such field.
+        **_controlnet_field(payload.get("controlnet")),
         # WP1. Validated as a set rather than field by field, because the
         # coherence rule spans them: which of source and mask must be present
         # is a property of the OPERATION, and checking each in isolation cannot
@@ -761,6 +771,106 @@ def _validated_references(value: Any) -> tuple[Any, ...]:
             raise PresentationError(f"{role} carries no image data.")
         assets.append(_validated_asset(item, role))
     return tuple(assets)
+
+
+def _controlnet_field(value: Any) -> dict[str, Any]:
+    units = _validated_controlnet(value)
+    return {"controlnet": units} if units else {}
+
+
+def _validated_controlnet(value: Any) -> tuple[Any, ...]:
+    """CN1. Up to `MAX_CONTROLNET_UNITS` units, or none.
+
+    Shape and Neo's own ranges only. Whether the preprocessor exists, whether
+    it needs a model, and whether the loaded model can take ControlNet at all
+    are questions for the port, which has Neo's registry and the engine.
+    """
+
+    from .contracts import (
+        CONTROLNET_CONTROL_MODES, CONTROLNET_HIRES_OPTIONS,
+        CONTROLNET_RESIZE_MODES, MAX_CONTROLNET_UNITS, ControlNetUnitSettings,
+    )
+
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise PresentationError("controlnet must be a list of units.")
+    if len(value) > MAX_CONTROLNET_UNITS:
+        raise PresentationError(
+            f"controlnet may hold at most {MAX_CONTROLNET_UNITS} units; "
+            f"{len(value)} were sent.")
+
+    def number(unit: Mapping[str, Any], name: str, default: float,
+               low: float, high: float, role: str) -> float:
+        # The module's one rule for a bounded number (finite, not a bool, in
+        # range), with the unit's role in the name it reports.
+        field = f"{role}.{name}"
+        return _bounded_float({field: unit.get(name, default)}, field, low, high)
+
+    def choice(unit: Mapping[str, Any], name: str, options: tuple[str, ...],
+               default: str, role: str) -> str:
+        raw = unit.get(name, default)
+        if raw not in options:
+            raise PresentationError(
+                f"{role}.{name} must be one of: {', '.join(options)}.")
+        return str(raw)
+
+    units = []
+    for index, unit in enumerate(value):
+        role = f"controlnet[{index}]"
+        if not isinstance(unit, Mapping):
+            raise PresentationError(f"{role} must be a JSON object.")
+        unexpected = sorted(str(key) for key in unit if key not in _CONTROLNET_FIELDS)
+        if unexpected:
+            raise PresentationError(
+                f"Unsupported generation field: {role}.{unexpected[0]}.")
+        texts = {}
+        for name, default in (("model_id", ""), ("preprocessor", "None")):
+            raw = unit.get(name, default)
+            if raw is None:
+                raw = default
+            if not isinstance(raw, str):
+                raise PresentationError(f"{role}.{name} must be text.")
+            raw = raw.strip()
+            if len(raw) > 200:
+                raise PresentationError(f"{role}.{name} is too long.")
+            texts[name] = raw or default
+        start = number(unit, "guidance_start", 0.0, 0.0, 1.0, role)
+        end = number(unit, "guidance_end", 1.0, 0.0, 1.0, role)
+        if start > end:
+            raise PresentationError(
+                f"{role}.guidance_start must not be after guidance_end.")
+        resolution = unit.get("processor_res", -1)
+        if (isinstance(resolution, bool) or not isinstance(resolution, int)
+                or not (resolution == -1 or 64 <= resolution <= 4096)):
+            raise PresentationError(
+                f"{role}.processor_res must be -1 (the preprocessor's default) "
+                "or 64-4096.")
+        pixel_perfect = unit.get("pixel_perfect", False)
+        if not isinstance(pixel_perfect, bool):
+            raise PresentationError(f"{role}.pixel_perfect must be true or false.")
+        units.append(ControlNetUnitSettings(
+            model_id=texts["model_id"] if texts["model_id"] != "None" else "",
+            preprocessor=texts["preprocessor"],
+            image=_validated_asset(unit.get("image"), f"{role}.image"),
+            # Neo's own slider range for Control Weight.
+            weight=number(unit, "weight", 1.0, 0.0, 2.0, role),
+            guidance_start=start,
+            guidance_end=end,
+            control_mode=choice(unit, "control_mode", CONTROLNET_CONTROL_MODES,
+                                "Balanced", role),
+            resize_mode=choice(unit, "resize_mode", CONTROLNET_RESIZE_MODES,
+                               "Crop and Resize", role),
+            processor_res=resolution,
+            # Ranges differ per preprocessor; Neo's slider decides. -1 means
+            # its default.
+            threshold_a=number(unit, "threshold_a", -1.0, -math.inf, math.inf, role),
+            threshold_b=number(unit, "threshold_b", -1.0, -math.inf, math.inf, role),
+            pixel_perfect=pixel_perfect,
+            hires_option=choice(unit, "hires_option", CONTROLNET_HIRES_OPTIONS,
+                                "Both", role),
+        ))
+    return tuple(units)
 
 
 def _validated_reference_side(value: Any) -> int | None:
@@ -2104,6 +2214,16 @@ class StudioPresentation:
         if registry is None:
             return describe_catalogue(())
         return describe_catalogue(scan_configured_detectors(registry))
+
+    def gpu_side_task(self, label: str) -> Any:
+        """CN1. The coordinator's hold for GPU work outside the queue, or a
+        no-op where this host has no coordinator."""
+
+        import contextlib
+
+        coordinator = self._coordinator_or_none()
+        hold = getattr(coordinator, "gpu_side_task", None)
+        return hold(label) if hold is not None else contextlib.nullcontext()
 
     def queue(self) -> dict[str, Any]:
         coordinator = self._coordinator_or_none()
@@ -3970,6 +4090,18 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/status":
                 self._send_json(HTTPStatus.OK, self._presentation.backend_status())
                 return
+            if path == "/api/version":
+                # Settings > About. Studio's own number, not the Extension's.
+                from forge_studio import __version__
+
+                self._send_json(HTTPStatus.OK, {"version": __version__})
+                return
+            if path == "/api/crash_notice":
+                # OOM1. Why the launcher restarted this server, once.
+                from forge_studio.crash_notice import current
+
+                self._send_json(HTTPStatus.OK, {"notice": current()})
+                return
             if path == "/api/models":
                 self._send_json(HTTPStatus.OK, self._presentation.models())
                 return
@@ -4405,6 +4537,40 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.CREATED,
                     self._presentation.admit_asset(payload),
                 )
+                return
+            if path == "/api/crash_notice/dismiss":
+                from forge_studio.crash_notice import dismiss
+
+                self._read_json()  # drained, so a keep-alive request after it parses cleanly
+                dismiss()
+                self._send_json(HTTPStatus.OK, {"notice": None})
+                return
+            if path == "/api/controlnet/preprocess":
+                # CN1. The map a ControlNet unit's preprocessor makes, for the
+                # panel's preview and its "Use as Klein reference" button.
+                # Outside the queue, as the Upscale panel's ESRGAN pass is, but
+                # holding the coordinator's one-job gate while it runs: Neo's
+                # preprocessors load their own models onto the same card, so
+                # no job may start underneath one (and none may be waiting).
+                from forge_headless.contracts import HeadlessError
+                from forge_headless.controlnet_port import preprocess
+
+                from .contracts import StudioError
+
+                payload = self._read_json_bounded(maximum_bytes=_MAX_PIXEL_REQUEST_BYTES)
+                try:
+                    with self._presentation.gpu_side_task("controlnet-preview"):
+                        reply = preprocess(payload)
+                except StudioError as error:
+                    self._send_json(HTTPStatus.CONFLICT, {
+                        "ok": False, "code": "CONTROLNET_BUSY",
+                        "error": error.error.message})
+                    return
+                except HeadlessError as error:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {
+                        "ok": False, "code": error.code, "error": error.message})
+                    return
+                self._send_json(HTTPStatus.OK, {"ok": True, **reply})
                 return
             if path == "/api/generate":
                 # 64 KB was right while this route carried only text. WP1 gave

@@ -258,6 +258,38 @@ def with_prompt_templates(infotext: str, request: object) -> str:
     return "\n".join([*lines[:tail], *extra, *lines[tail:]])
 
 
+def time_taken_text(seconds: float) -> str:
+    """Neo's own wording for the same number (`modules/call_queue.py:95-99`)."""
+
+    minutes, rest = int(seconds // 60), seconds % 60
+    text = f"{rest:.1f} sec."
+    return f"{minutes} min. {text}" if minutes > 0 else text
+
+
+def with_time_taken(infotext: str, seconds: float | None) -> str:
+    """The owner, 2026-10-20: how long the picture took, in its metadata.
+
+    Neo shows "Time taken" under the result and never writes it into the file;
+    the Extension shows it in a toast. Studio adds it to the settings line
+    (`Steps: N, ...`), so the Gallery's details panel lists it with the other
+    keys (`gallery_metadata._read_settings` keeps unknown keys) and paste-back,
+    which reads known keys only, ignores it. Measured from dispatch to just
+    before the file is written: loading, every pass, Auto Detail -- not the
+    queue wait. No settings line, no change.
+    """
+
+    if seconds is None or not infotext:
+        return infotext
+    import re
+
+    lines = infotext.split("\n")
+    tail = next((i for i in range(len(lines) - 1, -1, -1) if re.match(r"Steps: \d", lines[i])), None)
+    if tail is None or "Time taken:" in lines[tail]:
+        return infotext
+    lines[tail] = f"{lines[tail]}, Time taken: {time_taken_text(float(seconds))}"
+    return "\n".join(lines)
+
+
 def name_context(request: object, processing: object, image: Any) -> dict[str, Any]:
     """NM1. What the owner's file name pattern can say about this result.
 
@@ -1548,6 +1580,19 @@ class StudioLiveGenerationPort:
             # identical path it took before WP1.6.
             processing.scripts = _soft_inpainting_bridge(  # type: ignore[attr-defined]
                 request, is_inpaint)
+            # CN1. Neo's ControlNet, when the owner set units. Checked first,
+            # so a model that cannot take it, an unknown preprocessor or a
+            # missing model is refused before anything samples. A job without
+            # units keeps exactly the `scripts` it had.
+            controlnet = tuple(getattr(request, "controlnet", ()) or ())
+            if controlnet:
+                from . import controlnet_port
+
+                controlnet_port.check(engine, controlnet, has_source=is_img2img)
+                processing.scripts = controlnet_port.compose(  # type: ignore[attr-defined]
+                    processing.scripts,
+                    controlnet_port.ControlNetRunner(
+                        controlnet, announce=getattr(progress, "set_note", None)))
             # `<lora:name:weight>` in the prompt does nothing without this.
             #
             # `parse_extra_network_prompts` strips the tag a few frames below,
@@ -1977,6 +2022,18 @@ class StudioLiveGenerationPort:
         # rebuilds both from the upscaled mask and the bridge blends against
         # the right tensors.
         pass_.scripts = _soft_inpainting_bridge(request, mask is not None)
+        # CN1. ControlNet carries over, as the Extension's `run_hires_fix`
+        # re-runs `process_images` on the same `p` with its scripts: Neo
+        # preprocesses again at the Hires size. Units are rebuilt for this
+        # object (Neo mutates them while processing).
+        controlnet = tuple(getattr(request, "controlnet", ()) or ())
+        if controlnet:
+            from . import controlnet_port
+
+            pass_.scripts = controlnet_port.compose(
+                pass_.scripts,
+                controlnet_port.ControlNetRunner(
+                    controlnet, announce=getattr(progress, "set_note", None)))
 
         telemetry = getattr(self, "telemetry", None)
         if telemetry is not None:
@@ -2285,6 +2342,7 @@ class StudioLiveGenerationPort:
         # RP1. The raw prompts the owner typed, when wildcards changed them --
         # into the file AND the Gallery, which both take this string.
         infotext = with_prompt_templates(infotext, request)
+        infotext = with_time_taken(infotext, getattr(progress, "elapsed_seconds", None))
 
         image = _stamped(images[0], request)
         seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))

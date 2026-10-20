@@ -2,6 +2,16 @@
  * Forge Studio — Develop Module
  * by ToxicHost & Moritz
  *
+ * Licensed under the GNU AGPL-3.0-or-later (see LICENSE).
+ * Some adjustment curves follow Krita (https://krita.org, 6.1.0-prealpha),
+ * combined with AGPL-3.0 via GPL-3.0 (LGPL-2.x section 3, then GPLv3/AGPLv3
+ * section 13; docs/studio/THIRD_PARTY_NOTICES.md):
+ *   plugins/color/colorspaceextensions/kis_hsv_adjustment.cpp            LGPL-2.0-only
+ *     SPDX-FileCopyrightText: 2007 Cyrille Berger
+ *   plugins/color/colorspaceextensions/kis_color_balance_adjustment.cpp  LGPL-2.0-or-later
+ *     SPDX-FileCopyrightText: 2013 Sahil Nagpal
+ *   plugins/color/colorspaceextensions/kis_desaturate_adjustment.cpp     LGPL-2.0-only
+ *     SPDX-FileCopyrightText: 2013 Boudewijn Rempt
  * Lightroom-style global non-destructive post-processing pass.
  *
  * Architecture:

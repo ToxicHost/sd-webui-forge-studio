@@ -2,12 +2,14 @@
 
 import logging
 import math
+import re
 from typing import Final, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from backend.nn.anima import BLOCK_MAPPINGS, Anima
 from backend.state_dict import load_state_dict
 
 logger = logging.getLogger("ControlNet")
@@ -40,6 +42,7 @@ _INTERNAL_COND_PREFIX = "conditioning1."
 _INTERNAL_DEPTH_KEY = "depth_embeds"
 _SAVED_COND_PREFIX = "lllite_conditioning1."
 _SAVED_DEPTH_SUFFIX = ".depth_embed"
+_SAVED_BLOCK_RE = re.compile(r"lllite_dit_blocks_(\d+)_")
 
 
 def parse_target_layers(spec: str) -> tuple[str]:
@@ -345,6 +348,30 @@ class ControlNetLLLiteDiT(nn.Module):
         for m in self.lllite_modules:
             m.restore()
         self.set_cond_image(None)
+
+
+# region Block Mapping
+
+
+class MappedModule(nn.Module):
+    def __init__(self, dit: nn.Module, layout: list[int]):
+        super().__init__()
+        self.blocks = nn.ModuleList(dit.blocks[i] for i in layout)
+
+
+def map_blocks(dit: Anima, state_dict: dict[str, torch.Tensor]) -> nn.Module:
+    blocks: int = len(dit.blocks)
+    trained: int = 1 + max((int(m.group(1)) for k in state_dict if (m := _SAVED_BLOCK_RE.match(k))), default=-1)
+
+    if trained == blocks:
+        return dit
+
+    if (mapping := BLOCK_MAPPINGS.get((trained, blocks))) is None:
+        raise NotImplementedError(f"Cannot map Control-LLLite ({trained}) to Model ({blocks})")
+
+    layout = [mapping.index(i) for i in range(trained)]
+    logger.info(f"Re-Mapping Anima Control-LLLite ({trained} to {blocks})")
+    return MappedModule(dit, layout)
 
 
 # region Weight Loading (v2)

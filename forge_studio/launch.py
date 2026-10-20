@@ -667,6 +667,15 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
         )
         actual_port = int(server.server_address[1])
         _log_port_choice(config["port"], actual_port)
+        # OOM1. If the launcher restarted this server after an unexpected stop,
+        # set its record aside for the page to show once. Never raises.
+        from .crash_notice import load_once as _load_crash_notice
+
+        _crash = _load_crash_notice()
+        if _crash is not None:
+            logger.warning(
+                "Restarted after an unexpected stop: exit code %s, RAM %s%% used, low_memory=%s.",
+                _crash.get("exit_code"), _crash.get("ram_percent"), _crash.get("low_memory"))
         # The machine-readable ready line. Emitted exactly once, only AFTER
         # the bind above succeeded (a bind failure raises before this line),
         # and flushed so a piped consumer reads it promptly without -u.

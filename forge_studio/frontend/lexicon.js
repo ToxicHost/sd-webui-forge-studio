@@ -1285,24 +1285,13 @@ window.LexiconAPI = {
 if (window.StudioModules) {
     StudioModules.register("lexicon", {
         label: "Wildcards", icon: "\u2731",
-        // No wildcard service exists: `/studio/lexicon` has no handler at all,
-        // so `loadTree()` 404s and the panel renders "Cannot load wildcard
-        // files". Its toolbar is built by `_buildUI` regardless of tree
-        // contents, so three controls were live the moment the tab opened --
-        // \u21bb Refresh toasted "Refreshed" unconditionally, and \u2b06 Export clicked a
-        // synthetic <a download="wildcards_export.zip"> at a route that does
-        // not exist, saving a 404 JSON body to disk under a .zip name.
-        //
-        // Gating the tab retires all of them. lexicon.css loads inside init()
-        // and nothing outside this file reads a `window` export from it.
-        async probe() {
-            try {
-                const r = await fetch(API + "/tree");
-                return r.ok;
-            } catch (_) {
-                return false;
-            }
-        },
+        // No probe, as in the Extension. One was added while `/studio/lexicon`
+        // had no handler; Studio serves it now, and the probe hid the tab
+        // whenever /tree refused -- no folder chosen, a folder not reachable,
+        // or one request failing at page load -- so Wildcards vanished with
+        // nothing saying why. The panel shows the refusal instead, and
+        // loadTree() runs again every time the tab is opened. Export/Import,
+        // which have no route, are not in the toolbar (see IMPORT / EXPORT).
         init(container, services) {
             console.log(TAG, "Initializing Wildcards module v" + VERSION);
             if (!document.querySelector('link[href*="lexicon.css"]')) {

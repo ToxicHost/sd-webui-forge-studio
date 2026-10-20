@@ -257,9 +257,11 @@ function attach(select, opts) {
         if (!it || it.kind !== "option" || it.disabled) return;
         if (select.value !== it.value) {
             select.value = it.value;
-            triggerLabel.textContent = _currentLabel(select, placeholder);
             select.dispatchEvent(new Event("change", { bubbles: true }));
         }
+        // Outside the `if`: picking the option that is already the value
+        // must still correct a label that has fallen behind it.
+        triggerLabel.textContent = _currentLabel(select, placeholder);
         _close();
         trigger.focus();
     }
@@ -335,6 +337,24 @@ function attach(select, opts) {
     });
     observer.observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ["value"] });
 
+    // `select.value = x` and `select.selectedIndex = n` set a PROPERTY, which
+    // no MutationObserver sees, so a value set by code (a model-family switch
+    // restoring Text Encoder, VAE, Sampler, Scheduler) left the old label on
+    // the trigger while the list showed the real value. Wrap both setters on
+    // this element so every programmatic set repaints the label.
+    const proto = HTMLSelectElement.prototype;
+    for (const key of ["value", "selectedIndex"]) {
+        const native = Object.getOwnPropertyDescriptor(proto, key);
+        Object.defineProperty(select, key, {
+            configurable: true,
+            get() { return native.get.call(this); },
+            set(v) {
+                native.set.call(this, v);
+                triggerLabel.textContent = _currentLabel(select, placeholder);
+            },
+        });
+    }
+
     // Native "change" can also be triggered by other code paths (e.g.
     // keyboard) — keep the trigger label in sync.
     select.addEventListener("change", () => {
@@ -349,6 +369,8 @@ function attach(select, opts) {
         destroy() {
             _close();
             observer.disconnect();
+            delete select.value;
+            delete select.selectedIndex;
             trigger.remove();
             select.classList.remove("ssel-native-hidden");
             delete select[ATTR_KEY];

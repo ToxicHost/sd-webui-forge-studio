@@ -100,16 +100,20 @@ channels          3 -> 3
 supports_half     True
 ```
 
-**Attribution.** Credited in Studio's Credits as **Remacri**, a
-community-trained ESRGAN upscaling model, widely attributed to *FoolhardyVEVO*
-and distributed through the community upscaler model collections.
+**Attribution.** **Remacri**, a community-trained ESRGAN upscaling model by
+*FoolhardyVEVO*, distributed through the community upscaler model
+collections. Credited in Studio's Credits (Settings › About) from 2026-10-20;
+the earlier claim that it already was had no Credits line behind it.
 
-**Licence status: owner-asserted, not verified from a canonical source.** The
-weights carry no embedded licence, and no authoritative licence statement was
-located for them. The owner has reviewed this and approved bundling with
-credit. Recorded here as asserted rather than verified so that the distinction
-survives — if a canonical licence is later found, tighten this entry rather
-than discovering the gap during a release review.
+**Licence: treated as CC BY-NC-SA 4.0, and kept.** The weights carry no
+embedded licence. Checked 2026-10-20: the Hugging Face source
+`FacehugmanIII/4x_foolhardy_Remacri` states no licence ("unknown"), and
+OpenModelDB (`openmodeldb.info/models/4x-Remacri`) lists it as
+**CC BY-NC-SA 4.0**. Decided 2026-10-20: Studio meets those terms and keeps
+it as the default upscaler. Attribution: credited in Credits. Non-commercial:
+Forge Studio is free software and will never be sold. Share-alike: the
+weights ship unmodified. A commercial redistribution of Studio would have to
+replace it (THIRD_PARTY_NOTICES.md).
 
 A filename gotcha worth keeping: Neo derives an upscaler's SCALE from its
 FILENAME (`re.search(r"(\d)[xX]|[xX](\d)")`, defaulting to 4 on no match).

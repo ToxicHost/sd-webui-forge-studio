@@ -142,6 +142,9 @@ class ProgressSnapshot:
     cancellation_requested: bool
     terminal: bool
     error: str | None
+    #: CN1. What the job is waiting on that is not a step, e.g. the file a
+    #: preprocessor is downloading on first use. None almost always.
+    note: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -155,6 +158,7 @@ class ProgressSnapshot:
             "cancellation_requested": self.cancellation_requested,
             "terminal": self.terminal,
             "error": self.error,
+            "note": self.note,
         }
 
 
@@ -181,6 +185,7 @@ class HeadlessProgress:
         self._preview_id = 0
         self._preview_at = 0.0
         self._started = time.monotonic()
+        self._note: str | None = None
         self._lock = threading.RLock()
 
     # -- reads -------------------------------------------------------------
@@ -227,6 +232,7 @@ class HeadlessProgress:
                 cancellation_requested=self._cancel,
                 terminal=self._state in TERMINAL_STATES,
                 error=self._error,
+                note=self._note,
             )
 
     def preview_frame(self) -> tuple[int, str | None]:
@@ -322,6 +328,12 @@ class HeadlessProgress:
         with self._lock:
             self._hires_expected = True
 
+    def set_note(self, downloading: str | None) -> None:
+        """CN1. Name the file being downloaded on first use, or clear it."""
+
+        with self._lock:
+            self._note = f"Downloading {downloading}…" if downloading else None
+
     def set_total_steps(self, total: int) -> None:
         """Declare the real step count. Only a backend may call this.
 
@@ -349,6 +361,16 @@ class HeadlessProgress:
                 # denoising_strength * steps, so 0.5 over 6 steps budgets 4.
                 self._step = 0
                 self.advance_to(JobState.HIRES_SAMPLING)
+            # Every pass, not only Hires. Neo's `launch_sampling` writes
+            # `sampling_steps` and then `sampling_step = 0`, and that zero is
+            # discarded by `report_step`'s monotonic rule -- so an Auto Detail,
+            # refine or image-Hires pass kept the previous pass's last step:
+            # "19 / 11" on the button, steps 0..18 of the new pass dropped, the
+            # bar full throughout (owner and tester, 2026-10-20: the button
+            # "lies a little"). The Extension reads Neo's own counter, which
+            # does restart. A budget arriving is a pass starting.
+            if self._state not in TERMINAL_STATES:
+                self._step = 0
             self._total = int(total)
 
     def report_step(self, step: int) -> None:
