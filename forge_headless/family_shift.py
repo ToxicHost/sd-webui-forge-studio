@@ -39,6 +39,7 @@ ENGINE_PRESET = {
     "ErnieImage": "ernie",
     "PiD": "pid",
     "Krea2": "krea",
+    "MOSSImage": "moss",
 }
 
 

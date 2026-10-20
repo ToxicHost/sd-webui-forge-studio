@@ -86,11 +86,16 @@ def _refuse(code: str, message: str) -> "InputAssetRefused":
     return InputAssetRefused(code, message)
 
 
-def decode_source(asset: Any, *, required: bool) -> SourceImage | None:
+def decode_source(asset: Any, *, required: bool,
+                  keep_alpha: bool = False) -> SourceImage | None:
     """One `InputAsset` into a verified `SourceImage`, or a named refusal.
 
     `required` is the operation's business, not this function's: img2img and
     inpaint pass True, and txt2img never calls here at all.
+
+    `keep_alpha` (KR1, reference images only) returns RGBA when the picture
+    has transparency, so the port can flatten it onto Neo's background colour
+    the way ImageStitch does instead of losing it to a bare RGB convert.
     """
 
     data_url = str(getattr(asset, "data_url", "") or "") if asset is not None else ""
@@ -170,7 +175,12 @@ def decode_source(asset: Any, *, required: bool) -> SourceImage | None:
     # RGB, because that is what the engine samples. An alpha channel on an
     # init image is not transparency to the sampler, it is a fourth plane it
     # will not read -- dropping it here keeps that decision in one place.
-    if opened.mode != "RGB":
+    has_alpha = opened.mode in ("RGBA", "LA", "PA") or (
+        opened.mode == "P" and "transparency" in opened.info)
+    if keep_alpha and has_alpha:
+        if opened.mode != "RGBA":
+            opened = opened.convert("RGBA")
+    elif opened.mode != "RGB":
         opened = opened.convert("RGB")
 
     return SourceImage(
@@ -181,6 +191,27 @@ def decode_source(asset: Any, *, required: bool) -> SourceImage | None:
         media_type=media_type,
         mask_present=False,
     )
+
+
+def decode_references(assets: Any) -> tuple[Any, ...]:
+    """KR1. Each reference `InputAsset` into a verified PIL image, in order.
+
+    The source image's own checks, every one -- byte ceiling before decode,
+    data-URL shape, media type, Pillow's guard, declared size -- under the
+    code `REFERENCE_IMAGE_INVALID`, numbered from 1 as the page shows them.
+    """
+
+    images = []
+    for number, asset in enumerate(tuple(assets or ()), start=1):
+        try:
+            decoded = decode_source(asset, required=True, keep_alpha=True)
+        except InputAssetRefused as error:
+            message = str(getattr(error, "message", "") or error).replace(
+                "source image", "reference image")
+            raise _refuse("REFERENCE_IMAGE_INVALID",
+                          f"Reference image {number}: {message}") from error
+        images.append(decoded.image)
+    return tuple(images)
 
 
 #: S1: below this a soft mask is 0 (the page's `SOFT_MASK_FLOOR`, the same 8).
@@ -290,6 +321,7 @@ def decode_mask(asset: Any, source: SourceImage, *, soft: bool = False) -> Any:
 __all__ = (
     "MAX_SOURCE_IMAGE_BYTES",
     "decode_mask",
+    "decode_references",
     "SOURCE_IMAGE_MEDIA_TYPES",
     "InputAssetRefused",
     "decode_source",

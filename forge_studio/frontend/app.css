@@ -1011,6 +1011,36 @@ body {
   text-decoration: underline; cursor: pointer;
 }
 .anima-emphasis-back:hover { color: var(--text-1); }
+/* Klein reference images (KR1): up to four thumbnails with remove buttons. */
+.ref-count { margin-left: auto; margin-right: 6px; font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+.ref-hint { font-size: 10px; color: var(--text-3); margin: 4px 0 6px; }
+.ref-slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.ref-slots:empty { display: none; }
+.ref-slot {
+  position: relative; aspect-ratio: 1; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg-input); overflow: hidden;
+}
+.ref-slot img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ref-num {
+  position: absolute; left: 3px; top: 2px; font-family: var(--mono); font-size: 10px;
+  color: var(--text-1); text-shadow: 0 0 3px var(--bg-void);
+}
+.ref-remove {
+  position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; padding: 0;
+  font: inherit; font-size: 12px; line-height: 14px; color: var(--text-2);
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ref-remove:hover { color: var(--text-1); border-color: var(--border-hover); }
+.ref-drop {
+  margin-top: 4px; padding: 8px 6px; text-align: center; font-size: 10px; color: var(--text-3);
+  border: 1px dashed var(--border); border-radius: var(--radius-sm);
+}
+.ref-drop[hidden] { display: none; }
+.ref-drop-over .ref-drop { color: var(--text-1); border-color: var(--accent); background: var(--accent-dim); }
+.ref-size-row { margin-top: 6px; }
+.ref-actions { display: flex; gap: 4px; margin-top: 6px; }
+.ref-actions > * { flex: 1; min-width: 0; }
 
 .gen-btn {
   width: 100%; height: 36px;

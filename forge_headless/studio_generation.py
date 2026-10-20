@@ -269,6 +269,10 @@ STUDIO_REQUEST_FIELDS = (
     "mask",
     "inpaint",
     "denoising_strength",
+    # KR1. FLUX.2 Klein reference images; the port encodes them as Neo's
+    # ImageStitch does.
+    "reference_images",
+    "reference_max_side",
     "model_id",
     "positive_prompt",
     "negative_prompt",
@@ -677,10 +681,21 @@ def translate_request(
             name_pattern=str(getattr(_output_settings, "name_pattern", "") or ""),
         )
 
+    # KR1. Decoded here, beside the source, so a bad reference is refused by
+    # name before admission rather than inside the encode.
+    from .input_assets import decode_references
+
+    references = decode_references(getattr(request, "reference_images", ()))
+    # None is Neo's default; 0 is its "no limit" and must survive as 0.
+    reference_side = getattr(request, "reference_max_side", None)
+
     headless = FirstImageRequest(
         request_id=request_id,
         operation=operation,
         source=source,
+        reference_images=references,
+        **({"reference_max_side": int(reference_side)}
+           if reference_side is not None else {}),
         inpaint=inpaint,
         output=_output,
         denoising_strength=float(getattr(request, "denoising_strength", 0.75)),

@@ -143,6 +143,24 @@ def _device_facts() -> dict[str, str]:
         return {}
 
 
+def _unpack_tokenizers() -> None:
+    """Neo's last startup step (`modules_forge/initialization.py:92-96`):
+    `backend.huggingface.process()` unpacks the tokenizers it ships compressed
+    (`*.tokenizer.json.xz`) into each model family's config folder, once.
+
+    Studio does not run `initialize_forge`, so these were never unpacked, and
+    a family whose tokenizer exists only in that form (ERNIE-Image, Wan, Neta
+    Lumina, PiD, MOSS-Image) could not load its tokenizer. Never raises:
+    a failure leaves those families unloadable, as before, and boots."""
+
+    try:
+        from backend.huggingface import process
+
+        process()
+    except Exception as error:  # noqa: BLE001 - startup reports, never dies
+        print(f"Studio: could not unpack the bundled tokenizers: {type(error).__name__}: {error}"[:300])
+
+
 def bootstrap_backend(
     repository_root: Path,
     *,
@@ -323,6 +341,8 @@ def bootstrap_backend(
         from .mps_adapter import install as _install_mps_adapter
 
         _install_mps_adapter()
+
+        _unpack_tokenizers()
 
         from .neo_registries import read_registries
 

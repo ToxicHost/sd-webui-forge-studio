@@ -12,6 +12,8 @@
  *   StudioDocs.newDoc(name?)       — create a new document
  *   StudioDocs.switchDoc(idx)      — switch to document at index
  *   StudioDocs.closeDoc(idx)       — close document (guarded against last)
+ *   StudioDocs.closeAllDocs()      — close every document, leaving one blank
+ *   StudioDocs.closeOtherDocs(idx) — close every document but this one
  *   StudioDocs.renameDoc(idx,name) — rename
  *   StudioDocs.activeIdx           — current document index
  *   StudioDocs.count               — number of open documents
@@ -544,23 +546,74 @@ function switchDoc(idx) {
   console.log(TAG, "Switched to:", _docs[idx].name);
 }
 
+function _t(key, fallback, params) {
+  if (window.I18N && window.I18N.t) return window.I18N.t(key, fallback, params);
+  return params ? fallback.replace(/\{(\w+)\}/g, function (m, k) {
+    return params[k] != null ? String(params[k]) : m;
+  }) : fallback;
+}
+
+// Whether closing this tab loses work. The ACTIVE tab's flag is read from
+// the canvas, where it is live; its tab copy is refreshed by the next capture.
+function _isDirty(idx) {
+  if (idx === _activeIdx) return !!window.StudioCore.state._canvasDirty;
+  return !!(_docs[idx] && _docs[idx]._canvasDirty);
+}
+
 function closeDoc(idx) {
   if (_docs.length <= 1) {
-    if (window.showToast) window.showToast((window.I18N && window.I18N.t) ? window.I18N.t("docs.cantCloseLast", "Can\u2019t close the last document") : "Can\u2019t close the last document", "info");
+    if (window.showToast) window.showToast(_t("docs.cantCloseLast", "Can\u2019t close the last document"), "info");
     return;
   }
+  if (!_docs[idx]) return;
 
   // Confirm if doc has content
-  if (_docs[idx]._canvasDirty) {
-    if (!confirm("Close \"" + _docs[idx].name + "\"? Unsaved changes will be lost.")) return;
+  if (_isDirty(idx)) {
+    if (!confirm(_t("docs.closeConfirm", "Close \"{name}\"? Unsaved changes will be lost.", { name: _docs[idx].name }))) return;
   }
 
-  // An EXPLICIT close. This is the only path that removes recovery -- an
-  // ordinary image export is not a project save and must leave it alone,
-  // because the owner still has unsaved layers behind that flat picture.
-  var closingId = _docs[idx].documentId;
+  _removeDocs([idx]);
+  console.log(TAG, "Closed document at index", idx);
+}
 
-  _docs.splice(idx, 1);
+// CA1. Close every tab, or every tab but one. One question for the lot, and
+// only when one of them has unsaved changes -- the rule a single close
+// follows, asked once rather than once per tab. True if they were closed.
+function _closeMany(indices) {
+  if (!indices.length) return false;
+  var dirty = indices.filter(_isDirty).length;
+  if (dirty && !confirm(_t("docs.closeManyConfirm",
+      "Close {count} tabs? Unsaved changes in {dirty} of them will be lost.",
+      { count: indices.length, dirty: dirty }))) return false;
+  _removeDocs(indices);
+  console.log(TAG, "Closed", indices.length, "documents");
+  return true;
+}
+
+function closeAllDocs() {
+  return _closeMany(_docs.map(function (d, i) { return i; }));
+}
+
+function closeOtherDocs(idx) {
+  if (!_docs[idx]) return false;
+  return _closeMany(_docs.map(function (d, i) { return i; })
+    .filter(function (i) { return i !== idx; }));
+}
+
+// Remove the tabs at `indices`, already confirmed. Every close comes through
+// here, so closing one tab and closing many cannot drift apart.
+function _removeDocs(indices) {
+  var closing = indices.map(function (i) { return _docs[i]; }).filter(Boolean);
+  if (!closing.length) return;
+  var active = _docs[_activeIdx];
+  // Where the active tab lands if it closes: the first tab still open at or
+  // after it, else the last one before it.
+  var keptBefore = _docs.slice(0, _activeIdx)
+    .filter(function (d) { return closing.indexOf(d) < 0; }).length;
+
+  for (var i = _docs.length - 1; i >= 0; i--) {
+    if (closing.indexOf(_docs[i]) >= 0) _docs.splice(i, 1);
+  }
 
   // CLOSING THE ACTIVE TAB IS DECIDED FIRST. OB2b.
   //
@@ -572,16 +625,35 @@ function closeDoc(idx) {
   // switch saved the closed document's pixels over the neighbour's. Any other
   // close only moves the index, and the decrement also covers an earlier tab
   // closed while the active one is last.
-  if (_activeIdx === idx) {
-    _activeIdx = Math.min(idx, _docs.length - 1);
+  //
+  // CA1. Closing every tab leaves one fresh blank document, as "+" makes it:
+  // the canvases are never left holding a document no tab names.
+  var fresh = !_docs.length;
+  if (fresh) {
+    _docs.push(_createBlankDoc("Untitled"));
+    _activeIdx = 0;
+    _loadDoc(0);
+    if (typeof window._studioReapplyDefaults === "function") window._studioReapplyDefaults();
+    window.StudioCore.zoomFit();
+    _refreshUI();
+  } else if (closing.indexOf(active) >= 0) {
+    _activeIdx = Math.min(keptBefore, _docs.length - 1);
     _loadDoc(_activeIdx);
     _refreshUI();
-  } else if (_activeIdx > idx) _activeIdx--;
+  } else _activeIdx = _docs.indexOf(active);
 
-  if (closingId && window.StudioRecovery) window.StudioRecovery.discard(closingId);
+  // An EXPLICIT close. This is the only path that removes recovery -- an
+  // ordinary image export is not a project save and must leave it alone,
+  // because the owner still has unsaved layers behind that flat picture.
+  if (window.StudioRecovery) {
+    closing.forEach(function (doc) {
+      var closingId = doc.documentId;
+      if (closingId) window.StudioRecovery.discard(closingId);
+    });
+  }
 
   _renderStrip();
-  console.log(TAG, "Closed document at index", idx);
+  if (fresh && window.StudioRecovery) window.StudioRecovery.scheduleCapture();
 }
 
 function renameDoc(idx, name) {
@@ -657,6 +729,15 @@ function _buildStrip() {
     });
   });
 
+  // CA1. Right-click: close this tab, the others, or all of them.
+  strip.addEventListener("contextmenu", function (e) {
+    if (e.target.closest(".doc-tab-rename")) return;
+    e.preventDefault();
+    var tab = e.target.closest(".doc-tab");
+    var idx = tab ? parseInt(tab.dataset.idx) : NaN;
+    _showStripMenu(e.clientX, e.clientY, isNaN(idx) ? -1 : idx);
+  });
+
   _renderStrip();
 
   // Re-sync viewport to account for the 26px strip height
@@ -678,11 +759,67 @@ function _renderStrip() {
     var dirty = _docs[i]._canvasDirty ? " \u2022" : "";
     html += '<div class="doc-tab' + active + '" data-idx="' + i + '">'
       + '<span class="doc-tab-name">' + _esc(_docs[i].name) + dirty + '</span>'
-      + (_docs.length > 1 ? '<span class="doc-tab-close" title="Close">\u00d7</span>' : '')
+      + (_docs.length > 1 ? '<span class="doc-tab-close" title="' + _esc(_t("docs.tab.close.tooltip", "Close")) + '">\u00d7</span>' : '')
       + '</div>';
   }
-  html += '<button class="doc-add" title="New document">+</button>';
+  html += '<button class="doc-add" title="' + _esc(_t("docs.tab.new.tooltip", "New document")) + '">+</button>';
   _stripEl.innerHTML = html;
+}
+
+// The strip's right-click menu. `idx` is the tab under the pointer, or -1
+// for the strip around the tabs, which offers only Close all tabs.
+var _menuEl = null;
+
+function _hideStripMenu() {
+  if (!_menuEl) return;
+  _menuEl.remove();
+  _menuEl = null;
+  document.removeEventListener("pointerdown", _onPointerAway, true);
+  document.removeEventListener("keydown", _onMenuKey, true);
+  window.removeEventListener("blur", _hideStripMenu);
+}
+
+function _onPointerAway(e) {
+  if (_menuEl && !_menuEl.contains(e.target)) _hideStripMenu();
+}
+
+function _onMenuKey(e) {
+  if (e.key === "Escape") { e.preventDefault(); _hideStripMenu(); }
+}
+
+function _showStripMenu(x, y, idx) {
+  _hideStripMenu();
+  var many = _docs.length > 1;
+  var items = [];
+  if (idx >= 0) {
+    items.push({ label: _t("docs.tab.close.tooltip", "Close"), enabled: many,
+                 run: function () { closeDoc(idx); } });
+    items.push({ label: _t("docs.menu.closeOthers", "Close other tabs"), enabled: many,
+                 run: function () { closeOtherDocs(idx); } });
+  }
+  items.push({ label: _t("docs.menu.closeAll", "Close all tabs"), enabled: true, run: closeAllDocs });
+
+  var menu = document.createElement("div");
+  menu.className = "doc-menu";
+  menu.setAttribute("role", "menu");
+  items.forEach(function (item) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "doc-menu-item";
+    b.setAttribute("role", "menuitem");
+    b.textContent = item.label;
+    b.disabled = !item.enabled;
+    b.addEventListener("click", function () { _hideStripMenu(); item.run(); });
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  _menuEl = menu;
+  // Kept on screen.
+  menu.style.left = Math.max(4, Math.min(x, window.innerWidth - menu.offsetWidth - 4)) + "px";
+  menu.style.top = Math.max(4, Math.min(y, window.innerHeight - menu.offsetHeight - 4)) + "px";
+  document.addEventListener("pointerdown", _onPointerAway, true);
+  document.addEventListener("keydown", _onMenuKey, true);
+  window.addEventListener("blur", _hideStripMenu);
 }
 
 function _esc(s) {
@@ -781,6 +918,9 @@ function _initWithRecovery() {
 
   _buildStrip();
   document.addEventListener("keydown", _onKeyDown);
+  // The strip's tooltips are written when it renders; a language change
+  // rewrites them, and an open menu closes rather than stay in the old one.
+  window.addEventListener("i18n:change", function () { _hideStripMenu(); _renderStrip(); });
 
   // The active document is now established, so -- and only now -- writes are
   // safe to enable.
@@ -825,6 +965,8 @@ window.StudioDocs = {
   newDoc: newDoc,
   switchDoc: switchDoc,
   closeDoc: closeDoc,
+  closeAllDocs: closeAllDocs,
+  closeOtherDocs: closeOtherDocs,
   renameDoc: renameDoc,
   saveActiveDoc: function () {
     _saveDoc(_activeIdx);

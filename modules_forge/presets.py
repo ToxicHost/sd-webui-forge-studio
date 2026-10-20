@@ -14,6 +14,7 @@ class PresetArch(Enum):
     ernie = 10  # Ernie-Image
     pid = 11  # PiD
     krea = 12  # Krea2
+    moss = 13  # MOSS-Image
 
     @staticmethod
     def choices() -> list[str]:
@@ -33,6 +34,7 @@ SAMPLERS = {
     PresetArch.ernie: "Euler",
     PresetArch.pid: "LCM",
     PresetArch.krea: "Euler",
+    PresetArch.moss: "Euler",
 }
 
 SCHEDULERS = {
@@ -48,6 +50,7 @@ SCHEDULERS = {
     PresetArch.ernie: "Simple",
     PresetArch.pid: "Simple",
     PresetArch.krea: "Simple",
+    PresetArch.moss: "SGM Uniform",
 }
 
 STEPS = {
@@ -63,6 +66,7 @@ STEPS = {
     PresetArch.ernie: 8,
     PresetArch.pid: 4,
     PresetArch.krea: 8,
+    PresetArch.moss: 50,
 }
 
 CFG = {
@@ -78,6 +82,7 @@ CFG = {
     PresetArch.ernie: 1.0,
     PresetArch.pid: 1.0,
     PresetArch.krea: 1.0,
+    PresetArch.moss: 3.0,
 }
 
 DISTILL = {
@@ -93,6 +98,7 @@ SHIFT = {
     PresetArch.ernie: 3.0,
     PresetArch.pid: -1.5,
     PresetArch.krea: -1.15,
+    PresetArch.moss: 5.0,
 }
 
 FRAMES = {

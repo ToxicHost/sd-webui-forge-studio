@@ -194,6 +194,30 @@ def detect_architecture(keys: set[str]) -> dict[str, Any]:
             "details": "Unknown architecture", **common}
 
 
+#: KR1. Neo's own FLUX.2 test (`huggingface_guess/detection.py:131-134`): the
+#: FLUX.1/FLUX.2 branch is entered on a key-normed double block, and FLUX.2 is
+#: the one with a shared double-stream modulation. Suffixes, because a single
+#: file wraps the transformer under `model.diffusion_model.` or similar.
+_FLUX_DOUBLE_NORM = ("double_blocks.0.img_attn.norm.key_norm.scale",
+                     "double_blocks.0.img_attn.norm.key_norm.weight")
+_FLUX2_MODULATION = "double_stream_modulation_img.lin.weight"
+
+
+def takes_reference_images(keys: set[str]) -> bool:
+    """KR1. Whether the checkpoint is Neo's `Flux2` (Klein), which takes
+    ImageStitch reference images.
+
+    Deliberately NOT `detect_architecture`'s "flux2": that is the Extension's
+    block-count rule (`n_single >= 40`), under which Klein 4B (5 + 20 blocks)
+    and 9B (8 + 24) read as "flux1". It is kept as the Extension wrote it,
+    because Workshop's block lists key off it; this is a separate fact read
+    the way Neo itself reads the family.
+    """
+
+    return (any(key.endswith(_FLUX2_MODULATION) for key in keys)
+            and any(key.endswith(_FLUX_DOUBLE_NORM) for key in keys))
+
+
 def component_needs(keys: set[str]) -> dict[str, Any]:
     """`studio_api.py:4795-4819`, given the keys already read.
 
@@ -207,7 +231,10 @@ def component_needs(keys: set[str]) -> dict[str, Any]:
         arch = str(detect_architecture(keys).get("arch") or "unknown")
     except Exception:  # noqa: BLE001 - detection is a nicety, never a blocker
         arch = "unknown"
-    return {"needs_te": not has_te, "needs_vae": not has_vae, "arch": arch}
+    return {"needs_te": not has_te, "needs_vae": not has_vae, "arch": arch,
+            # KR1. Absent from NEUTRAL and GGUF on purpose: a header that was
+            # not read says nothing, and the page fails open on "unknown".
+            "references": takes_reference_images(keys)}
 
 
 def inspect_checkpoint_file(path: Path, *, is_gguf: bool = False
@@ -239,4 +266,5 @@ __all__ = (
     "component_needs",
     "detect_architecture",
     "inspect_checkpoint_file",
+    "takes_reference_images",
 )

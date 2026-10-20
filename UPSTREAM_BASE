@@ -27,11 +27,14 @@ neo_head_left_right=0 324
 neo_head_left_right_at=91c04492
 neo_comparisons_checked=2026-08-18
 
-# What that divergence consists of, in Neo-owned files: 21 files under modules/
-# and modules_forge/, catalogued as THREE patch families in
-# docs/14_PATCH_INVENTORY.md. backend/, ldm_patched/ and extensions-builtin/
-# are untouched, so no diffusion inference, sampling, memory-management or
-# model-loading behaviour is patched. Everything else in the 324 is
+# What that divergence consists of, in Neo-owned files: the files under
+# modules/, modules_forge/ and backend/ counted below, catalogued as FOUR patch
+# families in docs/14_PATCH_INVENTORY.md. ldm_patched/ and extensions-builtin/
+# are untouched. Until 2026-10-19 backend/ was untouched too; PATCH-004 adds
+# a model family Neo does not have (MOSS-Image) as NEW backend files, and the
+# only existing backend files it edits are the loader's dispatch and the
+# bundled-tokenizer table -- so no EXISTING family's inference, sampling or
+# memory-management file is patched. Everything else in the 324 is
 # Studio-owned code that did not exist in Neo.
 #
 # Read `neo_inference_paths_modified=0` narrowly. It means the DIFFUSION path
@@ -42,7 +45,7 @@ neo_comparisons_checked=2026-08-18
 # install-time. That was three days out of date and wrong about the third
 # family. Every number here is now recomputed from git by
 # tests/studio_alpha/test_patch_inventory.py rather than transcribed by hand.
-neo_owned_files_modified=21
+neo_owned_files_modified=37
 neo_inference_paths_modified=0
 neo_pixel_paths_modified=2
 

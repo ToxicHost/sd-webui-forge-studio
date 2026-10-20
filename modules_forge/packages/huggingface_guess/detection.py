@@ -285,6 +285,19 @@ def detect_unet_config(state_dict: dict, key_prefix: str) -> dict:
         dit_config["txtdim"] = int(state_dict["{}txtfusion.layerwise_blocks.0.prenorm.scale".format(key_prefix)].shape[0])
         return dit_config
 
+    if "{}shared_block_modulation.weight".format(key_prefix) in state_dict_keys and "{}video_head_modulation.weight".format(key_prefix) in state_dict_keys:  # MOSS-Image
+        dit_config = {"image_model": "moss_image"}
+        dim = int(state_dict["{}video_embedder.weight".format(key_prefix)].shape[0])
+        head_dim = int(state_dict["{}layers.0.q_norm.weight".format(key_prefix)].shape[0])
+        dit_config["dim"] = dim
+        dit_config["num_heads"] = dim // head_dim
+        dit_config["num_layers"] = count_blocks(state_dict_keys, "{}layers.".format(key_prefix) + "{}.")
+        dit_config["ffn_dim"] = int(state_dict["{}layers.0.proj.ffn_up_gate.weight".format(key_prefix)].shape[0]) // 2
+        dit_config["latent_channels"] = int(state_dict["{}video_embedder.weight".format(key_prefix)].shape[1])
+        dit_config["text_dim"] = int(state_dict["{}text_embedder.proj.weight".format(key_prefix)].shape[1])
+        dit_config["freq_dim"] = int(state_dict["{}time_embedding.0.weight".format(key_prefix)].shape[1])
+        return dit_config
+
     if "{}layers.0.mlp.linear_fc2.weight".format(key_prefix) in state_dict_keys:  # Ernie Image
         dit_config = {"image_model": "ernie"}
         return dit_config

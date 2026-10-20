@@ -697,6 +697,7 @@ def publish_engine(engine: object) -> dict[str, Any]:
 
     previous = getattr(shared, "sd_model", None)
     shared.sd_model = engine
+    _set_latent_factor(engine)
     return {
         "published": getattr(shared, "sd_model", None) is engine,
         "had_previous": previous is not None,
@@ -711,9 +712,35 @@ def restore_published_engine(state: dict[str, Any]) -> bool:
         from modules import shared
 
         shared.sd_model = state.get("previous")
+        _set_latent_factor(state.get("previous"))
         return True
     except BaseException:  # noqa: BLE001
         return False
+
+
+def _set_latent_factor(engine: object) -> None:
+    """Neo's `forge_model_reload` (`modules/sd_models.py:391`), which this
+    direct build never calls: `processing.opt_f`, the pixels per latent cell
+    the empty latent and every resize are computed with, is the VAE's integer
+    upscale ratio, else 8.
+
+    Left at 8, a FLUX.2-latent family (Klein, ERNIE-Image, MOSS-Image: 16)
+    sampled a latent of twice the side, four times the tokens, and decoded a
+    picture twice the size asked for. SD, SDXL and the Wan-VAE families
+    (Anima) are 8 either way. Never raises: a load is not worth failing here."""
+
+    try:
+        from modules import processing
+
+        ratio = engine.forge_objects.vae.upscale_ratio  # type: ignore[attr-defined]
+        processing.opt_f = ratio if isinstance(ratio, int) else 8
+    except Exception:  # noqa: BLE001 - see the docstring
+        try:
+            from modules import processing
+
+            processing.opt_f = 8
+        except Exception:  # noqa: BLE001
+            pass
 
 
 __all__ = (

@@ -877,6 +877,35 @@ def _inpaint_kwargs(request: Any, source: Any) -> dict[str, Any]:
     }
 
 
+def _latent_aligned(value: Any) -> int:
+    """A pass dimension floored to the loaded VAE's pixels per latent cell,
+    when that is more than 8. Unchanged otherwise.
+
+    Neo resizes every image it ENCODES to the pass's own width and height
+    (`modules/processing.py:1816`, a crop at `:1844`). The FLUX.2 VAE packs
+    2x2 latent blocks (`backend/nn/vae.py` `AutoencoderKLFlux2.encode`), so it
+    needs both sides to be multiples of 16: a 1024x1368 edit encoded to a
+    171-row latent and died in einops before sampling (Klein, 2026-10-19). Neo
+    has the same limit; its UI hands it multiples of its resolution step.
+
+    Text-to-image is unaffected: Neo already floors the empty latent
+    (`height // opt_f`, `:968`), so 1368 and 1360 give the same 85-row latent
+    and the same picture. Families with an 8-pixel VAE (SD, SDXL, Anima) are
+    left exactly as they were. `processing.opt_f` is set from the VAE when an
+    engine is published (`live_bindings._set_latent_factor`)."""
+
+    size = int(value)
+    try:
+        from modules import processing as _processing
+
+        factor = int(getattr(_processing, "opt_f", 8) or 8)
+    except Exception:  # noqa: BLE001 - an unknown factor changes nothing
+        return size
+    if factor <= 8:
+        return size
+    return max(factor, size // factor * factor)
+
+
 def _hires_kwargs(request: Any) -> dict[str, Any]:
     """Neo's `hr_*` construction arguments, or NOTHING at all.
 
@@ -1382,6 +1411,13 @@ class StudioLiveGenerationPort:
         # same-job retention work turns on, and one that survives a noisy
         # machine in a way seconds do not.
         moves = ModelMoveObserver(telemetry)
+        # KR1. Read before the `try` so the `finally` can always see it.
+        references = tuple(getattr(request, "reference_images", ()) or ())
+        # An edit source a previous, interrupted job left on the engine must
+        # never become this job's reference (`klein_references.forget_job_state`).
+        from . import klein_references
+
+        klein_references.forget_job_state(engine)
         moves.__enter__()
         try:
             # Construction is inside the `try` on purpose: a request that fails
@@ -1495,8 +1531,8 @@ class StudioLiveGenerationPort:
                 cfg_scale=float(request.cfg_scale),  # type: ignore[attr-defined]
                 # The loaded family's shift, as Neo's preset gives it.
                 distilled_cfg_scale=self._shift(request),
-                width=int(request.width),  # type: ignore[attr-defined]
-                height=int(request.height),  # type: ignore[attr-defined]
+                width=_latent_aligned(request.width),  # type: ignore[attr-defined]
+                height=_latent_aligned(request.height),  # type: ignore[attr-defined]
                 # `getattr`, not attribute access: a request reaching this port
                 # is duck-typed, and the doubles predate this field. Matching
                 # `_hires_kwargs` below, which reads the same way.
@@ -1546,6 +1582,25 @@ class StudioLiveGenerationPort:
 
                 take()          # a failed job's leftover must never become this job's capture
                 setattr(processing, MARK, True)
+            # KR1. FLUX.2 Klein reference images, encoded onto the engine as
+            # Neo's ImageStitch does, BEFORE the pass conditions: the positive
+            # prompt's `get_learned_conditioning` is what hands them to the
+            # transformer. They stay for this job's Hires and Auto Detail
+            # passes, as in Neo, and are cleared in the `finally` below.
+            if references:
+                klein_references.require_klein(len(references))
+                max_side = int(getattr(request, "reference_max_side",
+                                       klein_references.MAX_SIDE))
+                klein_references.encode(engine, references, processing=processing,
+                                        limit=max_side)
+                # Written into the saved parameters, so a reused picture can
+                # say it was made with references. The pictures themselves are
+                # not kept; Neo's ImageStitch records nothing at all.
+                extra = getattr(processing, "extra_generation_params", None)
+                if isinstance(extra, dict):
+                    extra["Reference images"] = len(references)
+                    if max_side != klein_references.MAX_SIDE:
+                        extra["Reference max side"] = max_side
             # One bracket, because `process_images_inner` runs base, the
             # upscale and Hires inside itself. The per-step rates come from
             # the progress callbacks; this is the wall clock the owner waits.
@@ -1650,6 +1705,13 @@ class StudioLiveGenerationPort:
             # would attribute the next generation's moves to a telemetry
             # object nobody is reading.
             moves.__exit__(None, None, None)
+            # KR1. Every job that carried references leaves none behind, on
+            # success, failure and cancel alike -- a reference still on the
+            # engine would condition the NEXT job. Never raises.
+            if references:
+                klein_references.clear(engine, processing=processing)
+            # Every job, references or not: see `forget_job_state`.
+            klein_references.forget_job_state(engine)
             # Exactly once per job, on every exit path, before the references
             # are dropped. The engine is deliberately untouched.
             self.last_release = self._release_job(processing, processed, failure)
@@ -1841,8 +1903,8 @@ class StudioLiveGenerationPort:
         # (`int(w * scale) // 8 * 8`) and NOT `round8`'s nearest-8. No upper
         # bound: Studio imposes no maximum resolution, and this must never
         # acquire one.
-        target_width = (int(image.width * scale) // 8) * 8
-        target_height = (int(image.height * scale) // 8) * 8
+        target_width = _latent_aligned((int(image.width * scale) // 8) * 8)
+        target_height = _latent_aligned((int(image.height * scale) // 8) * 8)
         upscaled = _upscale_for_hires(
             image, str(getattr(request, "hr_upscaler", "") or ""),
             target_width, target_height)
@@ -1986,7 +2048,7 @@ class StudioLiveGenerationPort:
             from PIL import Image as _Image
 
             mask = mask.convert("L").resize(image.size, _Image.LANCZOS)
-        width, height = int(refine.width), int(refine.height)
+        width, height = _latent_aligned(refine.width), _latent_aligned(refine.height)
         pass_ = StableDiffusionProcessingImg2Img(
             sd_model=self._engine,
             outpath_samples=str(self._result_root),
@@ -2083,8 +2145,8 @@ class StudioLiveGenerationPort:
         # Named before use so the telemetry can record what was ACTUALLY
         # denoised rather than what was asked for. The frame handed in is the
         # post-Hires one; these are the base dimensions.
-        _detail_width = int(getattr(request, "width", 0) or image.width)
-        _detail_height = int(getattr(request, "height", 0) or image.height)
+        _detail_width = _latent_aligned(getattr(request, "width", 0) or image.width)
+        _detail_height = _latent_aligned(getattr(request, "height", 0) or image.height)
         telemetry = getattr(self, "telemetry", None)
         if telemetry is not None:
             # A SETUP CALL, not an encode. Neo's conditioning cache is

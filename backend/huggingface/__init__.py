@@ -24,6 +24,9 @@ class Token:
     ernie_compress = os.path.join(folder, "ernie.tokenizer.json.xz")
     ernie = os.path.join(folder, "baidu", "ERNIE-Image", "tokenizer", "tokenizer.json")
 
+    moss_compress = os.path.join(folder, "moss.tokenizer.json.xz")
+    moss = os.path.join(folder, "OpenMOSS-Team", "MOSS-Image-Base", "tokenizer", "tokenizer.json")
+
 
 class sha256:
     wan = "20a46ac256746594ed7e1e3ef733b83fbc5a6f0922aa7480eda961743de080ef"
@@ -40,6 +43,9 @@ class sha256:
 
     ernie = "577575622324b2e099e2648be26bdeb5e5815ffe66d7004e9e3ddbf421db6bf1"
     # https://huggingface.co/baidu/ERNIE-Image/blob/main/tokenizer/tokenizer.json
+
+    moss = "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523"
+    # https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/tokenizer/tokenizer.json (Qwen3.5)
 
 
 def decompress(source: str, target: str):
@@ -86,6 +92,9 @@ def process():
     if not os.path.isfile(Token.ernie):
         decompress(Token.ernie_compress, Token.ernie)
         compare_sha256(Token.ernie, sha256.ernie)
+    if not os.path.isfile(Token.moss):
+        decompress(Token.moss_compress, Token.moss)
+        compare_sha256(Token.moss, sha256.moss)
 
     # if not os.path.isfile(Token.wan_compress):
     #     compress(Token.wan_t2v, Token.wan_compress)

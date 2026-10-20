@@ -210,6 +210,8 @@ function _applyInfotextToUI(infotext, opts = {}) {
   // Which weights the reused picture was made with (EM1). Every reuse of
   // parameters lands here, so this is where the owner's rule lives.
   AnimaEmphasis.fromReusedInfotext(p);
+  // KR1. Made with Klein references: say so, and bring the max side back.
+  KleinReferences.fromReusedInfotext(p);
 
   console.log("[Studio] Applied infotext params:", Object.keys(p).join(", "));
 }
@@ -291,6 +293,327 @@ const AnimaEmphasis = {
   },
 };
 window.AnimaEmphasis = AnimaEmphasis;
+
+
+// ═══════════════════════════════════════════
+// KLEIN REFERENCE IMAGES (KR1)
+// ═══════════════════════════════════════════
+//
+// FLUX.2 Klein conditions on extra pictures -- "the character from image 1
+// wearing the dress from image 2". The server encodes each one into the
+// engine's reference latents the way Neo's ImageStitch does, before the
+// prompt is conditioned, and clears them after the job.
+// Evidence/source-review/KR1-klein-reference-images.md.
+//
+// Shown only while the selected checkpoint's header says Klein, or cannot be
+// read at all (GGUF, diffusers layout: the page's fail-open rule; the server
+// refuses by name if the loaded model is not Klein). Hidden means nothing is
+// sent, so a job on any other model is byte-identical to one made before.
+const KleinReferences = {
+  MAX: 4,
+  // Neo's ImageStitch "Maximum Side Length": default 1024, slider to 2048.
+  // Each reference is KEPT here at up to the slider's top, and sent at the
+  // chosen side, so changing the setting never needs the picture re-added
+  // and the request body only carries what the server will use.
+  DEFAULT_SIDE: 1024,
+  KEEP_SIDE: 2048,
+  THUMB_SIDE: 192,
+  items: [],      // { source: <canvas>, thumb, origin, sent: {side, asset} }
+  available: false,
+  _bound: false,
+
+  // The checkpoint check's verdict, from `restoreTextEncoderForModel`.
+  fromCheck(check) {
+    const arch = (check && check.arch) || "unknown";
+    this.available = !!check && (check.references === true || arch === "unknown");
+  },
+
+  shown() {
+    let showAll = false;
+    try { showAll = _archShowAll(); } catch (_) { /* boot order */ }
+    return this.available || showAll;
+  },
+
+  sync() {
+    const section = document.getElementById("referenceImagesSection");
+    if (section) section.style.display = this.shown() ? "" : "none";
+    this.render();
+  },
+
+  maxSide() {
+    const v = parseInt(document.getElementById("referenceMaxSide")?.value, 10);
+    return v > 0 ? v : this.DEFAULT_SIDE;
+  },
+
+  // Sent only when the slot is showing and holds something; the side only
+  // when it is not Neo's default, so a default job carries no extra field.
+  requestField() {
+    if (!this.shown() || !this.items.length) return {};
+    const side = this.maxSide();
+    const field = { reference_images: this.items.map(item => ({ ...this._asset(item, side) })) };
+    if (side !== this.DEFAULT_SIDE) field.reference_max_side = side;
+    return field;
+  },
+
+  // The picture at `side`, encoded once per side. WebP keeps transparency and
+  // stays small; a browser that cannot encode it answers PNG, and the media
+  // type follows what actually came back.
+  _asset(item, side) {
+    if (item.sent && item.sent.side === side) return item.sent.asset;
+    const canvas = this._scaled(item.source, side);
+    const dataUrl = canvas.toDataURL("image/webp", 0.95);
+    const mediaType = dataUrl.slice(5, dataUrl.indexOf(";")) || "image/png";
+    const asset = { data_url: dataUrl, media_type: mediaType,
+                    width: canvas.width, height: canvas.height, origin: item.origin };
+    item.sent = { side, asset };
+    return asset;
+  },
+
+  _scaled(source, side) {
+    const width = source.naturalWidth || source.width;
+    const height = source.naturalHeight || source.height;
+    const scale = Math.min(1, side / Math.max(width, height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  },
+
+  bind() {
+    if (this._bound) return;
+    this._bound = true;
+    const fileBtn = document.getElementById("referenceAddFileBtn");
+    const fileInput = document.getElementById("referenceFileInput");
+    const layerSelect = document.getElementById("referenceLayerSelect");
+    const sideSelect = document.getElementById("referenceMaxSide");
+    fileBtn?.addEventListener("click", () => {
+      if (this._full()) return;
+      fileInput?.click();
+    });
+    fileInput?.addEventListener("change", async () => {
+      const files = Array.from(fileInput.files || []);
+      fileInput.value = "";
+      await this._addFiles(files);
+    });
+    // Filled when the owner opens it, so the list is the canvas as it is now.
+    const refill = () => this._fillLayerOptions(layerSelect);
+    layerSelect?.addEventListener("focus", refill);
+    layerSelect?.addEventListener("mousedown", refill);
+    layerSelect?.addEventListener("change", () => {
+      const id = layerSelect.value;
+      layerSelect.value = "";
+      if (id) this._addLayer(id);
+    });
+    // Remembered with the rest of the panel's own state.
+    try {
+      const saved = parseInt(_readPanelUi().reference_max_side, 10);
+      if (sideSelect && [...sideSelect.options].some(o => parseInt(o.value, 10) === saved)) {
+        sideSelect.value = String(saved);
+      }
+    } catch (_) { /* preferences not loaded: the default stands */ }
+    sideSelect?.addEventListener("change", () => {
+      const ui = _readPanelUi();
+      ui.reference_max_side = this.maxSide();
+      window.Prefs?.set("panel_ui", ui);
+    });
+    this._bindDrop(document.getElementById("referenceImagesSection"));
+    this.sync();
+  },
+
+  // Files from the desktop, or a picture dragged from this page -- a result
+  // or a Gallery thumbnail, which carry their address as `text/uri-list`.
+  // Only this server's own addresses are fetched: a page never pulls a
+  // picture from somewhere the owner did not choose to upload from.
+  _bindDrop(zone) {
+    if (!zone) return;
+    const accepts = e => {
+      const types = Array.from(e.dataTransfer?.types || []);
+      return types.includes("Files") || types.includes("text/uri-list");
+    };
+    let depth = 0;
+    zone.addEventListener("dragenter", e => {
+      if (!accepts(e)) return;
+      e.preventDefault();
+      depth += 1;
+      zone.classList.add("ref-drop-over");
+    });
+    zone.addEventListener("dragover", e => {
+      if (!accepts(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    zone.addEventListener("dragleave", () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) zone.classList.remove("ref-drop-over");
+    });
+    zone.addEventListener("drop", async e => {
+      if (!accepts(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      depth = 0;
+      zone.classList.remove("ref-drop-over");
+      const files = Array.from(e.dataTransfer.files || []);
+      if (files.length) {
+        await this._addFiles(files);
+        return;
+      }
+      const url = (e.dataTransfer.getData("text/uri-list") || "").split("\n")
+        .map(line => line.trim()).find(line => line && !line.startsWith("#"));
+      if (url) await this._addUrl(url);
+    });
+  },
+
+  async _addFiles(files) {
+    for (const file of files) {
+      if (this._full()) break;
+      if (file.type && !file.type.startsWith("image/")) continue;
+      try {
+        const image = await this._imageFromBlob(file);
+        this._add(image, "upload");
+      } catch (_) {
+        showToast(_i18n("ui.references.readFailed",
+          "That file could not be read as an image."), "error");
+      }
+    }
+  },
+
+  async _addUrl(raw) {
+    if (this._full()) return;
+    let url;
+    try { url = new URL(raw, window.location.href); } catch (_) { url = null; }
+    if (!url || url.origin !== window.location.origin) {
+      showToast(_i18n("ui.references.dropForeign",
+        "Only files and pictures from Studio can be dropped here."), "info");
+      return;
+    }
+    try {
+      const response = await fetch(url.href, { credentials: "same-origin" });
+      if (!response.ok) throw new Error(String(response.status));
+      const image = await this._imageFromBlob(await response.blob());
+      this._add(image, "upload");
+    } catch (_) {
+      showToast(_i18n("ui.references.readFailed",
+        "That file could not be read as an image."), "error");
+    }
+  },
+
+  _full() {
+    if (this.items.length < this.MAX) return false;
+    showToast(_i18n("ui.references.full", "Klein takes up to {max} reference images.",
+      { max: this.MAX }), "info");
+    return true;
+  },
+
+  _imageFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+      image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("decode")); };
+      image.src = url;
+    });
+  },
+
+  _fillLayerOptions(select) {
+    if (!select) return;
+    const layers = (window.StudioCore?.state?.layers || [])
+      .filter(L => L && L.canvas && L.type !== "adjustment");
+    const first = select.options[0];
+    select.textContent = "";
+    if (first) select.appendChild(first);
+    layers.slice().reverse().forEach(L => {
+      const option = document.createElement("option");
+      option.value = String(L.id);
+      option.textContent = L.name || _i18n("ui.references.layerName", "Layer {id}", { id: L.id });
+      select.appendChild(option);
+    });
+  },
+
+  // The layer's painted area only: a cut-out on a transparent layer is sent
+  // as the cut-out, and the server flattens its transparency the way Neo does.
+  _addLayer(id) {
+    if (this._full()) return;
+    const L = (window.StudioCore?.state?.layers || []).find(l => String(l.id) === String(id));
+    const bounds = L && L.ctx ? window.StudioCore.getLayerContentBounds(L) : null;
+    if (!bounds) {
+      showToast(_i18n("ui.references.layerEmpty", "That layer is empty."), "info");
+      return;
+    }
+    const crop = document.createElement("canvas");
+    crop.width = bounds.w;
+    crop.height = bounds.h;
+    crop.getContext("2d").drawImage(L.canvas, bounds.x, bounds.y, bounds.w, bounds.h,
+      0, 0, bounds.w, bounds.h);
+    this._add(crop, "canvas");
+  },
+
+  _add(source, origin) {
+    const width = source.naturalWidth || source.width;
+    const height = source.naturalHeight || source.height;
+    if (this._full() || !width || !height) return;
+    const kept = this._scaled(source, this.KEEP_SIDE);
+    this.items.push({
+      source: kept,
+      thumb: this._scaled(kept, this.THUMB_SIDE).toDataURL("image/png"),
+      origin,
+      sent: null,
+    });
+    this.render();
+  },
+
+  remove(index) {
+    this.items.splice(index, 1);
+    this.render();
+  },
+
+  // A reused picture made with references says so: the pictures themselves
+  // are not stored, so the owner adds them again. Its max side comes back.
+  fromReusedInfotext(parsed) {
+    const count = parseInt(parsed && parsed.referenceImages, 10);
+    if (!(count > 0)) return;
+    const side = parseInt(parsed.referenceMaxSide, 10);
+    const select = document.getElementById("referenceMaxSide");
+    const wanted = side > 0 ? side : this.DEFAULT_SIDE;
+    if (select && [...select.options].some(o => parseInt(o.value, 10) === wanted)) {
+      select.value = String(wanted);
+    }
+    showToast(_i18n("ui.references.reused",
+      "This picture was made with {n} reference image(s). Add them again under Reference Images.",
+      { n: count }), "info");
+  },
+
+  render() {
+    const slots = document.getElementById("referenceSlots");
+    const count = document.getElementById("referenceCount");
+    const drop = document.getElementById("referenceDropZone");
+    if (count) count.textContent = this.items.length ? `${this.items.length}/${this.MAX}` : "";
+    if (drop) drop.hidden = this.items.length >= this.MAX;
+    if (!slots) return;
+    slots.textContent = "";
+    this.items.forEach((item, index) => {
+      const slot = document.createElement("div");
+      slot.className = "ref-slot";
+      const image = document.createElement("img");
+      image.src = item.thumb;
+      image.alt = _i18n("ui.references.slot", "Reference {n}", { n: index + 1 });
+      const number = document.createElement("span");
+      number.className = "ref-num";
+      number.textContent = String(index + 1);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "ref-remove";
+      remove.textContent = "×";
+      const label = _i18n("ui.references.remove", "Remove reference {n}", { n: index + 1 });
+      remove.title = label;
+      remove.setAttribute("aria-label", label);
+      remove.addEventListener("click", () => this.remove(index));
+      slot.append(image, number, remove);
+      slots.appendChild(slot);
+    });
+  },
+};
+window.KleinReferences = KleinReferences;
 
 // The token bar depends on the model's architecture and the weights mode as
 // well as the prompt (EM1's BREAK note), so those changes re-run it too.
@@ -1798,6 +2121,7 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   const teRow = document.getElementById("textEncoderRow");
   const teSelect = document.getElementById("paramTextEncoder");
   if (!modelTitle || !teSelect) {
+    KleinReferences.fromCheck(null);
     return { needs_te: false, needs_vae: false, arch: "unknown" };
   }
 
@@ -1810,6 +2134,9 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   // went on asking for a text encoder, so Load was unreachable through the
   // UI. Fixing the probe removed the reason for the override.
   const check = await checkModelTE(modelTitle);
+  // KR1. Whether this checkpoint takes Klein reference images; shown or
+  // hidden by `_applyArchRules`, which every caller runs next.
+  KleinReferences.fromCheck(check);
   const needsTE = !!check.needs_te;
   const arch = check.arch || "unknown";
 
@@ -3386,6 +3713,9 @@ async function doGenerate(overrides = {}) {
         // "neo": the server applies the owner's default ("studio") on Anima
         // and ignores the field on every other model.
         ...AnimaEmphasis.requestField(),
+        // KR1. Klein reference images, only while the slot is showing and
+        // holds any. Absent otherwise, so every other job is unchanged.
+        ...KleinReferences.requestField(),
         // An outpaint job's size is its strip-plus-context crop's at the
         // model's own area (CT9); Neo pastes it back at the canvas's size.
         width: _outpaint ? _outpaint.width
@@ -4891,6 +5221,7 @@ function _archShowAll() {
 }
 
 function _applyArchRules(arch) {
+  KleinReferences.sync();
   document.querySelectorAll("#page-generate .arch-hidden")
     .forEach(el => el.classList.remove("arch-hidden"));
   if (_archShowAll()) return;
@@ -10917,6 +11248,7 @@ async function init() {
   window.Shortcuts?.reloadFromPrefs?.();
 
   bindUI();
+  KleinReferences.bind();
   _initParamScrub();
 
   // Add initial history entry

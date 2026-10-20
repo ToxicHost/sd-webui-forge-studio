@@ -605,6 +605,50 @@
             </div>
           </div>
 
+          <!-- KR1. FLUX.2 Klein reference images (Neo's ImageStitch path).
+               Shown only while the selected checkpoint is Klein -- or cannot
+               be read, the page's fail-open rule -- and filled by
+               KleinReferences in app.js. Not a layout block: like Soft
+               Inpainting it appears on demand. -->
+          <div id="referenceImagesSection" style="display:none;">
+            <div class="collapse-section">
+              <div class="collapse-header">
+                <span class="collapse-title" data-i18n="ui.references.title">Reference Images</span>
+                <span class="ref-count" id="referenceCount"></span>
+                <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+              </div>
+              <div class="collapse-body open" id="panelReferences">
+                <div class="ref-hint" data-i18n="ui.references.hint">Klein reads these with the prompt, in order. In an image edit the canvas comes first.</div>
+                <div class="ref-slots" id="referenceSlots"></div>
+                <div class="ref-drop" id="referenceDropZone" data-i18n="ui.references.drop">Drop images here</div>
+                <div class="ref-actions">
+                  <button class="cn-upload-btn" type="button" id="referenceAddFileBtn" data-i18n="ui.references.addFile">From file…</button>
+                  <select class="param-select" id="referenceLayerSelect" data-i18n-title="ui.references.addLayerTitle" title="Use a canvas layer as a reference">
+                    <option value="" data-i18n="ui.references.addLayer">From layer…</option>
+                  </select>
+                </div>
+                <!-- Neo's ImageStitch "Maximum Side Length": its slider's
+                     256-step values; 1024 is its default. -->
+                <div class="param-grid cols-2 ref-size-row">
+                  <div class="param-cell" data-help="help.references.maxSide">
+                    <label data-i18n="ui.references.maxSide">Max side</label>
+                    <select class="param-select" id="referenceMaxSide">
+                      <option value="256">256</option>
+                      <option value="512">512</option>
+                      <option value="768">768</option>
+                      <option value="1024" selected>1024</option>
+                      <option value="1280">1280</option>
+                      <option value="1536">1536</option>
+                      <option value="1792">1792</option>
+                      <option value="2048">2048</option>
+                    </select>
+                  </div>
+                </div>
+                <input type="file" id="referenceFileInput" accept="image/png,image/jpeg,image/webp" multiple hidden>
+              </div>
+            </div>
+          </div>
+
           <!-- Jobs. A native Canvas Strip parameter group, populated by
                studio-model-controls.js and inert on hosts without a model
                lifecycle.

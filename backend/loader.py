@@ -20,6 +20,7 @@ from backend.diffusion_engine.flux import Flux
 from backend.diffusion_engine.flux2 import Flux2
 from backend.diffusion_engine.krea import Krea2
 from backend.diffusion_engine.lumina import Lumina2
+from backend.diffusion_engine.moss import MOSSImage
 from backend.diffusion_engine.mugen import Mugen
 from backend.diffusion_engine.pid import PiD
 from backend.diffusion_engine.qwen import QwenImage
@@ -43,7 +44,7 @@ from backend.utils import (
 )
 from modules_forge.packages.comfy.utils import convert_diffusers_mmdit
 
-possible_models: tuple["ForgeDiffusionEngine"] = (StableDiffusion, StableDiffusionXLRefiner, StableDiffusionXL, Mugen, Chroma, Flux, Flux2, Wan, QwenImage, Krea2, Lumina2, ZImage, Anima, ErnieImage, PiD)
+possible_models: tuple["ForgeDiffusionEngine"] = (StableDiffusion, StableDiffusionXLRefiner, StableDiffusionXL, Mugen, Chroma, Flux, Flux2, Wan, QwenImage, Krea2, Lumina2, ZImage, Anima, ErnieImage, MOSSImage, PiD)
 
 logger = logging.getLogger("loader")
 setup_logger(logger)
@@ -307,6 +308,46 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
 
             load_state_dict(model, state_dict, log_name=cls_name, ignore_start="lm_head.")
             return model
+        if cls_name == "Qwen3_5Model":
+            assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have Qwen3.5 state dict!"
+
+            from backend.nn.llm.qwen35_text import Qwen35_9B
+
+            config = read_arbitrary_config(config_path)
+
+            storage_dtype = memory_management.text_encoder_dtype()
+            state_dict_dtype = utils.weight_dtype(state_dict)
+            quant_config = detect_quantization(state_dict)
+
+            # A bf16-trained 9B LLM is kept in bf16 when nothing asked otherwise:
+            # fp16 (the text-encoder default) can overflow its activations, and
+            # OpenMOSS's pipeline and ComfyUI both run it in the file's bf16.
+            if storage_dtype == torch.float16 and not backend.args.args.fp16_text_enc and state_dict_dtype == torch.bfloat16 and memory_management.should_use_bf16(memory_management.text_encoder_device()):
+                storage_dtype = torch.bfloat16
+
+            if quant_config is not None:
+                storage_dtype = state_dict_dtype
+                logger.info("Using MixedPrecision for Qwen3.5")
+            elif state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:
+                storage_dtype = state_dict_dtype
+                _log = f"{storage_dtype}" + (" (pre-quant)" if state_dict_dtype in ["nf4", "fp4", "gguf"] else "")
+                logger.info(f"Using Detected Qwen3.5 Data Type: {_log}")
+                if state_dict_dtype == "gguf":
+                    beautiful_print_gguf_state_dict_statics(state_dict)
+            else:
+                logger.info(f"Using Default Qwen3.5 Data Type: {storage_dtype}")
+
+            if storage_dtype in ["nf4", "fp4", "gguf"]:
+                with no_init_weights():
+                    with using_forge_operations(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype(), manual_cast_enabled=False, bnb_dtype=storage_dtype):
+                        model = Qwen35_9B(config)
+            else:
+                with no_init_weights():
+                    with using_forge_operations(device=memory_management.cpu, dtype=storage_dtype, manual_cast_enabled=True, bnb_dtype=quant_config):
+                        model = Qwen35_9B(config)
+
+            load_state_dict(model, state_dict, log_name=cls_name)
+            return model
         if cls_name in ["T5EncoderModel", "UMT5EncoderModel"]:
             assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have T5 state dict!"
 
@@ -354,7 +395,7 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
 
         # region UNet / DiT
 
-        if cls_name in ["UNet2DConditionModel", "FluxTransformer2DModel", "Flux2Transformer2DModel", "ChromaTransformer2DModel", "WanTransformer3DModel", "QwenImageTransformer2DModel", "Lumina2Transformer2DModel", "ZImageTransformer2DModel", "CosmosTransformer3DModel", "ErnieImageTransformer2DModel", "PiDTransformer2DModel", "Krea2Transformer2DModel"]:
+        if cls_name in ["UNet2DConditionModel", "FluxTransformer2DModel", "Flux2Transformer2DModel", "ChromaTransformer2DModel", "WanTransformer3DModel", "QwenImageTransformer2DModel", "Lumina2Transformer2DModel", "ZImageTransformer2DModel", "CosmosTransformer3DModel", "ErnieImageTransformer2DModel", "PiDTransformer2DModel", "Krea2Transformer2DModel", "MOSSImageTransformer2DModel"]:
             assert isinstance(state_dict, dict) and len(state_dict) > 16, "You do not have model state dict!"
             pre_func: Callable[[torch.nn.Module], torch.nn.Module] = lambda mdl: mdl
             model_loader = None
@@ -420,6 +461,10 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
                 from backend.nn.krea import SingleStreamDiT
 
                 model_loader = lambda c: SingleStreamDiT(**c)
+            elif cls_name == "MOSSImageTransformer2DModel":
+                from backend.nn.moss import MOSSImageTransformer
+
+                model_loader = lambda c: MOSSImageTransformer(**c)
 
             load_device = memory_management.get_torch_device()
             offload_device = memory_management.unet_offload_device()
@@ -719,6 +764,16 @@ def replace_state_dict(sd: dict[str, torch.Tensor], asd: dict[str, torch.Tensor]
             if k == "spiece_model":
                 continue
             sd[f"{text_encoder_key_prefix}gemma2_2b.{k}"] = v
+
+    elif "model.language_model.layers.0.linear_attn.A_log" in asd or "model.layers.0.linear_attn.A_log" in asd:
+        # Qwen3.5 (MOSS-Image's text encoder): only the language model is used.
+        # The vision tower, the LM head and the MTP head are left in the file.
+        for k, v in asd.items():
+            if k.startswith("model.language_model."):
+                k = "model." + k[len("model.language_model.") :]
+            elif not k.startswith("model.") or k.startswith("model.visual."):
+                continue
+            sd[f"{text_encoder_key_prefix}qwen35_9b.transformer.{k}"] = v
 
     elif "model.visual.deepstack_merger_list.0.norm.weight" in asd:
         assert asd["model.visual.merger.linear_fc2.weight"].shape[0] == 2560

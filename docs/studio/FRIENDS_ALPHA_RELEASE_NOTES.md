@@ -3,6 +3,38 @@
 Distribution identifier: 0.0.0-internal-alpha. Run `git rev-parse HEAD` for the
 exact installed revision. This is an alpha candidate for Windows/NVIDIA testing.
 
+## Klein reference images, MOSS-Image, Close all tabs — 2026-10-19
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Pictures from the models you
+already use are unchanged: checked on a real GPU against the previous update,
+five jobs (Anima, Anima with Hires, Auto Detail, Outpaint with Refine, SDXL),
+all byte-identical.
+
+- **FLUX.2 Klein: reference images.** With a Klein model selected, the
+  Generate panel shows a Reference Images section. Add up to four pictures
+  from a file, from a canvas layer, or by dragging them in (files, results or
+  Gallery pictures), then name them in the prompt: "the character from image
+  1 wearing the dress from image 2". In an image edit the canvas is image 1
+  and the references follow it. "Max side" sets how large each reference is
+  read (1024 by default; larger keeps more detail and costs more memory and
+  time). Saved pictures note how many references they used; the reference
+  pictures themselves are not stored, so add them again when you reuse one.
+- **FLUX.2 Klein, ERNIE-Image: right size.** Pictures from these models came
+  out at twice the size you asked for, and some image-edit sizes (for
+  example 1024x1368) failed. Both are fixed.
+- **No "ghost" after stopping a Klein edit.** Stopping a Klein image edit
+  early could leave that picture behind, and the next Klein job would quietly
+  use it as a reference. Every job now starts clean.
+- **MOSS-Image.** The new OpenMOSS model (good at writing text in pictures)
+  runs in Studio, using Comfy-Org's single files: the MOSS-Image model, the
+  Qwen3.5 9B text encoder and the FLUX.2 VAE. It needs a large card (about
+  11 GB while sampling).
+- **Close all tabs.** Right-click a Canvas tab for Close other tabs and Close
+  all tabs (or right-click the empty tab strip). Closing everything leaves one
+  blank document, and if any of the tabs have unsaved changes, Studio asks
+  once and says how many.
+
 ## Help Center, translations, raw prompts, fixes — 2026-10-18 (fourth update)
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

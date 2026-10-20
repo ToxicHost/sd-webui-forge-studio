@@ -102,6 +102,14 @@ MAX_SOURCE_IMAGE_BYTES = 256 * 1024 * 1024
 #: reachable from a browser request.
 SOURCE_IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp")
 
+#: KR1. How many reference images one Klein job may carry. Neo's ImageStitch
+#: gallery has no limit; four is the page's slot count, and each reference
+#: adds its own latent tokens to every step.
+MAX_REFERENCE_IMAGES = 4
+
+#: KR1. ImageStitch's "Maximum Side Length" slider: 0 (no limit) to 2048.
+MAX_REFERENCE_SIDE = 2048
+
 
 @dataclass(frozen=True)
 class CanvasDocument(Contract):
@@ -354,6 +362,18 @@ class GenerationRequest(Contract):
     #: the owner imported, while a mask is always painted here, and a mismatch
     #: between them is a named refusal that needs to name WHICH one was wrong.
     mask: "InputAsset | None" = None
+    #: KR1. Extra images a FLUX.2 Klein job conditions on -- "the character
+    #: from image 1 wearing the dress from image 2". Neo's ImageStitch path:
+    #: each is VAE-encoded into the engine's reference latents before the
+    #: prompt is conditioned. Empty means none, and the job is byte-identical
+    #: to one made before this field existed. At most
+    #: `MAX_REFERENCE_IMAGES`; the port refuses them on a model that is not
+    #: Klein rather than dropping them.
+    reference_images: tuple["InputAsset", ...] = ()
+    #: KR1. ImageStitch's "Maximum Side Length" for the references: 0 (no
+    #: limit) or up to 2048. None means Neo's default, 1024. Only meaningful
+    #: with references, and refused without them.
+    reference_max_side: int | None = None
     #: How the dimensions were chosen, when the randomizer was active. None
     #: for a fixed-size request, which stays byte-identical to a pre-WP1.5 one.
     aspect: "AspectRandomization | None" = None

@@ -178,6 +178,11 @@ HIRES_SCALE_MAX = float("inf")
 #: Retired with the base ceiling. Nothing reads it as a limit any more.
 MAX_HIRES_DIMENSION = None
 
+#: KR1. Mirrors `forge_studio.contracts.MAX_REFERENCE_IMAGES`, duplicated
+#: rather than imported for the reason `input_assets` gives for its byte
+#: ceiling: a bound on both sides of a boundary should be visible on both.
+MAX_REFERENCE_IMAGES = 4
+
 
 @dataclass(frozen=True)
 class OutputOptions:
@@ -335,6 +340,12 @@ class FirstImageRequest:
     #: Absent stays absent: the port takes its PNG path and the file is
     #: byte-identical to one produced before this field existed.
     output: "OutputOptions | None" = None
+    #: KR1. Decoded FLUX.2 Klein reference images (PIL, alpha kept so the port
+    #: can flatten it as Neo's ImageStitch does), in the owner's order. Empty
+    #: for every job that named none, which then runs exactly as before.
+    reference_images: tuple[Any, ...] = ()
+    #: KR1. ImageStitch's "Maximum Side Length" (0: no limit); its default.
+    reference_max_side: int = 1024
     #: Only read when a source exists. Forge's own default is 0.75.
     denoising_strength: float = 0.75
     #: Present only for INPAINT, in STUDIO's vocabulary -- the port maps it to
@@ -457,6 +468,8 @@ class FirstImageRequest:
             "auto_detail_detectors": [
                 str(getattr(slot, "detector", "")) for slot in self.ad_slots
             ],
+            # The COUNT. Never the pictures.
+            "reference_images": len(self.reference_images),
         }
 
 
@@ -639,6 +652,16 @@ def validate_request(
         if flag:
             problems.append(_problem(code, detail))
 
+    # KR1. The transport cap again, for a request built without admission.
+    if len(request.reference_images) > MAX_REFERENCE_IMAGES:
+        problems.append(
+            _problem(
+                "GENERATION_REFERENCE_IMAGES_TOO_MANY",
+                f"{len(request.reference_images)} reference images were "
+                f"supplied; at most {MAX_REFERENCE_IMAGES}",
+            )
+        )
+
     if request.enable_adetailer and not request.ad_slots:
         # On with nothing to do. `translate_request` cannot produce this --
         # it derives the flag from the slots -- but a hand-built request can,
@@ -810,6 +833,7 @@ __all__ = (
     "DIMENSION_ALIGNMENT",
     "FirstImageRequest",
     "InpaintOptions",
+    "MAX_REFERENCE_IMAGES",
     "Operation",
     "ResidentModel",
     "ValidationResult",

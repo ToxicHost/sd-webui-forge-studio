@@ -286,6 +286,10 @@ _GENERATION_FIELDS = (
     "source_image",
     "mask",
     "denoising_strength",
+    # KR1. FLUX.2 Klein reference images, each an inline asset exactly like
+    # `source_image`.
+    "reference_images",
+    "reference_max_side",
     # Ordinary inpaint, as ONE group, for the reason `hires` is one: these
     # fields are incoherent apart. A `mask_blur` with no mask is not a weaker
     # request.
@@ -713,14 +717,66 @@ def _validated_image_operation(payload: Mapping[str, Any]) -> dict[str, Any]:
 
         inpaint = InpaintSettings()
 
+    # Absent stays absent: a job without references passes no such field.
+    references = _validated_references(payload.get("reference_images"))
+    max_side = _validated_reference_side(payload.get("reference_max_side"))
+    if max_side is not None and not references:
+        raise PresentationError(
+            "reference_max_side was supplied without reference images.")
     return {
+        **({"reference_max_side": max_side} if max_side is not None else {}),
         "operation": operation,
         "source_image": source,
         "mask": mask,
         "denoising_strength": _validated_denoise(
             payload.get("denoising_strength")),
         "inpaint": inpaint,
+        **({"reference_images": references} if references else {}),
     }
+
+
+def _validated_references(value: Any) -> tuple[Any, ...]:
+    """KR1. Up to `MAX_REFERENCE_IMAGES` inline images, or none.
+
+    Each is checked by `_validated_asset`, the source image's own rule, so a
+    reference can never name a server file. Allowed for every operation:
+    Neo's ImageStitch documents Klein references for txt2img as well. Whether
+    the loaded model can USE them is the port's question, not this one's.
+    """
+
+    from .contracts import MAX_REFERENCE_IMAGES
+
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise PresentationError("reference_images must be a list.")
+    if len(value) > MAX_REFERENCE_IMAGES:
+        raise PresentationError(
+            f"reference_images may hold at most {MAX_REFERENCE_IMAGES} "
+            f"images; {len(value)} were sent.")
+    assets = []
+    for index, item in enumerate(value):
+        role = f"reference_images[{index}]"
+        if item is None:
+            raise PresentationError(f"{role} carries no image data.")
+        assets.append(_validated_asset(item, role))
+    return tuple(assets)
+
+
+def _validated_reference_side(value: Any) -> int | None:
+    """KR1. ImageStitch's "Maximum Side Length": its own slider's range, 0
+    (no limit) to 2048, or None for its default."""
+
+    from .contracts import MAX_REFERENCE_SIDE
+
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PresentationError("reference_max_side must be an integer.")
+    if not 0 <= value <= MAX_REFERENCE_SIDE:
+        raise PresentationError(
+            f"reference_max_side must be between 0 and {MAX_REFERENCE_SIDE}.")
+    return value
 
 
 def _validated_asset(value: Any, role: str) -> Any:
