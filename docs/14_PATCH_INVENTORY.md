@@ -10,9 +10,10 @@ were already made and commented in place, and this file catalogues them rather
 than introducing anything.
 
 ```text
-scope     modules/ · modules_forge/ · backend/          38 files, +1835 -77
+scope     modules/ · modules_forge/ · backend/          39 files, +1840 -78
 backend/  new model-family files, plus 2 registration points (PATCH-004),
-          plus one upstream backport (PATCH-005)
+          plus one upstream backport (PATCH-005), plus one sampler line
+          (PATCH-006, a no-op for image latents)
 untouched ldm_patched/ entirely; extensions-builtin/ except PATCH-005
 tracking  neo...upstream/neo = 0 0
 ```
@@ -27,6 +28,14 @@ inference, sampling or memory-management file is patched.** `backend/` grows
 by new files; the only existing backend files edited are the loader's dispatch
 (`backend/loader.py`) and the bundled-tokenizer table
 (`backend/huggingface/__init__.py`), where a family has to be registered.
+
+**Amended 2026-10-20 (PATCH-006), and still checked.** One existing sampling
+file is edited: the mask repeat in `get_area_and_mult`
+(`backend/sampling/sampling_function.py`), so a video-shaped latent can take a
+regional mask. For every image latent the edited line builds the SAME tensor
+as before -- a test proves it -- so the claim now reads: **no existing
+family's image-latent inference is changed**; Anima-shaped latents gain mask
+support they did not have.
 
 **Since 2026-10-11 it is a claim about files, not about behaviour.** One
 Studio-owned runtime adapter, ADAPTER-001 (end of this document), changes
@@ -364,6 +373,41 @@ reproduced here: no 40- or 52-block Anima model is available).
 - **Upstream PR candidate:** not applicable -- it is upstream's.
 - **Removal criteria:** the next upstream sync past `bd1d015`; drop this
   entry then.
+
+---
+
+# PATCH-006 — Masks on video-shaped latents (regional prompting on Anima)
+
+- **Neo file(s), modified:** `backend/sampling/sampling_function.py`
+  (`get_area_and_mult`: the mask's repeat counts).
+- **Neo file(s), added:** none.
+- **Studio owner module:** `forge_headless/regional.py` (RG1), whose masked
+  regions are Neo conds with a `mask`.
+- **Introduced in:** 2026-10-20, Regional prompting on every family (owner's
+  decision "Both"). Review: `Evidence/source-review/RG0-regional-prompting.md`.
+
+### Why an adapter could not solve it
+
+Neo repeats a cond's mask with four counts,
+`mask.unsqueeze(1).repeat(B, C, 1, 1)`, which fails on a five-dimensional
+latent (`[B, C, T, h, w]`: Anima, and other video-shaped families). The repeat
+happens inside `get_area_and_mult`, called per cond per step from
+`calc_cond_uncond_batch`; replacing that function from Studio code would be a
+monkeypatch on Neo's sampler invisible to `git diff`.
+
+### Behavioral impact
+
+The counts are now `(B, C, *[1] * (mask.ndim - 2))`. For a `[B?, h, w]` mask on
+an image latent that is `(B, C, 1, 1)`, the same four counts, so the tensor
+and every image are unchanged (`tests/studio_alpha/test_rg1_regional.py`).
+A `[1, T, h, w]` mask on a five-dimensional latent now works. Nothing in Neo's
+own prompt path sets `mask`; only Studio's regional runner does.
+
+- **Feature flag:** no.
+- **Upstream conflict likelihood:** **Low.** One line, in a function upstream
+  rarely touches.
+- **Upstream PR candidate:** yes.
+- **Removal criteria:** upstream generalises the repeat; drop this entry then.
 
 ---
 

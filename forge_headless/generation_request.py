@@ -216,6 +216,29 @@ class ControlNetUnitOptions:
     hires_option: str = "Both"
 
 
+#: RG1. Mirrors `forge_studio.contracts.REGION_METHODS`.
+REGION_METHODS = ("auto", "attention_couple", "masked", "per_region")
+
+
+@dataclass(frozen=True)
+class RegionOptions:
+    """One region, ready for the port. RG1.
+
+    The owner's region with its mask decoded: `mask` is a float32 array of the
+    job's height x width, 1.0 where painted and 0.0 elsewhere (binarised at
+    one half, as the Extension's `parse_regions` does; the engine feathers it).
+    `prompt` is the region's own text, wildcards already expanded; the engine
+    prepends the global prompt.
+    """
+
+    name: str = ""
+    prompt: str = ""
+    negative_prompt: str = ""
+    weight: float = 1.0
+    denoising_strength: float | None = None
+    mask: Any = None
+
+
 @dataclass(frozen=True)
 class OutputOptions:
     """How the finished picture is encoded on its way to disk.
@@ -381,6 +404,11 @@ class FirstImageRequest:
     #: CN1. ControlNet units, in the owner's order. Empty for every job that
     #: named none, which then installs no ControlNet and runs as before.
     controlnet: tuple[ControlNetUnitOptions, ...] = ()
+    #: RG1. Regions with a prompt and a painted mask, in the owner's order.
+    #: Empty for every job without them, which installs no regional runner.
+    regions: tuple[RegionOptions, ...] = ()
+    #: RG1. One of `REGION_METHODS`.
+    region_method: str = "auto"
     #: Only read when a source exists. Forge's own default is 0.75.
     denoising_strength: float = 0.75
     #: Present only for INPAINT, in STUDIO's vocabulary -- the port maps it to
@@ -511,6 +539,9 @@ class FirstImageRequest:
                  "weight": unit.weight}
                 for unit in self.controlnet
             ],
+            # RG1. How many regions and how they run; never a prompt or mask.
+            "regions": len(self.regions),
+            **({"region_method": self.region_method} if self.regions else {}),
         }
 
 
@@ -713,6 +744,18 @@ def validate_request(
             )
         )
 
+    # RG1. The method is a closed vocabulary. `getattr`: a duck-typed request
+    # (the smoke harness's) predates the field and means "auto".
+    region_method = getattr(request, "region_method", "auto")
+    if region_method not in REGION_METHODS:
+        problems.append(
+            _problem(
+                "GENERATION_REGION_METHOD_UNKNOWN",
+                f"region method {region_method!r} is not one of "
+                f"{', '.join(REGION_METHODS)}",
+            )
+        )
+
     if request.enable_adetailer and not request.ad_slots:
         # On with nothing to do. `translate_request` cannot produce this --
         # it derives the flag from the slots -- but a hand-built request can,
@@ -887,6 +930,8 @@ __all__ = (
     "MAX_REFERENCE_IMAGES",
     "MAX_CONTROLNET_UNITS",
     "ControlNetUnitOptions",
+    "REGION_METHODS",
+    "RegionOptions",
     "Operation",
     "ResidentModel",
     "ValidationResult",

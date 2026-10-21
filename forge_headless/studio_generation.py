@@ -274,6 +274,9 @@ STUDIO_REQUEST_FIELDS = (
     "reference_images",
     # CN1. ControlNet units; the port drives Neo's ControlNet script.
     "controlnet",
+    # RG1. Regions and how they run; the port installs the regional runner.
+    "regions",
+    "region_method",
     "reference_max_side",
     "model_id",
     "positive_prompt",
@@ -626,6 +629,59 @@ def _translated_controlnet(units: Any) -> tuple[Any, ...]:
     return tuple(translated)
 
 
+def _translated_regions(regions: Any, width: int, height: int) -> tuple[Any, ...]:
+    """RG1. Studio's regions with their masks decoded for the port.
+
+    Each mask is checked exactly as a source image is (byte ceiling, data
+    URL, media type, Pillow's guard). The painted area is the alpha plane
+    when the picture has one -- the page's region canvas is white paint on
+    transparent -- and the grey level otherwise; resized to the job's size if
+    it differs (nearest, as the Extension does) and binarised at one half. A
+    region with no prompt or nothing painted is dropped, as the Extension's
+    `parse_regions` drops it.
+    """
+
+    regions = tuple(regions or ())
+    if not regions:
+        # A job without regions imports nothing for them: the service path
+        # is proven to run without numpy or Pillow (the smoke harness runs it
+        # with no site-packages at all).
+        return ()
+    import numpy as np
+    from PIL import Image
+
+    from .generation_request import RegionOptions
+    from .input_assets import InputAssetRefused, decode_source
+
+    translated = []
+    for number, region in enumerate(regions, start=1):
+        prompt = str(getattr(region, "prompt", "") or "").strip()
+        try:
+            picture = decode_source(getattr(region, "mask", None), required=True, keep_alpha=True).image
+        except InputAssetRefused as error:
+            message = str(getattr(error, "message", "") or error).replace("source image", "region mask")
+            raise HeadlessError("REGION_MASK_INVALID", f"Region {number}: {message}") from error
+        if picture.mode in ("RGBA", "LA"):
+            plane = picture.getchannel("A")
+        else:
+            plane = picture.convert("L")
+        if plane.size != (int(width), int(height)):
+            plane = plane.resize((int(width), int(height)), Image.NEAREST)
+        mask = (np.asarray(plane, dtype=np.float32) / 255.0 > 0.5).astype(np.float32)
+        if not prompt or not mask.any():
+            continue
+        denoise = getattr(region, "denoising_strength", None)
+        translated.append(RegionOptions(
+            name=str(getattr(region, "name", "") or ""),
+            prompt=prompt,
+            negative_prompt=str(getattr(region, "negative_prompt", "") or "").strip(),
+            weight=float(getattr(region, "weight", 1.0)),
+            denoising_strength=None if denoise is None else float(denoise),
+            mask=mask,
+        ))
+    return tuple(translated)
+
+
 def translate_request(
     request: GenerationRequest,
     *,
@@ -749,6 +805,9 @@ def translate_request(
     # CN1. Each unit's picture decoded and its catalogue id turned into a
     # file here, for the same reason: refused by name before admission.
     controlnet = _translated_controlnet(getattr(request, "controlnet", ()))
+    # RG1. Each region's mask decoded at the job's size; empty ones dropped.
+    regions = _translated_regions(getattr(request, "regions", ()),
+                                  int(request.width), int(request.height))
 
     headless = FirstImageRequest(
         request_id=request_id,
@@ -756,6 +815,8 @@ def translate_request(
         source=source,
         reference_images=references,
         controlnet=controlnet,
+        regions=regions,
+        region_method=str(getattr(request, "region_method", "auto") or "auto"),
         **({"reference_max_side": int(reference_side)}
            if reference_side is not None else {}),
         inpaint=inpaint,

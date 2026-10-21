@@ -463,6 +463,10 @@ let _eraseScratch = null, _eraseScratchCtx = null;
 let _compBufCache = null;
 let _compBufCacheVer = -1;
 let _compositeVersion = 0;
+// DV1. The PICTURE's version: every composite change except Develop's own
+// (`markDevelopDirty`). Develop's caches and its display worker key on it, so
+// a slider drag reuses the picture and a paint stroke does not reuse a stale one.
+let _pixelsVersion = 0;
 
 // ========================================================================
 // U2 — PRESENTATION DIRTY, OWNED BY CANVAS
@@ -504,6 +508,7 @@ function _presentIsEmpty() {
  */
 function markCompositeDirty() {
     _compositeVersion++;
+    _pixelsVersion++;
     _presentFull = true;
     _presentX0 = 0; _presentY0 = 0; _presentX1 = 0; _presentY1 = 0;
     _presentGeneration++;
@@ -519,6 +524,7 @@ function markCompositeDirty() {
  */
 function markCompositeDirtyRegion(x0, y0, x1, y1) {
     _compositeVersion++;
+    _pixelsVersion++;
     _presentGeneration++;
     // An OPTIMISATION, not a correctness guard, and labelled so because a
     // mutation proved it: with it removed the union still happens, `_presentFull`
@@ -587,6 +593,19 @@ function invalidatePresentation(reason) {
 }
 
 function getCompositeVersion() { return _compositeVersion; }
+
+/**
+ * DV1. Develop's parameters changed; the picture under them did not. The
+ * whole display is owed (as `markCompositeDirty`), but the picture version
+ * stays, so Develop keeps its picture-keyed caches and its worker's copy.
+ */
+function markDevelopDirty() {
+    _compositeVersion++;
+    _presentFull = true;
+    _presentX0 = 0; _presentY0 = 0; _presentX1 = 0; _presentY1 = 0;
+    _presentGeneration++;
+}
+function getPixelsVersion() { return _pixelsVersion; }
 
 // Stroke angle tracking (for follow-stroke rotation)
 let _sa = 0, _saSmooth = 0;
@@ -7097,6 +7116,8 @@ function serializeRegions() {
             denoising: r.denoising,
             weight: r.weight,
             color: r.color,
+            // RG2. A hidden region (the eye toggle) is not sent with Generate.
+            visible: r.visible !== false,
             mask_b64: r.canvas.toDataURL("image/png")
         }))
     });
@@ -7581,12 +7602,21 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
         }
         // Develop: global, always-last, applied to the document-resolution buffer.
         // Runs before UI overlays so HUD elements aren't tinted.
-        _applyDevelop(x, w, h, S.developParams);
+        //
+        // DV1. NOT while the WebGL preview owns the display. This buffer's
+        // readers are the 2D blit (off then) and the cache below; the picture
+        // on screen comes from `getDisplayImageData`, which develops on its
+        // own. Running it here as well was a second full Develop pass per
+        // frame (60 ms of a 121 ms redraw at 768x768), thrown away.
+        const developSkipped = S.imagePreviewActive && !!(S.developParams && S.developParams.enabled);
+        if (!developSkipped) _applyDevelop(x, w, h, S.developParams);
 
         // Snapshot the developed result for cursor-move re-use. Skip while
         // a stroke is in progress — see the canUseCache comment above for
         // why this matters even when strokeDrawCanvas itself is null.
-        if (!strokeDrawCanvas && !S.drawing) {
+        // DV1: and never an UNdeveloped buffer, which a later 2D frame (the
+        // live fallback) would otherwise reuse as if it were developed.
+        if (!strokeDrawCanvas && !S.drawing && !developSkipped) {
             if (!_compBufCache || _compBufCache.width !== w || _compBufCache.height !== h) {
                 _compBufCache = _createCanvas(w, h);
             }
@@ -8229,6 +8259,30 @@ function getFlattenedImageData(options) {
     const x = c.getContext("2d", { colorSpace: "srgb" });
     _renderFlattenedToContext(x, { applyDevelop: applyDevelop, whiteBackground: whiteBackground });
     return x.getImageData(0, 0, S.W, S.H);
+}
+
+/**
+ * DV1. The developed picture FOR THE SCREEN (the WebGL preview, Develop's
+ * histogram). With Develop doing nothing it is `getFlattenedImageData()`.
+ * Otherwise Develop answers: its display worker's result for this picture and
+ * these settings, the previous settings' result while the new one renders
+ * (a slider drag), or one synchronous pass when the picture itself changed.
+ * Saving, generation and every other `getFlattenedImageData()` caller keep the
+ * synchronous pipeline, so files never depend on the worker.
+ */
+function getDisplayImageData() {
+    const p = S.developParams;
+    const SD = window.StudioDevelop;
+    // The 2D display (no WebGL) develops inside `_composite2D` on this thread;
+    // a worker result would only add a redraw there.
+    if (!p || !p.enabled || !S.imagePreviewActive || !SD || typeof SD.developForDisplay !== "function") {
+        return getFlattenedImageData();
+    }
+    return SD.developForDisplay({
+        w: S.W, h: S.H, params: p, pixelsVersion: _pixelsVersion, drawing: !!S.drawing,
+        source: () => getFlattenedImageData({ applyDevelop: false }),
+        developed: () => getFlattenedImageData(),
+    });
 }
 
 // ========================================================================
@@ -9009,6 +9063,7 @@ window.StudioCore = {
     exportMask,
     exportFlattened,
     getFlattenedImageData,
+    getDisplayImageData,
     serializeRegions,
     isCanvasBlank,
 
@@ -9212,6 +9267,8 @@ window.StudioCore = {
     // do NOT bump this, so they hit the cache and skip the pipeline.
     markCompositeDirty,
     getCompositeVersion,
+    markDevelopDirty,
+    getPixelsVersion,
     // U2. The Canvas-owned presentation-dirty contract. `markCompositeDirty`
     // stays the safe default (full); only a caller that can name its region
     // uses `markCompositeDirtyRegion`.

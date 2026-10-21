@@ -467,7 +467,12 @@
           : (!pending ? "no-dirty-contract"
             : (pending.full ? "canvas-requested-full" : "no-region-api")));
       var imgData;
-      try { imgData = Core.getFlattenedImageData(); }
+      // DV1. The display's picture: with Develop on, the display worker's
+      // result rather than a synchronous Develop pass on this thread.
+      try {
+        imgData = (typeof Core.getDisplayImageData === "function")
+          ? Core.getDisplayImageData() : Core.getFlattenedImageData();
+      }
       catch (e) {
         console.warn(TAG, "getFlattenedImageData failed:",
                      e && e.message ? e.message : e);

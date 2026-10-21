@@ -308,7 +308,14 @@ _GENERATION_FIELDS = (
     "output",
     # CN1. Up to three ControlNet units, each a group (`_CONTROLNET_FIELDS`).
     "controlnet",
+    # RG1. Painted regions, each a group (`_REGION_FIELDS`), and the method.
+    "regions",
+    "region_method",
 )
+
+#: RG1. Every field a region may carry (`RegionSettings`).
+_REGION_FIELDS = ("name", "prompt", "negative_prompt", "weight",
+                  "denoising_strength", "mask")
 
 #: CN1. Every field a ControlNet unit may carry (`ControlNetUnitSettings`).
 _CONTROLNET_FIELDS = ("model_id", "preprocessor", "image", "weight",
@@ -575,6 +582,8 @@ def _validated_request_payload(payload: Any) -> dict[str, Any]:
         "variation": _validated_variation(payload.get("variation")),
         # CN1. Absent stays absent: a job without units passes no such field.
         **_controlnet_field(payload.get("controlnet")),
+        # RG1. The same rule for regions.
+        **_regions_field(payload.get("regions"), payload.get("region_method")),
         # WP1. Validated as a set rather than field by field, because the
         # coherence rule spans them: which of source and mask must be present
         # is a property of the OPERATION, and checking each in isolation cannot
@@ -871,6 +880,84 @@ def _validated_controlnet(value: Any) -> tuple[Any, ...]:
                                 "Both", role),
         ))
     return tuple(units)
+
+
+def _regions_field(value: Any, method: Any) -> dict[str, Any]:
+    """RG1. `regions` and `region_method`, or nothing.
+
+    A method without regions is refused rather than ignored: it is a client
+    that thinks it sent regions and did not."""
+
+    from .contracts import REGION_METHODS
+
+    regions = _validated_regions(value)
+    if method is None:
+        method = "auto"
+    if not isinstance(method, str) or method not in REGION_METHODS:
+        raise PresentationError(
+            f"region_method must be one of: {', '.join(REGION_METHODS)}.")
+    if not regions:
+        if method != "auto":
+            raise PresentationError("region_method was supplied without regions.")
+        return {}
+    return {"regions": regions, "region_method": method}
+
+
+def _validated_regions(value: Any) -> tuple[Any, ...]:
+    """RG1. Any number of regions (owner, 2026-10-20: no cap), or none.
+
+    Shape and ranges only, as for ControlNet units. Each mask is checked by
+    `_validated_asset`, the source image's own rule. A region with no prompt
+    or an empty mask is kept here and dropped at translation, where the mask
+    is decoded -- as the Extension's `parse_regions` drops it.
+    """
+
+    from .contracts import RegionSettings
+
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise PresentationError("regions must be a list.")
+    regions = []
+    for index, region in enumerate(value):
+        role = f"regions[{index}]"
+        if not isinstance(region, Mapping):
+            raise PresentationError(f"{role} must be a JSON object.")
+        unexpected = sorted(str(key) for key in region if key not in _REGION_FIELDS)
+        if unexpected:
+            raise PresentationError(
+                f"Unsupported generation field: {role}.{unexpected[0]}.")
+        texts = {}
+        for name in ("name", "prompt", "negative_prompt"):
+            raw = region.get(name, "")
+            if raw is None:
+                raw = ""
+            if not isinstance(raw, str):
+                raise PresentationError(f"{role}.{name} must be text.")
+            texts[name] = raw.strip()
+        if len(texts["name"]) > 200:
+            raise PresentationError(f"{role}.name is too long.")
+        weight_field = f"{role}.weight"
+        # The page's slider runs 0.25-2.0; 0 would switch the region off.
+        weight = _bounded_float({weight_field: region.get("weight", 1.0)},
+                                weight_field, 0.0, 2.0)
+        denoise = region.get("denoising_strength")
+        if denoise is not None:
+            denoise_field = f"{role}.denoising_strength"
+            # The Extension's clamp for Edit-mode Regional (studio_regional.py).
+            denoise = _bounded_float({denoise_field: denoise}, denoise_field, 0.05, 1.0)
+        mask = region.get("mask")
+        if mask is None:
+            raise PresentationError(f"{role}.mask carries no image data.")
+        regions.append(RegionSettings(
+            name=texts["name"],
+            prompt=texts["prompt"],
+            negative_prompt=texts["negative_prompt"],
+            weight=weight,
+            denoising_strength=denoise,
+            mask=_validated_asset(mask, f"{role}.mask"),
+        ))
+    return tuple(regions)
 
 
 def _validated_reference_side(value: Any) -> int | None:
@@ -1926,6 +2013,10 @@ class StudioPresentation:
 
         payload["positive_prompt"] = positive.text
         payload["negative_prompt"] = negative.text
+        # RG1. Each region's prompts too, as the Extension expands each region
+        # (`_resolve_wildcards`), each from its own seed so two regions naming
+        # the same wildcard do not always draw the same line.
+        self._resolve_region_prompts(payload, service, seed)
         return {"prompt_expansion": PromptExpansion(
             original_prompt=original,
             original_negative_prompt=original_negative,
@@ -1938,6 +2029,31 @@ class StudioPresentation:
             warnings=tuple(sorted({*positive.warnings, *negative.warnings})),
             seed=seed,
         )}
+
+    #: RG1. Spaces regions' draws apart from the main prompt's and each other.
+    _REGION_SEED_STRIDE = 0x01000193
+
+    def _resolve_region_prompts(self, payload: dict[str, Any], service: Any, seed: int) -> None:
+        """Expand wildcards in each region's prompt and negative. Never raises:
+        a region whose expansion fails keeps its text as typed."""
+
+        import dataclasses
+
+        regions = payload.get("regions") or ()
+        if not regions:
+            return
+        expanded = []
+        for index, region in enumerate(regions):
+            region_seed = (seed + self._REGION_SEED_STRIDE * (index + 1)) & 0xFFFFFFFF
+            try:
+                prompt = service.expand(region.prompt, region_seed).text
+                negative = service.expand(
+                    region.negative_prompt,
+                    (region_seed ^ self._NEGATIVE_SEED_OFFSET) & 0xFFFFFFFF).text
+            except Exception:  # noqa: BLE001 - a wildcard is not worth the image
+                prompt, negative = region.prompt, region.negative_prompt
+            expanded.append(dataclasses.replace(region, prompt=prompt, negative_prompt=negative))
+        payload["regions"] = tuple(expanded)
 
     def backend_status(self) -> dict[str, Any]:
         status = _as_mapping(self._application.get_backend_status())

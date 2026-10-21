@@ -42,7 +42,14 @@ neo_comparisons_checked=2026-08-18
 # extensions-builtin/sd_forge_controlllite files. Upstream's code, not
 # Studio's; it leaves on the next sync.
 #
-# Read `neo_inference_paths_modified=0` narrowly. It means the DIFFUSION path
+# 2026-10-20, PATCH-006: one line in backend/sampling/sampling_function.py
+# (`get_area_and_mult`'s mask repeat), so regional masks work on video-shaped
+# latents (Anima). For every image latent it builds the same tensor as
+# before (proved in tests/studio_alpha/test_rg1_regional.py), which is why
+# `neo_inference_paths_modified` below is 1 and not 0: the sampler file is
+# edited even though no image changes.
+#
+# Read `neo_inference_paths_modified` narrowly; until PATCH-006 it was 0. It means the DIFFUSION path
 # is unpatched, and that is still true. It does NOT mean no Neo compute
 # behaviour is patched: PATCH-003 changes upscale pixel handling and is the one
 # place Neo-owned code imports forge_headless. Until 2026-08-18 this block said
@@ -50,8 +57,8 @@ neo_comparisons_checked=2026-08-18
 # install-time. That was three days out of date and wrong about the third
 # family. Every number here is now recomputed from git by
 # tests/studio_alpha/test_patch_inventory.py rather than transcribed by hand.
-neo_owned_files_modified=38
-neo_inference_paths_modified=0
+neo_owned_files_modified=39
+neo_inference_paths_modified=1
 neo_pixel_paths_modified=2
 
 # `neo_inference_paths_modified=0` counts FILES. Since 2026-10-11 one

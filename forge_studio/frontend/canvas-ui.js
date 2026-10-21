@@ -4642,6 +4642,16 @@ function renderRegionPanel() {
     if (!panel) return;
     panel.innerHTML = "";
     updateRegionVisibility();
+    // RG2. The method selector, only while there are regions to apply.
+    const methodRow = document.getElementById("regionMethodRow");
+    if (methodRow) methodRow.style.display = S.regions.length ? "" : "none";
+    // RG3. Each row's slider follows the method (Weight, or Denoise for one
+    // pass per region), so a change of method redraws the rows.
+    const methodSelect = document.getElementById("regionMethod");
+    if (methodSelect && !methodSelect.dataset.rerenders) {
+        methodSelect.dataset.rerenders = "1";
+        methodSelect.addEventListener("change", () => renderRegionPanel());
+    }
 
     if (!S.regions.length) {
         const hint = document.createElement("div");
@@ -4737,8 +4747,11 @@ function renderRegionPanel() {
         window.TagComplete?.attach?.(neg);
         updateBal();
 
-        // Contextual slider: Weight (attention couple) or Denoise (regional inpaint)
-        const isEditRegional = S.studioMode === "Edit";
+        // Contextual slider: Weight (attention couple) or Denoise (regional inpaint).
+        // RG3: Studio has no Edit mode; the Regions panel's "One pass per
+        // region" method is the Extension's Edit-mode Regional.
+        const isEditRegional = S.studioMode === "Edit"
+            || document.getElementById("regionMethod")?.value === "per_region";
         const denRow = document.createElement("div");
         denRow.style.cssText = "display:flex;align-items:center;gap:4px;margin-top:3px;";
         const denLbl = document.createElement("span");
@@ -4793,14 +4806,9 @@ function renderRegionPanel() {
     // Hint text
     const hint = document.createElement("div");
     hint.style.cssText = "font-size:9px;color:var(--text-4);padding:3px 0;line-height:1.4;";
-    if (S.regionMode && S.studioMode === "Edit") {
-        // This used to claim each region was executed on its own. It is not:
-        // regions are a local editor surface, regions_json is assembled below
-        // the lifecycle return in app.js and never leaves the browser on this
-        // host, and no Studio request field carries it. The old wording told
-        // the owner their region intent reached the backend.
-        hint.textContent = _i18n("canvas.regions.hint.unavailable", "Regions are edited here only. Regional Prompting is not available in standalone generation yet, so region edits are not sent with Generate.");
-    } else if (S.regionMode) {
+    // RG4. The Edit-mode branch that said regions are not sent is gone: they
+    // are sent (RG2), and Studio's page never enters Edit mode.
+    if (S.regionMode) {
         hint.textContent = _i18n("canvas.regions.hint.paint", "Paint regions for different characters/areas. Main prompt = scene.");
     } else {
         hint.textContent = _i18n("canvas.regions.hint.enable", "Enable Paint mode to draw region masks on canvas.");

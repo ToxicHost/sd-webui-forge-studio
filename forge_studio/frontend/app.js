@@ -2581,6 +2581,7 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   if (!modelTitle || !teSelect) {
     KleinReferences.fromCheck(null);
     ControlNetPanel.fromCheck(null);
+    RegionMethod.fromCheck(null);
     return { needs_te: false, needs_vae: false, arch: "unknown" };
   }
 
@@ -2598,6 +2599,8 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   KleinReferences.fromCheck(check);
   // CN1. Whether this checkpoint takes ControlNet, or Klein's references.
   ControlNetPanel.fromCheck(check);
+  // RG2. Attention Couple only on SD 1.5 / SDXL.
+  RegionMethod.fromCheck(check);
   const needsTE = !!check.needs_te;
   const arch = check.arch || "unknown";
 
@@ -3357,6 +3360,54 @@ function _cleanupPromptText(text) {
     .replace(/[ \t]*(?:,[ \t]*)+$/, "")   // stray trailing commas
     .trim();
 }
+
+// RG2. Regions on the request, and the method selector's rules. Attention
+// Couple works on SD 1.5 and SDXL only (the server refuses it elsewhere), so
+// it is greyed on other models and an owner's choice of it falls back to
+// Automatic there rather than failing the job.
+const RegionMethod = {
+  COUPLE_ARCHES: ["sd15", "sdxl"],
+  arch: "unknown",
+
+  fromCheck(check) {
+    this.arch = (check && check.arch) || "unknown";
+    const select = document.getElementById("regionMethod");
+    const couple = select?.querySelector('option[value="attention_couple"]');
+    if (!couple) return;
+    const ok = this.COUPLE_ARCHES.includes(this.arch);
+    couple.disabled = !ok;
+    if (!ok && select.value === "attention_couple") select.value = "auto";
+  },
+
+  requestField(regionsJson) {
+    if (!regionsJson) return {};
+    let parsed;
+    try { parsed = JSON.parse(_cleanRegionsJson(regionsJson)); } catch (_) { return {}; }
+    const regions = (parsed?.regions || [])
+      .filter(r => r && r.visible !== false && String(r.prompt || "").trim() && r.mask_b64)
+      .map(r => ({
+        name: String(r.name || ""),
+        prompt: String(r.prompt || ""),
+        negative_prompt: String(r.negPrompt || ""),
+        weight: Number.isFinite(+r.weight) ? +r.weight : 1.0,
+        mask: { data_url: r.mask_b64 },
+      }));
+    if (!regions.length) return {};
+    let method = document.getElementById("regionMethod")?.value || "auto";
+    // RG3. Each region's own denoise, read only by one-pass-per-region.
+    if (method === "per_region") {
+      const kept = (parsed?.regions || [])
+        .filter(r => r && r.visible !== false && String(r.prompt || "").trim() && r.mask_b64);
+      kept.forEach((r, i) => {
+        const value = +r.denoising;
+        if (Number.isFinite(value)) regions[i].denoising_strength = Math.min(1, Math.max(0.05, value));
+      });
+    }
+    if (method === "attention_couple" && !this.COUPLE_ARCHES.includes(this.arch)) method = "auto";
+    return { regions, ...(method !== "auto" ? { region_method: method } : {}) };
+  },
+};
+window.RegionMethod = RegionMethod;
 
 // Regional prompts live inside the serialized regions JSON, not in DOM
 // inputs — clean the copies there the same way.
@@ -4154,6 +4205,9 @@ async function doGenerate(overrides = {}) {
         // CN1. ControlNet units, only on a model that takes them and with
         // the panel and the unit on. Absent otherwise.
         ...ControlNetPanel.requestField(),
+        // RG2. The painted regions with a prompt, and the method. Absent
+        // otherwise, so a job without regions is unchanged.
+        ...RegionMethod.requestField(_source.regionsJson),
         // An outpaint job's size is its strip-plus-context crop's at the
         // model's own area (CT9); Neo pastes it back at the canvas's size.
         width: _outpaint ? _outpaint.width

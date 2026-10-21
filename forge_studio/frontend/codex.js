@@ -74,7 +74,7 @@ var ENTRIES = [
   { id: "core_workflow", title: "The Core Workflow", category: "getting_started", tags: ["workflow", "basics", "generate", "paint", "iterate", "loop"] },
   { id: "tutorials_and_tours", title: "Interactive Tutorials & Tours", category: "getting_started", tags: ["tutorial", "show me", "tour", "walkthrough", "learn", "first run", "beginner", "experienced", "restart", "education"] },
   { id: "first_image", title: "Making Your First Image", category: "getting_started", tags: ["first", "prompt", "generate", "beginner"] },
-  { id: "not_in_studio_yet", title: "Not in Studio Yet", category: "getting_started", tags: ["unavailable", "controlnet", "live", "regional", "regions", "float", "high precision", "batch", "test merge", "custom brush", "missing", "supported"] },
+  { id: "not_in_studio_yet", title: "Not in Studio Yet", category: "getting_started", tags: ["unavailable", "live", "float", "high precision", "batch", "test merge", "custom brush", "missing", "supported"] },
   { id: "ui_layout", title: "UI Layout", category: "getting_started", tags: ["layout", "interface", "panels", "toolbar", "orientation"] },
   { id: "models_and_vae", title: "Models & VAE", category: "getting_started", tags: ["model", "checkpoint", "vae", "sdxl", "sd15", "load", "download", "install", "illustrious", "flux", "gguf", "fp8", "fp16", "architecture"] },
   { id: "output_workflow", title: "Saving & Using Results", category: "getting_started", tags: ["output", "save", "result", "canvas", "gallery", "format", "defaults", "persist", "server", "metadata", "filename", "fingerprint", "hash"] },
@@ -141,6 +141,9 @@ var ENTRIES = [
   { id: "adetailer", title: "ADetailer", category: "generation", tags: ["adetailer", "face", "detail", "yolo", "hand", "detect", "auto"] },
   // ── ADVANCED FEATURES ────────────────────────────────────────
 
+  { id: "regional_prompting", title: "Regional Prompting", category: "advanced", tags: ["regional", "regions", "spatial", "zone", "area", "multi", "couple", "masked prompts", "one pass per region"] },
+  { id: "attention_couple", title: "Attention Couple (Architecture)", category: "advanced", tags: ["attention", "couple", "regional", "bounded", "self-attention", "cross-attention", "architecture", "softmax", "bias"] },
+  { id: "controlnet", title: "ControlNet", category: "advanced", tags: ["controlnet", "pose", "depth", "edge", "canny", "openpose", "lineart", "union", "lllite", "preprocessor", "structure"] },
   { id: "word_detail", title: "Auto Detail: Word Detail", category: "advanced", tags: ["word detail", "auto detail", "adetailer", "words", "heatmap", "detail a word", "slot"] },
   { id: "develop", title: "Develop", category: "advanced", tags: ["develop", "exposure", "contrast", "highlights", "shadows", "temperature", "tint", "saturation", "vibrance", "curve", "hsl", "color grading", "local adjustments", "tone"] },
   // ── LAYERS & EXPORT ────────────────────────────────────────
@@ -255,8 +258,11 @@ function _selectEntry(e) {
   var sc = e.shortcut ? '<p style="margin-bottom:12px;"><span class="cx-kbd">' + e.shortcut + '</span></p>' : "";
 
   var deepHtml = "";
-  if (e.deep) {
-    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + _t("codex.entry." + e.id + ".deep", e.deep) + '</div></div>';
+  // The bodies moved to the locales (CX1), so `e.deep` is unset and the
+  // section never showed; the locale decides now (RG4).
+  var deep = _t("codex.entry." + e.id + ".deep", e.deep || "");
+  if (deep) {
+    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + deep + '</div></div>';
   }
 
   var showMeHtml = "";
@@ -474,8 +480,11 @@ function _popSelectEntry(e) {
   var cat = CATEGORIES.find(function (c) { return c.id === e.category; });
   var sc = e.shortcut ? '<p style="margin-bottom:8px;"><span class="cx-kbd">' + e.shortcut + '</span></p>' : "";
   var deepHtml = "";
-  if (e.deep) {
-    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + _t("codex.entry." + e.id + ".deep", e.deep) + '</div></div>';
+  // The bodies moved to the locales (CX1), so `e.deep` is unset and the
+  // section never showed; the locale decides now (RG4).
+  var deep = _t("codex.entry." + e.id + ".deep", e.deep || "");
+  if (deep) {
+    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + deep + '</div></div>';
   }
   var showMeHtml = "";
   if (window.StudioShowMe && StudioShowMe.has(e.id)) {

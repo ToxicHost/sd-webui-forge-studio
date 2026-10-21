@@ -4,6 +4,51 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.1: Regional prompting, smooth Develop — 2026-10-21
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Regional prompting.** The Regions section of the Generate panel now
+  reaches the picture. Click **+** to add a region, click its row and paint
+  where it applies, and give it its own prompt (and negative). The main
+  prompt still covers the whole picture and goes in front of every region's
+  prompt, so keep lighting and style there. Leave unpainted gaps between
+  regions: they keep the scene one scene. There is no limit on the number of
+  regions; each one adds sampling time (about 3.5 s on SDXL, 7.5 s on Anima,
+  3 s on FLUX.2 Klein at 1024, on a 16 GB card).
+  - **Method**, shown once there is a region. *Automatic* uses Attention
+    Couple on SD 1.5 and SDXL models and masked prompts on every other
+    model. *Attention Couple* (SD 1.5 and SDXL) steers each region's words to
+    its area inside the model, in one pass; *Masked prompts* works on every
+    model and blends one prediction per region.
+  - **One pass per region** is the fourth method, for a picture already on
+    the canvas: each region is repainted separately with its own prompt and
+    its own Denoise (the row's slider becomes Denoise), and the results are
+    put together; the parameters end "Regions: N, one pass each".
+  - The slider on each row is the region's **Weight** (0.25–2).
+  - A hidden region (the eye), or one without a prompt or paint, is not sent.
+  - **Hires keeps the regions.** In **Auto Detail**, a face inside a region is
+    fixed with that region's prompt when the slot has no prompt of its own.
+  - Checked on a real GPU through the same path the page uses, on SDXL, Anima
+    and FLUX.2 Klein: red-left/blue-right regions land on their side and
+    swap when swapped; four regions that all say the same thing give nearly
+    the picture that word gives in the main prompt (the guidance does not
+    add up region by region, which would burn the picture); Hires at 1536 keeps the
+    regions; one pass per region leaves the area outside the regions
+    byte-identical.
+- **Develop is smooth.** The sliders no longer jump and the picture keeps up:
+  the adjustments render in the background (a worker) instead of on the
+  page's own thread, once per change instead of two or three times. With
+  Dehaze or Noise Reduction on, the picture is drawn at half size while you
+  drag and sharpens a moment after you let go. Saved pictures are exactly as
+  before (checked byte for byte). Also fixed: with Highlights/Shadows on, the
+  shading could come from an older version of the picture after painting or
+  generating.
+- **Help Center.** Regional Prompting, Attention Couple and ControlNet have
+  their articles back; "Not in Studio Yet" no longer lists them; the "Under
+  the Hood" sections show again (they had stopped appearing).
+
 ## 0.9.0: ControlNet, a memory warning, crash recovery, licence notices — 2026-10-20
 
 **Studio has its own version number now: 0.9.0.** Settings > About used to

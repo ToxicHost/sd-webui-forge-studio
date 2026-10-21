@@ -932,6 +932,22 @@ function _applyCalibration(rLin, gLin, bLin, n, p) {
 // Cache: S._developBlurCache.lumBlur is reused while Phase A inputs (and
 // canvas dims) don't change. The masks themselves recompute cheaply.
 // ========================================================================
+// DV1. Everything the blurred pixels depend on. The key used to be exposure,
+// temperature and tint only, and the cache was cleared only on a document
+// switch, so the shading mask could come from an older picture (painted or
+// generated since), from the drag-time RGB white balance after a release, or
+// from before a calibration or tone-curve change -- a result that depended on
+// what had been dragged before, not on the settings.
+function _lumBlurSig(lut, p) {
+    var C = window.StudioCore;
+    var parts = [lut.sig, "T" + (p.temperature | 0), "N" + (p.tint | 0), "D" + (p._dragging ? 1 : 0),
+                 "V" + (p._version | 0), "P" + (C && C.getPixelsVersion ? C.getPixelsVersion() : ""),
+                 "F" + (_floatSrc ? 1 : 0)];
+    var keys = Object.keys(p).filter(function (k) { return k.indexOf("cal") === 0 || k.indexOf("tc") === 0; }).sort();
+    for (var i = 0; i < keys.length; i++) parts.push(keys[i] + "=" + JSON.stringify(p[keys[i]]));
+    return parts.join("|");
+}
+
 function _getLumBlur(rLin, gLin, bLin, w, h, sig, noCache) {
     // M4: a local pass neither reads nor fills the cache -- it is keyed by
     // settings, not pixels, and a local pass blurs different pixels.
@@ -1185,8 +1201,7 @@ function _applyGlobal(ctx, w, h, p, local) {
     var hlAmt = p.highlights | 0;
     var shAmt = p.shadows | 0;
     if (hlAmt !== 0 || shAmt !== 0) {
-        var wbSig = lut.sig + "|T" + (p.temperature | 0) + "|N" + (p.tint | 0);
-        var blurCache = _getLumBlur(rLin, gLin, bLin, w, h, wbSig, local);
+        var blurCache = _getLumBlur(rLin, gLin, bLin, w, h, _lumBlurSig(lut, p), local);
         _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt);
     }
 
@@ -1324,7 +1339,7 @@ function _applyGlobal(ctx, w, h, p, local) {
 // responsive on big canvases. The downsampled buffer is processed by the
 // full pipeline, then upscaled back into the original ctx with smoothing.
 // ========================================================================
-function _proxyScale(w, h) {
+function _proxyScale(w, h, p) {
     // Drag-time only — full-resolution path runs on slider release.
     // Earlier thresholds (0.5 MP / 2 MP / 0.25 fallback) caused visible
     // pixelation at SDXL native (1024² = 1 MP) and worse at hires
@@ -1333,8 +1348,20 @@ function _proxyScale(w, h) {
     // pipeline holds 60fps at 2 MP on any modern hardware; 0.5 scale
     // covers everything up through ~2832².
     var mp = (w * h) / 1e6;
-    if (mp <= 2) return 1;
+    // DV1. Dehaze and both Noise Reductions say "Always proxy on drag", and
+    // at the sizes people generate they never did: at 1024x1024 a drag frame
+    // cost 0.18 s (Dehaze), 0.23 s (colour NR) and 1.25 s (luminance NR).
+    // With one of them on, the drag renders at half size; release is full.
+    if (mp <= 2 && !_heavyActive(p)) return 1;
     return 0.5;
+}
+
+// The rows the panel marks `.processing` (`_markHeavyRowsProcessing`).
+var HEAVY_KEYS = ["dehaze", "nrLuminance", "nrColor"];
+function _heavyActive(p) {
+    if (!p) return false;
+    for (var i = 0; i < HEAVY_KEYS.length; i++) if ((p[HEAVY_KEYS[i]] | 0) !== 0) return true;
+    return false;
 }
 
 // Reused across slider-drag frames so we don't allocate a new GPU texture
@@ -1345,7 +1372,7 @@ var _proxyTmpW = 0;
 var _proxyTmpH = 0;
 
 function _applyDevelopProxy(ctx, w, h, p) {
-    var scale = _proxyScale(w, h);
+    var scale = _proxyScale(w, h, p);
     if (scale >= 1) { _applyDevelopFull(ctx, w, h, p); return; }
     var pw = Math.max(1, Math.round(w * scale));
     var ph = Math.max(1, Math.round(h * scale));
@@ -2552,7 +2579,10 @@ function _redrawNow(withHistogram) {
 
 function _bumpCompositeCache() {
     var C = window.StudioCore;
-    if (C && C.markCompositeDirty) C.markCompositeDirty();
+    // DV1: a settings change, not a picture change -- the picture version
+    // (and with it the worker's copy and the blur cache) stays.
+    if (C && C.markDevelopDirty) C.markDevelopDirty();
+    else if (C && C.markCompositeDirty) C.markCompositeDirty();
 }
 
 // Histogram update during proxy redraw is throttled — getImageData on the
@@ -2596,9 +2626,8 @@ function _scheduleFullRedraw() {
 // NR Color) AND whose current value is non-default — only those rows are
 // actually doing the heavy work that warrants the indicator.
 function _markHeavyRowsProcessing(on) {
-    var heavyKeys = ["dehaze", "nrLuminance", "nrColor"];
     var S = _S(); var p = S && S.developParams;
-    heavyKeys.forEach(function (k) {
+    HEAVY_KEYS.forEach(function (k) {
         var els = _rowEls[k]; if (!els) return;
         var active = on && p && (p[k] | 0) !== 0;
         els.row.classList.toggle("processing", !!active);
@@ -3981,8 +4010,15 @@ function _renderHistogram() {
     // path returned an empty histogram. getFlattenedImageData runs the
     // same Develop pipeline that the WebGL texture comes from, so the
     // bars match what the user sees.
+    //
+    // DV1: the DISPLAY picture (`getDisplayImageData`), which is the one on
+    // screen and already developed. Flattening again ran the whole Develop
+    // pipeline a third time per frame, for a 256-bin chart.
     var sample;
-    try { sample = C.getFlattenedImageData({ applyDevelop: true }); }
+    try {
+        sample = (typeof C.getDisplayImageData === "function")
+            ? C.getDisplayImageData() : C.getFlattenedImageData({ applyDevelop: true });
+    }
     catch (e) { return; }
     if (!sample || !sample.data) return;
     var sd = sample.data;
@@ -5186,9 +5222,143 @@ function hasFloatSource(w, h) {
 
 
 // ========================================================================
+// DV1 — THE DISPLAY THROUGH A WORKER
+//
+// Every pass of this pipeline is main-thread JavaScript over every pixel: at
+// 1024x1024 an ordinary slider costs 40-85 ms, and while it runs the slider
+// thumb cannot move. So the PICTURE ON SCREEN is developed in a Worker
+// (develop-worker.js), which loads this same file -- one pipeline, two hosts.
+// The page sends it the picture once per picture version and the settings per
+// change; the newest settings win, and while they render the screen keeps the
+// previous result. Saving, generation and Live never come here: they call
+// `applyToContext` synchronously, as they always did.
+//
+// The page develops synchronously instead when the picture itself changed
+// (there is no result for it yet), during a stroke (layers change without a
+// version bump), with a High-Precision float source, or once the worker has
+// failed -- never an undeveloped frame.
+// ========================================================================
+var IN_WORKER = typeof self !== "undefined" && !!self.__STUDIO_DEVELOP_WORKER;
+var _dw = {
+    worker: null, failed: IN_WORKER, busy: false, pending: null,
+    held: null,      // {pixelsVersion, w, h}: the picture the worker holds
+    result: null,    // {pixelsVersion, sig, w, h, image}: the newest display picture
+    stats: { sync: 0, worker: 0, reused: 0, posted: 0, dropped: 0 },
+};
+
+function _displayWorker() {
+    if (_dw.failed) return null;
+    if (_dw.worker) return _dw.worker;
+    if (typeof Worker !== "function" || typeof OffscreenCanvas !== "function") { _dw.failed = true; return null; }
+    try {
+        var v = window.__STUDIO_V ? "?v=" + encodeURIComponent(window.__STUDIO_V) : "";
+        _dw.worker = new Worker("/studio/static/develop-worker.js" + v);
+    } catch (e) {
+        console.warn(TAG, "display worker unavailable; Develop draws on the page:", e);
+        _dw.failed = true;
+        return null;
+    }
+    _dw.worker.onmessage = _onDisplayResult;
+    _dw.worker.onerror = function (e) { _displayWorkerFailed(e && e.message); };
+    return _dw.worker;
+}
+
+function _displayWorkerFailed(why) {
+    console.warn(TAG, "display worker failed; Develop draws on the page from now on:", why || "unknown error");
+    _dw.failed = true; _dw.busy = false; _dw.pending = null; _dw.held = null;
+    try { if (_dw.worker) _dw.worker.terminate(); } catch (e) {}
+    _dw.worker = null;
+    _redrawFromResult();
+}
+
+// The display picture. `req`: {w, h, params, pixelsVersion, drawing,
+// source() -> pre-Develop ImageData, developed() -> synchronous developed ImageData}.
+function developForDisplay(req) {
+    var p = req.params;
+    _migrateParams(p);
+    if (req.drawing) { _dw.stats.sync++; return req.developed(); }
+    var sig = JSON.stringify(p);
+    var r = _dw.result;
+    var samePicture = !!r && r.pixelsVersion === req.pixelsVersion && r.w === req.w && r.h === req.h;
+    if (samePicture && r.sig === sig) { _dw.stats.reused++; return r.image; }
+    var worker = (_floatSrc || _isIdentity(p)) ? null : _displayWorker();
+    if (worker && samePicture) {
+        _queueDisplayJob({ w: req.w, h: req.h, pixelsVersion: req.pixelsVersion, sig: sig,
+                           params: JSON.parse(sig), source: req.source });
+        return r.image;
+    }
+    var image = req.developed();
+    _dw.stats.sync++;
+    _dw.result = { pixelsVersion: req.pixelsVersion, sig: sig, w: req.w, h: req.h, image: image };
+    return image;
+}
+
+function _queueDisplayJob(job) {
+    if (_dw.busy) { _dw.pending = job; return; }
+    _sendDisplayJob(job);
+}
+
+function _sendDisplayJob(job) {
+    var C = window.StudioCore;
+    // The picture changed while this waited: its result could never be shown.
+    if (!_dw.worker || (C && C.getPixelsVersion && C.getPixelsVersion() !== job.pixelsVersion)) {
+        _dw.stats.dropped++;
+        return;
+    }
+    var msg = { w: job.w, h: job.h, pixelsVersion: job.pixelsVersion, sig: job.sig, params: job.params };
+    var transfer = [];
+    var held = _dw.held;
+    if (!held || held.pixelsVersion !== job.pixelsVersion || held.w !== job.w || held.h !== job.h) {
+        var src = job.source();
+        msg.source = src.data.buffer;
+        transfer.push(msg.source);
+        _dw.held = { pixelsVersion: job.pixelsVersion, w: job.w, h: job.h };
+    }
+    // M4 local adjustments read their masks' coverage; the worker has no masks.
+    var local = _activeLocal(job.params);
+    if (local.length && C && C.maskCoverage) {
+        msg.masks = [];
+        local.forEach(function (a) {
+            var cov = C.maskCoverage(a.mask);
+            if (cov) { msg.masks.push({ id: a.mask, coverage: cov.buffer }); transfer.push(cov.buffer); }
+        });
+    }
+    _dw.busy = true;
+    _dw.stats.posted++;
+    _dw.worker.postMessage(msg, transfer);
+}
+
+function _onDisplayResult(e) {
+    var m = (e && e.data) || {};
+    _dw.busy = false;
+    if (m.error) { _displayWorkerFailed(m.error); return; }
+    var C = window.StudioCore;
+    if (!C || !C.getPixelsVersion || m.pixelsVersion === C.getPixelsVersion()) {
+        _dw.result = { pixelsVersion: m.pixelsVersion, sig: m.sig, w: m.w, h: m.h,
+                       image: new ImageData(new Uint8ClampedArray(m.pixels), m.w, m.h) };
+        _dw.stats.worker++;
+        _dw.stats.lastMs = Math.round(m.ms || 0);
+        _dw.stats.lastSplit = (m.split || []).map(Math.round);
+    }
+    if (_dw.pending) { var next = _dw.pending; _dw.pending = null; _sendDisplayJob(next); }
+    _redrawFromResult();
+}
+
+// A new display picture: the WebGL preview uploads it, the histogram bins it.
+function _redrawFromResult() {
+    var C = window.StudioCore, UI = window.StudioUI;
+    if (C && C.markDevelopDirty) C.markDevelopDirty();
+    if (UI && UI.redraw) UI.redraw();
+    if (isDevelopPanelVisible()) { try { _renderHistogram(); } catch (err) {} }
+    if (_splitActive) _renderSplitOverlay();
+}
+
+// ========================================================================
 // PUBLIC API
 // ========================================================================
 window.StudioDevelop = {
+    developForDisplay: developForDisplay,
+    _displayStats: function () { return Object.assign({ failed: _dw.failed, busy: _dw.busy }, _dw.stats); },
     defaultParams: defaultParams,
     applyToContext: applyToContext,
     syncPanel: function () { try { syncPanel(); } catch (e) {} },

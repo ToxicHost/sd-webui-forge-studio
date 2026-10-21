@@ -877,6 +877,65 @@ def _ad_prompt(slot_prompt: str, main: str, region: int) -> str:
     return part.replace("[PROMPT]", main) if "[PROMPT]" in part else part
 
 
+def _per_region(request: Any) -> bool:
+    """RG3. Regions run as one inpaint pass each, instead of the main pass."""
+
+    return bool(getattr(request, "regions", ())) and \
+        str(getattr(request, "region_method", "auto") or "auto") == "per_region"
+
+
+def _with_setting(infotext: str, key: str, value: str) -> str:
+    """`key: value` at the end of the settings line (`Steps: N, ...`); the
+    text unchanged when there is none or the key is already there."""
+
+    import re
+
+    lines = (infotext or "").split("\n")
+    tail = next((i for i in range(len(lines) - 1, -1, -1) if re.match(r"Steps: \d", lines[i])), None)
+    if tail is None or f"{key}:" in lines[tail]:
+        return infotext
+    lines[tail] = f"{lines[tail]}, {key}: {value}"
+    return "\n".join(lines)
+
+
+def _region_prompts_for(request: Any, mask: Any) -> tuple[str, str] | None:
+    """RG2. The region a detection belongs to: its own prompt and negative.
+
+    The Extension's `_match_detection_to_region`: the detection's bounding
+    box against each region's mask, the region covering the largest share of
+    the box, if that share is over a tenth. The region's OWN text, without the
+    global prompt (the Extension's `ad_prompt`: a face crop does not need
+    "two people fighting", and that context confuses it). Region masks are at
+    the job's base size; the detection may be on the Hires picture, so each
+    mask is resized to the detection's.
+    """
+
+    regions = tuple(getattr(request, "regions", ()) or ())
+    if not regions or mask is None:
+        return None
+    box = mask.getbbox() if hasattr(mask, "getbbox") else None
+    if not box:
+        return None
+    import numpy as np
+    from PIL import Image
+
+    x1, y1, x2, y2 = box
+    area = float((x2 - x1) * (y2 - y1))
+    if area < 1:
+        return None
+    best, best_share = None, 0.0
+    for region in regions:
+        plane = Image.fromarray((np.asarray(region.mask) * 255).astype(np.uint8), mode="L")
+        if plane.size != mask.size:
+            plane = plane.resize(mask.size, Image.NEAREST)
+        share = float((np.asarray(plane, dtype=np.float32)[y1:y2, x1:x2] / 255.0).sum()) / area
+        if share > best_share:
+            best, best_share = region, share
+    if best is None or best_share <= 0.1:
+        return None
+    return str(best.prompt), str(getattr(best, "negative_prompt", "") or "")
+
+
 def _inpaint_kwargs(request: Any, source: Any) -> dict[str, Any]:
     """Studio's inpaint options, in the engine's spelling.
 
@@ -1593,6 +1652,25 @@ class StudioLiveGenerationPort:
                     processing.scripts,
                     controlnet_port.ControlNetRunner(
                         controlnet, announce=getattr(progress, "set_note", None)))
+            # RG1. Regions, on this main pass only: the txt2img Hires pass is
+            # the same `p` and keeps them; Auto Detail and the image Hires pass
+            # build their own and do not. A job without regions keeps exactly
+            # the `scripts` it had.
+            regions = tuple(getattr(request, "regions", ()) or ())
+            if _per_region(request) and not is_img2img:
+                from .contracts import HeadlessError
+
+                raise HeadlessError(
+                    "REGIONS_NEED_A_PICTURE",
+                    "One pass per region repaints parts of the picture on the canvas, "
+                    "and the canvas is empty. Use another region method, or put a picture there first.")
+            if regions:
+                from . import controlnet_port, regional
+
+                processing.scripts = controlnet_port.compose(  # type: ignore[attr-defined]
+                    processing.scripts,
+                    regional.runner_for(engine, regions,
+                                        str(getattr(request, "region_method", "auto") or "auto")))
             # `<lora:name:weight>` in the prompt does nothing without this.
             #
             # `parse_extra_network_prompts` strips the tag a few frames below,
@@ -1655,7 +1733,13 @@ class StudioLiveGenerationPort:
             # what makes the row interpretable, since it is not a single-stage
             # timer and must not be read as one.
             telemetry.start("primary_pipeline")
-            processed = process_images_inner(processing)
+            if _per_region(request):
+                # RG3. One inpaint pass per region from the canvas picture,
+                # INSTEAD of the main pass (the Extension's Edit-mode
+                # Regional replaces its generation the same way).
+                processed = self._region_passes(request, processing, source)
+            else:
+                processed = process_images_inner(processing)
             if capture_wanted:
                 self._leave_attention_capture(request)
             # THE SECOND PASS FOR AN IMAGE OPERATION, and it runs HERE --
@@ -1786,6 +1870,11 @@ class StudioLiveGenerationPort:
         source = getattr(request, "source", None)
         mask = getattr(source, "mask", None)
         if mask is None or not getattr(source, "mask_present", False):
+            return
+        if _per_region(request):
+            # RG3. The regions are the edited areas and the composite changed
+            # nothing outside them; clipping to the inpaint mask as well would
+            # erase every region that reaches past it.
             return
         images = list(getattr(processed, "images", ()) or ())
         if not images:
@@ -2156,8 +2245,13 @@ class StudioLiveGenerationPort:
         image: object,
         mask: object,
         slot: object,
+        *,
+        results: list | None = None,
     ) -> object:
         """One Neo-compatible inpaint over one mask. Returns the new image.
+
+        `results`, when given, receives the pass's Neo result (RG3's region
+        passes publish from it).
 
         `mask=`, never `image_mask=`: the latter is `init=False` and
         `__post_init__` moves `mask` into it, so naming it directly is a
@@ -2190,6 +2284,15 @@ class StudioLiveGenerationPort:
                             str(getattr(request, "positive_prompt", "")), region)
         negative = _ad_prompt(str(getattr(slot, "negative_prompt", "") or ""),
                               str(getattr(request, "negative_prompt", "")), region)
+        # RG2. A slot with no prompt of its own details a face inside a
+        # painted region with THAT region's prompt (the Extension's
+        # region matching), and its negative when it has one.
+        if not str(getattr(slot, "prompt", "") or "").strip():
+            matched = _region_prompts_for(request, mask)
+            if matched is not None:
+                prompt = matched[0]
+                if matched[1]:
+                    negative = matched[1]
         # ADetailer's seed (`get_seed`, `fix_p2`, `get_each_tab_seed` with
         # `ad_same_seed_for_each_tab` off by default): the batch picture's own
         # seed, plus the region's number. Every region of every picture used
@@ -2283,10 +2386,68 @@ class StudioLiveGenerationPort:
         if telemetry is not None:
             telemetry.stop("prepare_detail")
         result = process_images_inner(pass_)
+        if results is not None:
+            results.append(result)
         images = list(getattr(result, "images", []) or [])
         # A pass that produced nothing leaves the image it was given, rather
         # than replacing a real picture with None.
         return images[0] if images else image
+
+    def _region_passes(self, request: Any, processing: Any, source: Any) -> Any:
+        """RG3. One inpaint pass per region, composited (the Extension's
+        `studio_regional.run_regional`).
+
+        Each region from the SAME base picture: the global prompt then the
+        region's (tags kept -- a LoRA in the global prompt applies, as it does
+        in the Extension, whose region text is the global prompt prepended),
+        the region's negative or the job's, the region's denoise or the
+        job's, Only masked, fill Original, the inpaint panel's blur and
+        padding, the job's seed. Each result is pasted onto the base through
+        the region's hard mask. Built on `_detail_pass`, the port's one
+        single-mask inpaint, so a field added there reaches this too.
+
+        Returns the last pass's Neo result with the composite as its image,
+        for Hires, Auto Detail and publication; its parameters note how many
+        regions ran.
+        """
+
+        from types import SimpleNamespace
+
+        import numpy as np
+        from PIL import Image
+
+        base = source.image
+        composite = base.copy()
+        options = getattr(request, "inpaint", None)
+        blur = int(getattr(options, "mask_blur", 4)) if options is not None else 4
+        padding = int(getattr(options, "padding", 32)) if options is not None else 32
+        glob = str(getattr(request, "positive_prompt", "") or "").strip()
+        results: list[Any] = []
+        regions = tuple(getattr(request, "regions", ()) or ())
+        for region in regions:
+            mask = Image.fromarray(((np.asarray(region.mask) > 0.5) * 255).astype(np.uint8), mode="L")
+            if mask.size != base.size:
+                mask = mask.resize(base.size, Image.NEAREST)
+            text = str(region.prompt).strip()
+            if glob:
+                text = glob + (" " if glob.endswith(",") else ", ") + text
+            denoise = getattr(region, "denoising_strength", None)
+            slot = SimpleNamespace(
+                prompt=text,
+                negative_prompt=str(getattr(region, "negative_prompt", "") or ""),
+                denoising_strength=float(denoise if denoise is not None
+                                         else getattr(request, "denoising_strength", 0.75)),
+                mask_blur=blur, inpaint_padding=padding, steps=0, cfg=0.0,
+                region_index=0, image_index=0)
+            image = self._detail_pass(request, processing, base, mask, slot, results=results)
+            composite.paste(image, (0, 0), mask)
+        processed = results[-1] if results else SimpleNamespace(
+            images=[], infotexts=[], seed=int(getattr(request, "seed", 0)))
+        processed.images = [composite]
+        infotexts = list(getattr(processed, "infotexts", []) or [])
+        if infotexts:
+            processed.infotexts = [_with_setting(infotexts[0], "Regions", f"{len(regions)}, one pass each")]
+        return processed
 
     # -- publication -------------------------------------------------------
 

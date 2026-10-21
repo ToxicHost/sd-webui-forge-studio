@@ -122,6 +122,14 @@ CONTROLNET_CONTROL_MODES = (
 CONTROLNET_RESIZE_MODES = ("Just Resize", "Crop and Resize", "Resize and Fill")
 CONTROLNET_HIRES_OPTIONS = ("Both", "Low res only", "High res only")
 
+#: RG1. How a job's regions are applied. "auto": Attention Couple on SD 1.5
+#: and SDXL (the Extension's mode there), masked conditioning everywhere else;
+#: "attention_couple" and "masked" pick one (the first only on SD 1.5/SDXL).
+#: RG3 "per_region": one inpaint pass per region from the canvas picture,
+#: composited (the Extension's Edit-mode Regional). No cap on the number of
+#: regions (owner, 2026-10-20).
+REGION_METHODS = ("auto", "attention_couple", "masked", "per_region")
+
 
 @dataclass(frozen=True)
 class CanvasDocument(Contract):
@@ -441,6 +449,33 @@ class GenerationRequest(Contract):
     #: order. Empty means none: no ControlNet script is installed and the job
     #: is byte-identical to one made before this field existed.
     controlnet: tuple["ControlNetUnitSettings", ...] = ()
+    #: RG1. Regional prompts, in the owner's order. Empty means none: no
+    #: regional runner is installed and the job is byte-identical to one made
+    #: before this field existed.
+    regions: tuple["RegionSettings", ...] = ()
+    #: RG1. One of `REGION_METHODS`. Read only when `regions` is not empty.
+    region_method: str = "auto"
+
+
+@dataclass(frozen=True)
+class RegionSettings(Contract):
+    """One painted region and its prompt. RG1.
+
+    The Canvas region as the page holds it (`canvas-core.js` `addRegion`):
+    a prompt for the area, an optional negative, a weight, a denoise used by
+    Edit-mode Regional (one pass per region), and the painted mask inline at
+    the job's size. The global prompt is the job's own `positive_prompt`; the
+    engine prepends it to each region's, as the Extension does.
+    """
+
+    name: str = ""
+    prompt: str = ""
+    negative_prompt: str = ""
+    weight: float = 1.0
+    #: Edit-mode Regional's per-region denoise; None means the job's own.
+    denoising_strength: "float | None" = None
+    #: The painted area: white (or opaque) where the region is. Never a path.
+    mask: "InputAsset | None" = None
 
 
 @dataclass(frozen=True)
