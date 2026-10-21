@@ -937,7 +937,9 @@ def _log_dispatch(job_id: str, translation: RequestTranslation) -> None:
         headless = translation.headless_request
         # LV1. A Live frame logs one line of its own (`live_session`), not
         # five per frame every couple of seconds.
-        if str(getattr(getattr(headless, "output", None), "purpose", "") or "") == "live":
+        from .generation_request import is_live_frame
+
+        if is_live_frame(headless):
             return
         log = JobLog()
         log.dispatch(job_id, resolved={

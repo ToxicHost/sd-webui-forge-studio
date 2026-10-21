@@ -70,6 +70,7 @@ TITLES = {
     "upscaler": "Select upscaler folder",
     "controlnet": "Select ControlNet folder",
     "adetailer": "Select detector folder",
+    "library": "Select a model folder",
     "save": "Select save folder",
     "gallery": "Select image folder",
     "wildcards": "Select wildcard folder",

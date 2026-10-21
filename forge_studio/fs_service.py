@@ -157,6 +157,15 @@ class FilesystemService:
                     label = f"{label} {ordinal + 1}"
                 offer("configured", label, Path(text))
 
+        # ON1b: the owner's library folders.
+        try:
+            library = tuple(getattr(self._registry, "configured_library", tuple)())
+        except Exception:  # noqa: BLE001 - a place list must never fail hard
+            library = ()
+        for ordinal, folder in enumerate(library):
+            label = "model folder" + (f" {ordinal + 1}" if len(library) > 1 else "")
+            offer("configured", label, Path(folder.path))
+
         home = self._home(filesystem)
         if home is not None:
             offer("home", "Home", home)

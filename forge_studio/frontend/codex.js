@@ -91,7 +91,7 @@ var ENTRIES = [
   { id: "crash_recovery", title: "Crash Recovery", category: "how_studio_works", tags: ["recovery", "crash", "refresh", "reload", "restore", "lost", "undo", "backup", "documents"] },
   { id: "scrub_labels", title: "Scrub Labels", category: "how_studio_works", tags: ["scrub", "slider", "context", "bar", "drag", "adjust"] },
   { id: "per_tool_memory", title: "Per-Tool Settings Memory", category: "how_studio_works", tags: ["tool", "settings", "memory", "remember", "persist", "independent"] },
-  { id: "shift_drag_resize", title: "Shift+Drag Brush Resize", category: "how_studio_works", tags: ["shift", "drag", "resize", "brush", "opacity", "krita"], shortcut: "Shift+Drag" },
+  { id: "shift_drag_resize", title: "Shift+Drag Brush Resize", category: "how_studio_works", tags: ["shift", "drag", "resize", "brush", "size"], shortcut: "Shift+Drag" },
   { id: "drag_and_drop", title: "Drag & Drop", category: "how_studio_works", tags: ["drag", "drop", "image", "load", "import", "file"] },
   { id: "send_to_canvas", title: "Send to Canvas", category: "how_studio_works", tags: ["result", "canvas", "output", "layer", "send"] },
   { id: "ar_buttons", title: "Aspect Ratio Buttons", category: "how_studio_works", tags: ["aspect", "ratio", "resolution", "base", "swap", "random", "pool"] },

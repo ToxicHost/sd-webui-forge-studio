@@ -4478,6 +4478,37 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                  "code": error.code},
             )
 
+    def _model_library_settings(self, action: str) -> None:
+        """ON1b/ON2: a library folder's Unrecognized list, a correction, an
+        install-root check, Studio's own folder for a fresh start, or Open."""
+        from forge_headless.contracts import HeadlessError
+
+        settings = self._settings_writer()
+        if settings is None:
+            return
+        payload = self._read_json()
+        try:
+            if action == "unrecognized":
+                answer = settings.unrecognized(payload)
+            elif action == "correct":
+                answer = settings.correct(payload)
+            elif action == "inspect":
+                answer = settings.inspect(payload)
+            elif action == "use_studio_folder":
+                answer = settings.use_studio_folder()
+                # The owner asked for this folder to put a model in: open it,
+                # through the same vetted reveal as Settings' Open.
+                answer["opened"] = self._reveal_folder(Path(answer["checkpoints"]))
+            else:
+                answer = self._reveal_folder(settings.folder_to_open(payload))
+        except HeadlessError as error:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "That model folder could not be read.", "code": error.code},
+            )
+            return
+        self._send_json(HTTPStatus.OK, answer)
+
     def _filesystem_browse(self, path: str) -> None:
         """The directory picker, behind the same gate as the roots write.
 
@@ -4549,13 +4580,14 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         refused frame is a 400 with the reason, and also a `live_error` on
         the socket, where the page shows it."""
 
-        from .live_session import LiveError
+        from .live_session import LiveError, _client_of
 
-        if path == "/studio/live/start":
-            self._send_json(HTTPStatus.OK, session.start())
-            return
-        if path == "/studio/live/stop":
-            self._send_json(HTTPStatus.OK, session.stop())
+        if path in ("/studio/live/start", "/studio/live/stop"):
+            # `{"client": ...}`: the page's id for itself, so its events reach
+            # it and not every other open tab. An empty body is one page.
+            client = _client_of(self._read_json())
+            action = session.start if path == "/studio/live/start" else session.stop
+            self._send_json(HTTPStatus.OK, action(client))
             return
         # The canvas picture rides this route, as it rides /api/generate.
         payload = self._read_json_bounded(maximum_bytes=_MAX_SOURCE_REQUEST_BYTES)
@@ -4600,6 +4632,15 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             path = self._path()
             if path == "/studio/settings/model_roots":
                 self._apply_model_root_settings()
+                return
+            # ON1b. Behind the roots write's gate: the Unrecognized list
+            # returns file names, and a correction is a config write.
+            if path in ("/studio/settings/model_library/unrecognized",
+                        "/studio/settings/model_library/correct",
+                        "/studio/settings/model_library/inspect",
+                        "/studio/settings/model_library/use_studio_folder",
+                        "/studio/settings/model_library/open"):
+                self._model_library_settings(path.rsplit("/", 1)[-1])
                 return
             if path == "/studio/settings/model_selection":
                 self._remember_model_selection()

@@ -681,7 +681,14 @@
       grid.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "lora-empty";
-      empty.innerHTML = `<span class="lora-empty-text">${allLoras.length === 0 ? _t("lora.empty.none", "No LoRAs found — add a LoRA folder in Settings → General → Model folders") : _t("lora.empty.noMatch", "No LoRAs match your search")}</span>`;
+      // ON3: an empty library says why (no folders / unreadable / none found).
+      const _none = window.studioEmptyListText
+        ? window.studioEmptyListText("lora", "empty.kind.lora", "LoRAs")
+        : _t("lora.empty.none", "No LoRAs found — add a model folder in Settings → General → Model folders");
+      const text = document.createElement("span");
+      text.className = "lora-empty-text";
+      text.textContent = allLoras.length === 0 ? _none : _t("lora.empty.noMatch", "No LoRAs match your search");
+      empty.appendChild(text);
       wrap.appendChild(empty);
       return;
     }

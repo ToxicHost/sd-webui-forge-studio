@@ -329,7 +329,7 @@ def public_view(entry: dict, name: str, root: Path) -> dict:
 def locate(registry: Any, name: str) -> Optional[Tuple[Path, Path]]:
     """`(file, the configured LoRA root holding it)` for an engine LoRA name."""
 
-    from forge_headless.lora_catalogue import configured_roots
+    from forge_headless.lora_catalogue import lora_folders
 
     from .model_browser import lora_model_id, model_file
 
@@ -337,7 +337,7 @@ def locate(registry: Any, name: str) -> Optional[Tuple[Path, Path]]:
     if path is None:
         return None
     resolved = path.resolve()
-    for root in configured_roots(registry):
+    for root in lora_folders(registry):
         base = Path(root).resolve()
         try:
             resolved.relative_to(base)

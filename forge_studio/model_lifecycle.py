@@ -604,7 +604,7 @@ class WarmSessionManager:
             self.counters["rejected"] += 1
             raise _error(
                 MODEL_NOT_READY,
-                "No warm model session is ready for a job.",
+                "No model is chosen or loaded. Choose one in the Model box.",
                 "job_id",
             )
         if self._pending is not None:

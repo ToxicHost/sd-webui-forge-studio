@@ -1,18 +1,26 @@
 /*
- * The Settings folder picker, and the ordered-root rows behind it.
+ * The Settings model-folder list (ON1b), and the folder picker behind it.
  *
- * Browse opens the operating system's own folder dialog now (FP1,
+ * Model folders are ONE list, any number (the owner's decision, 2026-10-21).
+ * Studio walks every subfolder and files each model by what its header says
+ * it is, so a row here is a folder and what it holds -- "Checkpoints 8 ·
+ * LoRAs 2" -- not a role. A file Studio cannot place is listed under that
+ * folder's Unrecognized panel, where the owner says what it is. Add and Remove
+ * save at once; there is no Save button to forget.
+ *
+ * Browse opens the operating system's own folder dialog (FP1,
  * `_studioPickFolder` in app.js over `/studio/pick_folder`): Studio binds
- * 127.0.0.1, so the server's desktop is the owner's. This overlay is the
+ * 127.0.0.1, so the server's desktop is the owner's. The overlay below is the
  * FALLBACK for a host with no desktop -- a container, a headless server --
  * where a native dialog cannot appear. It browses the SERVER's filesystem, in
- * the page, and says so. The model-root Browse buttons are bound by app.js
- * alone; `choose()` is how it reaches this overlay.
+ * the page, and says so. The Browse button is bound by app.js alone;
+ * `choose()` is how it reaches this overlay.
  *
- * Directory names are attacker-influenced strings. Everything rendered here
- * goes through textContent; there is no innerHTML anywhere in this file and a
- * test asserts that, because the page CSP allows 'unsafe-inline' for styles
- * and a name is a place someone would try to put markup.
+ * Directory and file names are attacker-influenced strings. Everything
+ * rendered here goes through textContent; there is no innerHTML anywhere in
+ * this file and a test asserts that, because the page CSP allows
+ * 'unsafe-inline' for styles and a name is a place someone would try to put
+ * markup.
  */
 (function () {
   "use strict";
@@ -24,40 +32,60 @@
     list: "/studio/fs/list",
     reveal: "/studio/fs/reveal",
     settings: "/studio/settings/model_roots",
+    unrecognized: "/studio/settings/model_library/unrecognized",
+    correct: "/studio/settings/model_library/correct",
+    inspect: "/studio/settings/model_library/inspect",
+    useStudio: "/studio/settings/model_library/use_studio_folder",
     detectors: "/api/detectors",
   };
 
-  // Every role with a configurable ROOT, which is not the same set as the
-  // roles that make up the resident model. `adetailer` has a folder the owner
-  // points at, but a detector is loaded per Auto Detail slot and released, so
-  // it never becomes part of the session. The server draws that same
-  // distinction between `catalogue.MODEL_ROLES` and
-  // `model_selection.RESIDENT_MODEL_ROLES`.
-  // Must stay equal to `catalogue.MODEL_ROLES` -- a guard asserts it,
-  // because the two drifting is how a root becomes configurable on one
-  // side and invisible on the other.
+  // Every kind a library file can be filed as -- the server's
+  // `catalogue.MODEL_ROLES`, which a guard asserts this equals. It drives the
+  // summary on each row and the choices in the Unrecognized panel, so a kind
+  // missing here is one the owner could never correct a file to.
   const ROLES = ["checkpoint", "text_encoder", "vae", "adetailer", "lora", "embedding", "upscaler", "controlnet"];
-  const ROLE_SUFFIX = {
-    checkpoint: "Checkpoint", text_encoder: "TextEncoder", vae: "Vae",
-    adetailer: "Adetailer", lora: "Lora", embedding: "Embedding", upscaler: "Upscaler",
-    controlnet: "Controlnet",
+  // Display order for a row's summary: what an owner looks for first.
+  const SUMMARY_ORDER = ["checkpoint", "lora", "vae", "text_encoder", "controlnet", "embedding", "upscaler", "adetailer"];
+  const PLURAL = {
+    checkpoint: ["settings.modelFolders.kinds.checkpoint", "Checkpoints"],
+    text_encoder: ["settings.modelFolders.kinds.textEncoder", "Text encoders"],
+    vae: ["settings.modelFolders.kinds.vae", "VAEs"],
+    adetailer: ["settings.modelFolders.kinds.adetailer", "Detectors"],
+    lora: ["settings.modelFolders.kinds.lora", "LoRAs"],
+    embedding: ["settings.modelFolders.kinds.embedding", "Embeddings"],
+    upscaler: ["settings.modelFolders.kinds.upscaler", "Upscalers"],
+    controlnet: ["settings.modelFolders.kinds.controlnet", "ControlNets"],
+  };
+  const SINGULAR = {
+    checkpoint: ["settings.modelFolders.kind.checkpoint", "Checkpoint"],
+    text_encoder: ["settings.modelFolders.kind.textEncoder", "Text encoder"],
+    vae: ["settings.modelFolders.kind.vae", "VAE"],
+    adetailer: ["settings.modelFolders.kind.adetailer", "Auto Detail detector"],
+    lora: ["settings.modelFolders.kind.lora", "LoRA"],
+    embedding: ["settings.modelFolders.kind.embedding", "Embedding"],
+    upscaler: ["settings.modelFolders.kind.upscaler", "Upscaler"],
+    controlnet: ["settings.modelFolders.kind.controlnet", "ControlNet"],
   };
 
   const state = {
     token: "",
     capabilities: null,
-    // DERIVED from ROLES, never listed again. This was a fourth literal
-    // spelling of the role set, and when `lora` was added to ROLES and
-    // ROLE_SUFFIX it was missed here -- so `addRoot("lora", path)` reached
-    // `state.roots["lora"].indexOf(...)` on undefined, threw, and the owner's
-    // typed folder silently did not save. Reported from real use.
-    //
-    // One source now: a role that exists in ROLES has a slot by construction.
-    roots: Object.fromEntries(ROLES.map((role) => [role, []])),
-    open: null,          // { role, handle, path, entries, breadcrumb, usable }
+    // The owner's library folders, as the server holds them: [{path, hint?}].
+    library: [],
+    // Per-folder detail from the server, by ordinal (status, counts...).
+    status: [],
+    // Which folders' Unrecognized panels are open, by path.
+    expanded: new Set(),
+    // ON2: a picked folder that is a Forge / ComfyUI install, waiting for
+    // the owner to say "use its models folder": {path, models, kind}.
+    pendingInstall: null,
+    open: null,          // { handle, path, usable } while the overlay is up
     chooser: null,       // OF1: resolve(path|null) for a choose() caller
     busy: false,
   };
+
+  const t = (key, fallback, params) =>
+    (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
 
   const el = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -85,133 +113,266 @@
     return payload;
   }
 
-  // ---- the token, and the roots the server already holds ---------------------
+  // ---- the token, and the folders the server already holds ------------------
 
   async function refreshSettings() {
     const response = await fetch(API.settings);
     if (!response.ok) return null;
     const document_ = await response.json();
     state.token = document_.token || "";
-    const configured = document_.roots || {};
-    ROLES.forEach((role) => {
-      const value = configured[role];
-      // One root persists as a string and several as a list. The page reads
-      // both rather than requiring the server to have normalised, because
-      // that narrowing is what keeps an older build able to read the file.
-      state.roots[role] = value === undefined || value === null
-        ? []
-        : (typeof value === "string" ? [value] : value.slice());
-    });
-    renderRows(document_);
+    adopt(document_);
     return document_;
   }
 
-  // ---- ordered root rows ----------------------------------------------------
+  function adopt(document_) {
+    if (!document_) return;
+    state.library = (document_.model_library || []).map((folder) =>
+      typeof folder === "string" ? { path: folder } : { path: folder.path, hint: folder.hint });
+    state.status = document_.library_status || [];
+    renderRows();
+  }
 
-  function renderRows(document_) {
-    const byRole = {};
-    (document_ && document_.roles ? document_.roles : []).forEach((entry) => {
-      byRole[entry.role] = entry;
-    });
-    ROLES.forEach((role) => {
-      const host = document.getElementById("modelRootList" + ROLE_SUFFIX[role]);
-      if (!host) return;
-      host.textContent = "";
-      const detail = (byRole[role] && byRole[role].roots) || [];
-      state.roots[role].forEach((path, index) => {
-        host.appendChild(rootRow(role, path, index, detail[index]));
-      });
+  // ---- folder rows ----------------------------------------------------------
+
+  // Every list on the page: Settings' and, during the first run, the
+  // welcome screen's (ON2) -- one state, drawn wherever it is shown.
+  function renderRows() {
+    document.querySelectorAll("#modelLibraryList, [data-model-library-list]").forEach(renderInto);
+  }
+
+  function renderInto(host) {
+    host.textContent = "";
+    if (state.pendingInstall) host.appendChild(installNotice(state.pendingInstall));
+    if (!state.library.length) {
+      host.appendChild(el("p", "settings-item-description studio-library-empty",
+        t("settings.modelFolders.none", "No model folders yet. Add the folder where your models are.")));
+      return;
+    }
+    state.library.forEach((folder, index) => {
+      host.appendChild(folderRow(folder, index, state.status[index]));
     });
   }
 
-  function rootRow(role, path, index, detail) {
-    const row = el("div", "studio-root-row");
-    row.appendChild(el("span", "studio-root-handle", "⋮⋮"));
+  // ON2. Recognising a folder the owner PICKED is allowed (owner decision
+  // 2); looking for installs is not. A whole install would be walked
+  // through its venv and repositories, so Studio asks to use its models
+  // folder instead.
+  function installNotice(pending) {
+    const box = el("div", "studio-library-install");
+    box.appendChild(el("p", "settings-item-description", pending.kind === "comfyui"
+      ? t("settings.modelFolders.install.comfyui", "That folder is a ComfyUI install. Use its models folder?")
+      : t("settings.modelFolders.install.forge", "That folder is a Forge or A1111 install. Use its models folder?")));
+    const use = el("button", "defaults-btn primary", t("settings.modelFolders.install.use", "Use its models folder"));
+    use.type = "button";
+    use.addEventListener("click", () => {
+      state.pendingInstall = null;
+      push(pending.models);
+    });
+    const cancel = el("button", "defaults-btn", t("settings.modelFolders.install.cancel", "Cancel"));
+    cancel.type = "button";
+    cancel.addEventListener("click", () => {
+      state.pendingInstall = null;
+      renderRows();
+    });
+    const row = el("div", "settings-btn-group");
+    row.appendChild(use);
+    row.appendChild(cancel);
+    box.appendChild(row);
+    return box;
+  }
 
-    const label = el("span", "studio-root-path", path);
-    label.title = path;                       // full text on hover, ellipsised in CSS
+  function folderRow(folder, index, detail) {
+    const block = el("div", "studio-library-folder");
+    const row = el("div", "studio-root-row");
+
+    const label = el("span", "studio-root-path", folder.path);
+    label.title = folder.path;                // full text on hover, ellipsised in CSS
     row.appendChild(label);
 
     const status = el("span", "studio-root-status", statusText(detail));
     status.dataset.state = (detail && detail.status) || "unknown";
     row.appendChild(status);
 
-    const up = el("button", "studio-root-btn", "▲");
-    up.type = "button";
-    up.title = "Move up";
-    up.disabled = index === 0;
-    up.addEventListener("click", () => move(role, index, -1));
-    row.appendChild(up);
-
-    const down = el("button", "studio-root-btn", "▼");
-    down.type = "button";
-    down.title = "Move down";
-    down.disabled = index === state.roots[role].length - 1;
-    down.addEventListener("click", () => move(role, index, 1));
-    row.appendChild(down);
+    const served = detail && detail.status === "ready" && detail.inside === undefined;
+    // Only when there is something in it (owner, 2026-10-21: an
+    // "Unrecognized" link on every folder read as "this folder was not
+    // recognised"). A network folder has no count -- reading one would walk
+    // the share on every Settings read -- so it keeps the plain link.
+    const unknown = detail ? detail.unrecognized : undefined;
+    const corrected = (detail && detail.corrected) || 0;
+    const counted = typeof unknown === "number";
+    const toggleLabel = !counted
+      ? t("settings.modelFolders.unrecognized.button", "Unrecognized")
+      : unknown > 0
+        ? t("settings.modelFolders.unrecognized.count", "{n} unrecognized", { n: unknown })
+        : t("settings.modelFolders.unrecognized.corrected", "Files you set");
+    const offered = served && (!counted || unknown > 0 || corrected > 0);
+    if (offered) {
+      const open = state.expanded.has(folder.path);
+      const toggle = el("button", "studio-root-btn studio-library-toggle", toggleLabel);
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.addEventListener("click", () => {
+        if (state.expanded.has(folder.path)) state.expanded.delete(folder.path);
+        else state.expanded.add(folder.path);
+        renderRows();
+      });
+      row.appendChild(toggle);
+    }
 
     const remove = el("button", "studio-root-btn", "×");
     remove.type = "button";
-    remove.title = "Remove";
+    remove.title = t("settings.modelFolders.remove", "Remove this folder");
     remove.addEventListener("click", () => {
-      state.roots[role].splice(index, 1);
-      renderRows(null);
-      commitRoots();
+      state.library.splice(index, 1);
+      state.status.splice(index, 1);
+      state.expanded.delete(folder.path);
+      renderRows();
+      commit();
     });
     row.appendChild(remove);
-    return row;
-  }
+    block.appendChild(row);
 
-  // EVERY root mutation ends here. `save()` existed, was exported, and was
-  // called by nothing at all -- so Add, Remove and reorder each changed
-  // `state.roots`, drew a row, and persisted nothing. The row appeared, the
-  // owner restarted, and the folder was gone.
-  //
-  // Reported twice from real use before it was found: once as "it doesn't
-  // save" (that was a separate TypeError) and once as "it did not save between
-  // restarts", which was this.
-  //
-  // Failure is SHOWN, not swallowed. A row that is on screen and not on disk
-  // is the thing being fixed, so a refused write must not leave the row
-  // looking accepted.
-  function commitRoots() {
-    save().catch((error) => {
-      renderRows(null);
-      if (window.showToast) {
-        window.showToast(
-          "That folder could not be saved: " + (error && error.message
-            ? error.message : "the server refused it"), "error");
-      }
-    });
+    if (offered && state.expanded.has(folder.path)) {
+      const panel = el("div", "studio-library-unrecognized");
+      panel.appendChild(el("p", "settings-item-description",
+        t("settings.modelFolders.unrecognized.loading", "Looking for files Studio could not place…")));
+      block.appendChild(panel);
+      loadUnrecognized(index, panel);
+    }
+    return block;
   }
 
   function statusText(detail) {
     if (!detail) return "";
-    if (detail.status === "refused") return "unavailable";
-    // A network folder whose machine is not answering: kept, and retried by
-    // Refresh model list.
-    if (detail.status === "unreachable") return "offline";
-    if (detail.truncated) return detail.entry_count + "+ models";
-    return (detail.entry_count || 0) + " models";
+    if (detail.status === "refused" || detail.status === "unreachable") {
+      // The same owner wording the selectors use (app.js), from a stable code.
+      return typeof window.studioModelFolderStatus === "function"
+        ? window.studioModelFolderStatus(detail)
+        : detail.status;
+    }
+    if (detail.inside !== undefined) {
+      return t("settings.modelFolders.inside", "Already included in model folder {n}", { n: detail.inside + 1 });
+    }
+    const counts = detail.counts || {};
+    const parts = SUMMARY_ORDER.filter((kind) => counts[kind]).map((kind) =>
+      t(PLURAL[kind][0], PLURAL[kind][1]) + " " + counts[kind]);
+    if (!parts.length) return t("settings.modelFolders.ready.none", "Ready · no models found in this folder");
+    const text = parts.join(" · ");
+    return detail.truncated
+      ? text + " · " + t("settings.modelFolders.truncated", "list truncated, folder contains more")
+      : text;
   }
 
-  function move(role, index, delta) {
-    const list = state.roots[role];
-    const target = index + delta;
-    if (target < 0 || target >= list.length) return;
-    const [item] = list.splice(index, 1);
-    list.splice(target, 0, item);
-    renderRows(null);
-    commitRoots();
+  // ---- the Unrecognized panel -----------------------------------------------
+
+  async function loadUnrecognized(index, panel) {
+    let answer = null;
+    try {
+      if (!state.token) await refreshSettings();
+      answer = await post(API.unrecognized, { folder: index });
+    } catch (error) {
+      panel.textContent = "";
+      panel.appendChild(el("p", "settings-item-description",
+        t("settings.modelFolders.unrecognized.failed", "That folder could not be read.")));
+      return;
+    }
+    panel.textContent = "";
+    const files = answer.files || [];
+    const corrected = answer.corrected || [];
+    if (!files.length && !corrected.length) {
+      panel.appendChild(el("p", "settings-item-description",
+        t("settings.modelFolders.unrecognized.none", "Every model file in this folder was recognised.")));
+      return;
+    }
+    if (files.length) {
+      panel.appendChild(el("p", "settings-item-description",
+        t("settings.modelFolders.unrecognized.intro",
+          "Studio could not tell what these are. Older .ckpt, .pt and .pth files are never opened, so their names are all it has. Say what each one is:")));
+    }
+    files.forEach((file) => panel.appendChild(fileRow(index, file.relative, "", file.evidence)));
+    corrected.forEach((file) => panel.appendChild(fileRow(index, file.relative, file.kind, "")));
   }
 
-  function addRoot(role, path) {
+  function fileRow(index, relative, kind, evidence) {
+    const row = el("div", "studio-root-row studio-library-file");
+    const name = el("span", "studio-root-path", relative);
+    name.title = evidence ? relative + " — " + evidence : relative;
+    row.appendChild(name);
+
+    const select = el("select", "param-val studio-library-kind");
+    const automatic = el("option", "", kind
+      ? t("settings.modelFolders.unrecognized.automatic", "Let Studio decide")
+      : t("settings.modelFolders.unrecognized.choose", "What is it?"));
+    automatic.value = "";
+    select.appendChild(automatic);
+    ROLES.forEach((role) => {
+      const option = el("option", "", t(SINGULAR[role][0], SINGULAR[role][1]));
+      option.value = role;
+      select.appendChild(option);
+    });
+    select.value = kind || "";
+    select.addEventListener("change", () => correct(index, relative, select.value));
+    row.appendChild(select);
+    return row;
+  }
+
+  async function correct(index, relative, kind) {
+    try {
+      adopt(await post(API.correct, { folder: index, relative: relative, kind: kind }));
+      await afterChange();
+    } catch (error) {
+      if (window.showToast) {
+        window.showToast(t("settings.modelFolders.unrecognized.saveFailed", "That file could not be changed."), "error");
+      }
+      renderRows();
+    }
+  }
+
+  // EVERY folder change ends here, and a refused write is SHOWN: a row that
+  // is on screen and not on disk is the defect the per-role picker shipped
+  // twice ("it did not save between restarts").
+  function commit() {
+    save().catch((error) => {
+      refreshSettings().catch(() => {});
+      if (window.showToast) {
+        window.showToast(t("settings.modelFolders.saveFailed", "Model folders not changed") + ": " +
+          (error && error.message ? error.message : ""), "error");
+      }
+    });
+  }
+
+  async function addFolder(path) {
     const text = String(path || "").trim();
     if (!text) return;
-    if (state.roots[role].indexOf(text) >= 0) return;
-    state.roots[role].push(text);
-    renderRows(null);
-    commitRoots();
+    if (state.library.some((folder) => folder.path === text)) return;
+    try {
+      if (!state.token) await refreshSettings();
+      const answer = await post(API.inspect, { path: text });
+      if (answer && answer.install && answer.models) {
+        state.pendingInstall = { path: text, models: answer.models, kind: answer.install };
+        renderRows();
+        return;
+      }
+    } catch (_) { /* not an install, or no answer: add what was picked */ }
+    push(text);
+  }
+
+  function push(path) {
+    if (state.library.some((folder) => folder.path === path)) { renderRows(); return; }
+    state.library.push({ path: path });
+    renderRows();
+    commit();
+  }
+
+  // ON2, starting fresh: Studio's own models folder joins the library, and
+  // the server opens its checkpoint folder for the owner to drop a model in.
+  async function useStudioFolder() {
+    if (!state.token) await refreshSettings();
+    const answer = await post(API.useStudio, {});
+    adopt(answer);
+    await afterChange();
+    return answer;
   }
 
   // ---- the picker overlay ---------------------------------------------------
@@ -423,43 +584,43 @@
       close();
       return;
     }
-    addRoot(state.open.role, state.open.path);
+    addFolder(state.open.path);
     close();
   }
 
   // ---- save -----------------------------------------------------------------
 
   async function save() {
-    const roots = {};
-    // Sent as LISTS, always. The server narrows one entry back to a string on
-    // disk; the wire shape does not have to carry that, and encoding it here
-    // would put the persistence rule in two places.
-    ROLES.forEach((role) => { roots[role] = state.roots[role].slice(); });
-    try {
-      const document_ = await post(API.settings, { model_roots: roots });
-      renderRows(document_);
-      if (typeof window.populateDropdowns === "function") await window.populateDropdowns();
-      // The source of truth for detectors just changed, so the catalogue is
-      // re-read. Same rule the registry menus follow after the engine comes
-      // up: carry, validate, and REFRESH when the source of truth changes.
-      // Without this the owner points at a detector folder and the Auto
-      // Detail list keeps showing what was there before -- the exact shape of
-      // the defect that started this whole line of work.
-      await refreshDetectors();
-      return document_;
-    } catch (error) {
-      throw error;
-    }
+    // The complete list, every time: the server replaces it as one
+    // transaction, and a folder that cannot be used refuses the save and
+    // leaves the previous list serving.
+    const library = state.library.map((folder) =>
+      folder.hint ? { path: folder.path, hint: folder.hint } : folder.path);
+    const document_ = await post(API.settings, { model_library: library });
+    adopt(document_);
+    await afterChange();
+    return document_;
+  }
+
+  async function afterChange() {
+    if (typeof window.populateDropdowns === "function") await window.populateDropdowns();
+    // The source of truth for detectors just changed, so the catalogue is
+    // re-read. Without this the owner adds a folder of detectors and the
+    // Auto Detail list keeps showing what was there before -- the exact
+    // shape of the defect that started this whole line of work.
+    await refreshDetectors();
+    // UP1: the server rescanned the upscalers; refill the Hires and Upscale
+    // menus.
+    if (typeof window.loadRegistries === "function") window.loadRegistries().catch(() => {});
   }
 
   // The detector catalogue, as NAMES. `/api/detectors` hashes bundled files
   // and never opens a weight, so this is safe to call on a cold server and
   // cannot be the thing that drags a detector runtime into the process.
   //
-  // Reported honestly: a configured folder holding nothing usable says so,
-  // rather than leaving the previous count on screen. A bundled name whose
-  // bytes do not match is REFUSED by the server and simply will not appear,
-  // which is why the count can be lower than the file count.
+  // A bundled name whose bytes do not match is REFUSED by the server and
+  // simply will not appear, which is why the count can be lower than the
+  // file count.
   async function refreshDetectors() {
     const summary = document.getElementById("modelRootDetectorSummary");
     if (!summary) return;
@@ -472,14 +633,13 @@
     const count = Number(document_.count) || 0;
     const verified = Number(document_.verified_count) || 0;
     if (!count) {
-      summary.textContent = state.roots.adetailer && state.roots.adetailer.length
-        ? "No usable detectors in that folder."
-        : "";
+      summary.textContent = "";
       return;
     }
     const names = (document_.detectors || []).map((d) => d.name).join(", ");
-    summary.textContent =
-      `${count} detector${count === 1 ? "" : "s"} (${verified} verified): ${names}`;
+    summary.textContent = t("settings.modelFolders.detectors",
+      "Auto Detail detectors: {count} ({verified} shipped with Studio): {names}",
+      { count: count, verified: verified, names: names });
   }
 
   window.StudioDirPicker = Object.freeze({
@@ -487,25 +647,29 @@
     choose: choose,
     save: save,
     refresh: refreshSettings,
-    addRoot: addRoot,
-    roots: () => JSON.parse(JSON.stringify(state.roots)),
+    addFolder: addFolder,
+    useStudioFolder: useStudioFolder,
+    render: renderRows,
+    library: () => state.library.map((folder) => ({ ...folder })),
   });
 
   function mount() {
-    // Browse is NOT bound here. Both files bound it once, so one click opened
-    // this overlay twice over; app.js now owns it and opens the system's
-    // folder dialog, reaching this overlay through `choose()` only when the
-    // server has no desktop.
-    ROLES.forEach((role) => {
-      const input = document.getElementById("modelRoot" + ROLE_SUFFIX[role]);
-      const add = document.getElementById("modelRootAdd" + ROLE_SUFFIX[role]);
-      if (add && input) {
-        add.addEventListener("click", () => {
-          addRoot(role, input.value);
-          input.value = "";
-        });
-      }
-    });
+    // Browse is NOT bound here: app.js owns it and opens the system's folder
+    // dialog, reaching this overlay through `choose()` only when the server
+    // has no desktop.
+    const input = document.getElementById("modelLibraryInput");
+    const add = document.getElementById("modelLibraryAdd");
+    if (add && input) {
+      add.addEventListener("click", () => {
+        addFolder(input.value);
+        input.value = "";
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        addFolder(input.value);
+        input.value = "";
+      });
+    }
     refreshSettings().catch(() => {});
     refreshDetectors().catch(() => {});
   }

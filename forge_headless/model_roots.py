@@ -23,6 +23,7 @@ from typing import Any
 
 from .catalogue import MODEL_ROLES, CatalogueSnapshot, ModelCatalogue
 from .contracts import HeadlessError, ModelCandidate
+from .model_library import KindCache, LibraryFolder, unrecognized_files
 from .remote_roots import ROOT_UNREACHABLE
 
 #: Config key for the owner's "Allow network model folders". Written by the
@@ -223,9 +224,22 @@ class ModelRootRegistry:
         *,
         workspace_root: os.PathLike[str] | str,
         allow_network: bool = False,
+        kind_cache: KindCache | None = None,
     ) -> None:
         self._workspace = Path(workspace_root)
         self._lock = RLock()
+        #: ON1b. The owner's library folders, and what each file in them is.
+        #: A library folder is served by one catalogue per role (see
+        #: `model_library`); those join `_catalogues` after the role folders,
+        #: so every read of a role sees them, while `_dedicated` keeps the
+        #: role folders alone for the per-ordinal status.
+        self._kinds = kind_cache if kind_cache is not None else KindCache()
+        self._library: tuple[LibraryFolder, ...] = ()
+        self._library_served: dict[int, dict[str, ModelCatalogue]] = {}
+        self._library_refusals: dict[int, str] = {}
+        #: Library ordinals inside (or the same as) an earlier library folder.
+        self._library_covered: dict[int, int] = {}
+        self._dedicated: dict[str, tuple[ModelCatalogue, ...]] = {}
         #: The owner's "Allow network model folders". Changed only together
         #: with a configuration that validated under it (`configure`).
         self._allow_network = bool(allow_network)
@@ -270,6 +284,8 @@ class ModelRootRegistry:
             from . import embedding_roots
 
             embedding_roots.set_roots(self._engine_roots("embedding"))
+            # ON1b: library embeddings as files, never their folder.
+            embedding_roots.set_files(self.library_files("embedding"))
         except Exception:  # noqa: BLE001 - a model root is not worth a crash
             pass
 
@@ -288,9 +304,19 @@ class ModelRootRegistry:
             from . import neo_registries, upscaler_roots
 
             wanted = tuple(self._engine_roots("upscaler"))
-            if wanted != upscaler_roots.roots():
+            files = self.library_files("upscaler")
+            if wanted != upscaler_roots.roots() or files != upscaler_roots.files():
                 upscaler_roots.set_roots(wanted)
+                upscaler_roots.set_files(files)
                 neo_registries.rescan_upscalers()
+        except Exception:  # noqa: BLE001 - a model root is not worth a crash
+            pass
+
+        # ON1b: library LoRAs as files (`lora_bridge` imports no Neo here).
+        try:
+            from . import lora_bridge
+
+            lora_bridge.set_library_files(self.library_files("lora"))
         except Exception:  # noqa: BLE001 - a model root is not worth a crash
             pass
 
@@ -336,6 +362,7 @@ class ModelRootRegistry:
         self,
         roots: dict[str, tuple[str, ...]],
         *,
+        library: tuple[LibraryFolder, ...] | None = None,
         allow_network: bool | None = None,
     ) -> dict[str, RoleStatus]:
         """Replace every role at once. All-or-nothing.
@@ -352,22 +379,43 @@ class ModelRootRegistry:
         ``allow_network`` changes the opt-in in the same transaction, so a
         refused save cannot leave the switch on without the folders it was
         turned on for. None keeps the current value.
+
+        ``library`` (ON1b) is part of the same transaction; None keeps the
+        current library folders.
         """
         allow = self.allow_network if allow_network is None else bool(allow_network)
+        folders = self.configured_library() if library is None else tuple(library)
         built, refused = self._build(roots, tolerant=False, allow_network=allow)
+        shelf = self._build_library(folders, built, tolerant=False, allow_network=allow)
 
         with self._lock:
-            self._catalogues = built
-            self._configured = {
-                r: _role_entries(r, v) for r, v in roots.items()
-            }
-            self._refusals = refused
+            self._publish(roots, built, refused, folders, shelf)
             self._allow_network = allow
         self._project_lora_roots()
         return self.describe()
 
+    def _publish(self, roots, built, refused, folders, shelf) -> None:  # type: ignore[no-untyped-def]
+        served, library_refused, covered = shelf
+        self._dedicated = built
+        merged: dict[str, tuple[ModelCatalogue, ...]] = {}
+        for role in MODEL_ROLES:
+            extra = tuple(by_role[role] for _, by_role in sorted(served.items()) if role in by_role)
+            together = tuple(built.get(role, ())) + extra
+            if together:
+                merged[role] = together
+        self._catalogues = merged
+        self._configured = {r: _role_entries(r, v) for r, v in roots.items()}
+        self._refusals = refused
+        self._library = tuple(folders)
+        self._library_served = served
+        self._library_refusals = library_refused
+        self._library_covered = covered
+        self._kinds.save()
+
     def configure_tolerantly(
-        self, roots: dict[str, tuple[str, ...]]
+        self,
+        roots: dict[str, tuple[str, ...]],
+        library: tuple[LibraryFolder, ...] | None = None,
     ) -> dict[str, RoleStatus]:
         """Apply what works and record why the rest did not.
 
@@ -385,13 +433,13 @@ class ModelRootRegistry:
         built, refused = self._build(
             roots, tolerant=True, allow_network=self.allow_network
         )
+        folders = self.configured_library() if library is None else tuple(library)
+        shelf = self._build_library(
+            folders, built, tolerant=True, allow_network=self.allow_network
+        )
 
         with self._lock:
-            self._catalogues = built
-            self._configured = {
-                r: _role_entries(r, v) for r, v in roots.items()
-            }
-            self._refusals = refused
+            self._publish(roots, built, refused, folders, shelf)
         self._project_lora_roots()
         return self.describe()
 
@@ -409,7 +457,7 @@ class ModelRootRegistry:
                 code == ROOT_UNREACHABLE
                 for codes in self._refusals.values()
                 for code in codes.values()
-            )
+            ) or ROOT_UNREACHABLE in self._library_refusals.values()
             configured = {r: tuple(v) for r, v in self._configured.items()}
             served = [c for cs in self._catalogues.values() for c in cs]
         for catalogue in served:
@@ -487,6 +535,55 @@ class ModelRootRegistry:
                 built[role] = tuple(catalogues)
         return built, refused
 
+    def _build_library(self, folders, dedicated, *, tolerant: bool, allow_network: bool):  # type: ignore[no-untyped-def]
+        """One catalogue per role for every library folder. Publishes nothing.
+
+        Returns ``(served, refused, covered)``: ordinal -> role -> catalogue,
+        ordinal -> refusal code, and ordinal -> the earlier ordinal whose
+        folder already contains it. A folder inside another library folder
+        would list every file twice under two ids, so it is served by the
+        outer one; a role folder that IS a library folder keeps its role
+        catalogue and the library adds nothing for that role.
+        """
+
+        served: dict[int, dict[str, ModelCatalogue]] = {}
+        refused: dict[int, str] = {}
+        covered: dict[int, int] = {}
+        outer_roots: dict[int, Path] = {}
+        for ordinal, folder in enumerate(folders):
+            by_role: dict[str, ModelCatalogue] = {}
+            try:
+                for role in MODEL_ROLES:
+                    catalogue = ModelCatalogue(
+                        folder.path,
+                        workspace_root=self._workspace,
+                        role=role,
+                        allow_external=True,
+                        recursive=True,
+                        allow_network=allow_network,
+                        sorter=self._kinds,
+                        hint=folder.hint,
+                    )
+                    root = Path(catalogue.root_key)
+                    outer = next((o for o, r in outer_roots.items() if _inside(root, r)), None)
+                    if outer is not None:
+                        covered[ordinal] = outer
+                        break
+                    if any(c.root_key == catalogue.root_key for c in dedicated.get(role, ())):
+                        continue
+                    catalogue.refresh()
+                    by_role[role] = catalogue
+            except HeadlessError as error:
+                if not tolerant and error.code != ROOT_UNREACHABLE:
+                    raise
+                refused[ordinal] = error.code
+                continue
+            if ordinal in covered:
+                continue
+            outer_roots[ordinal] = root
+            served[ordinal] = by_role
+        return served, refused, covered
+
     # -- reads ------------------------------------------------------------
 
     def describe(self) -> dict[str, RoleStatus]:
@@ -494,10 +591,13 @@ class ModelRootRegistry:
             return {role: self._describe_role(role) for role in MODEL_ROLES}
 
     def _describe_role(self, role: str) -> RoleStatus:
-        catalogues = self._catalogues.get(role, ())
+        catalogues = self._dedicated.get(role, ())
         refusals = self._refusals.get(role, {})
         configured = self._configured.get(role, ())
+        library = self._library_status(role)
         if not configured:
+            if library is not None:
+                return library
             return RoleStatus(role=role, status=ROOT_STATUS_NOT_CONFIGURED)
 
         details: list[RootStatus] = []
@@ -569,6 +669,9 @@ class ModelRootRegistry:
         status = (
             ROOT_STATUS_READY if len(ready) == len(details) else ROOT_STATUS_PARTIAL
         )
+        if library is not None and library.status == ROOT_STATUS_READY:
+            total += library.entry_count
+            truncated = truncated or library.truncated
         return RoleStatus(
             role=role,
             status=status,
@@ -577,6 +680,186 @@ class ModelRootRegistry:
             reason_code=None if status == ROOT_STATUS_READY else first_reason,
             roots=tuple(details),
         )
+
+    def _library_status(self, role: str) -> RoleStatus | None:
+        """A role's share of the library, or None with no library folders.
+
+        Every role is CONFIGURED once the owner has a library: a role with
+        nothing in it is "ready, 0 found", which is what an empty state needs
+        to say ("none found", not "not set").
+        """
+
+        if not self._library:
+            return None
+        if not self._library_served and self._library_refusals:
+            offline = all(c == ROOT_UNREACHABLE for c in self._library_refusals.values())
+            return RoleStatus(
+                role=role,
+                status=ROOT_STATUS_UNREACHABLE if offline else ROOT_STATUS_REFUSED,
+                reason_code=next(iter(self._library_refusals.values())),
+            )
+        total = 0
+        truncated = False
+        for by_role in self._library_served.values():
+            catalogue = by_role.get(role)
+            snapshot = catalogue.snapshot() if catalogue is not None else None
+            if snapshot is not None:
+                total += len(snapshot.entries)
+                truncated = truncated or bool(snapshot.truncated)
+        return RoleStatus(role=role, status=ROOT_STATUS_READY, entry_count=total, truncated=truncated)
+
+    # -- the library (ON1b) -------------------------------------------------
+
+    def configured_library(self) -> tuple[LibraryFolder, ...]:
+        """The library folders as configured, in order. Settings page only."""
+
+        with self._lock:
+            return self._library
+
+    def describe_library(self) -> list[dict[str, object]]:
+        """Per folder: status and how many of each kind. No paths -- the
+        Settings page pairs these with `configured_library` by ordinal."""
+
+        with self._lock:
+            folders = self._library
+            served = dict(self._library_served)
+            refused = dict(self._library_refusals)
+            covered = dict(self._library_covered)
+        described: list[dict[str, object]] = []
+        for ordinal in range(len(folders)):
+            row: dict[str, object] = {"ordinal": ordinal}
+            if ordinal in refused:
+                code = refused[ordinal]
+                row.update(
+                    status=ROOT_STATUS_UNREACHABLE if code == ROOT_UNREACHABLE else ROOT_STATUS_REFUSED,
+                    reason_code=code,
+                )
+            elif ordinal in covered:
+                row.update(status=ROOT_STATUS_READY, inside=covered[ordinal], counts={})
+            else:
+                counts: dict[str, int] = {}
+                truncated = False
+                reachable = True
+                for role, catalogue in served.get(ordinal, {}).items():
+                    snapshot = catalogue.snapshot()
+                    counts[role] = len(snapshot.entries) if snapshot is not None else 0
+                    truncated = truncated or bool(snapshot is not None and snapshot.truncated)
+                    reachable = reachable and catalogue.reachable
+                row.update(
+                    status=ROOT_STATUS_READY if reachable else ROOT_STATUS_UNREACHABLE,
+                    counts={r: n for r, n in counts.items() if n},
+                    truncated=truncated,
+                )
+                # How many files no kind took, and how many the owner set by
+                # hand: the page offers the Unrecognized panel only when one
+                # of them is there (a link on every folder read as "this
+                # folder was not recognised"). Local folders only: the walk
+                # reads what the kind cache already knows, but on a share it
+                # would be one more walk per Settings read.
+                catalogue = next(iter(served.get(ordinal, {}).values()), None)
+                if catalogue is not None and reachable and not catalogue.network:
+                    root = Path(catalogue.root_key)
+                    row["unrecognized"] = len(unrecognized_files(root, self._kinds, hint=folders[ordinal].hint))
+                    row["corrected"] = self._kinds.corrected_under(root)
+            described.append(row)
+        self._kinds.save()
+        return described
+
+    def library_files(self, role: str) -> tuple[str, ...]:
+        """Every library file of a role, as an absolute path, for the engine
+        kinds that are handed FILES (LoRA, embeddings, upscalers, detectors).
+
+        A library folder is never handed to the engine as a folder: Neo's
+        LoRA scan registers every `.safetensors` it finds, and its embedding
+        loader loads every file in full -- a checkpoint included. A folder
+        not answering is left out, as `_engine_roots` leaves it out.
+        """
+
+        with self._lock:
+            catalogues = [by_role[role] for _, by_role in sorted(self._library_served.items())
+                          if role in by_role]
+        files: list[str] = []
+        for catalogue in catalogues:
+            if not catalogue.reachable:
+                continue
+            snapshot = catalogue.snapshot()
+            root = Path(catalogue.root_key)
+            for entry in snapshot.entries if snapshot is not None else ():
+                files.append(str(root.joinpath(*entry.relative_location.split("/"))))
+        return tuple(files)
+
+    def set_corrections(self, corrections: dict[str, str]) -> None:
+        """The owner's corrections (path -> kind), then every library folder
+        re-sorted. A rescan reads nothing new: the cache knows every file."""
+
+        self._kinds.set_overrides(corrections)
+        with self._lock:
+            served = [c for by_role in self._library_served.values() for c in by_role.values()]
+        for catalogue in served:
+            try:
+                catalogue.refresh()
+            except HeadlessError:
+                continue
+        self._project_lora_roots()
+
+    def library_root(self, ordinal: int) -> Path:
+        """Library folder `ordinal`, resolved, or refused when it is not
+        being served (refused, offline at startup, or inside another)."""
+
+        with self._lock:
+            by_role = self._library_served.get(ordinal)
+        if not by_role:
+            raise HeadlessError("HEADLESS_MODEL_LIBRARY_FOLDER_UNKNOWN", "That model folder is not in use.")
+        return Path(next(iter(by_role.values())).root_key)
+
+    def library_roots(self, role: str) -> tuple[str, ...]:
+        """The library folders that hold at least one file of a role, in
+        order -- where the owner's LoRAs are, for Open Folder and for finding
+        the folder beside a LoRA. Never handed to the engine."""
+
+        with self._lock:
+            catalogues = [by_role[role] for _, by_role in sorted(self._library_served.items())
+                          if role in by_role]
+        roots = []
+        for catalogue in catalogues:
+            snapshot = catalogue.snapshot()
+            if snapshot is not None and snapshot.entries:
+                roots.append(catalogue.root_key)
+        return tuple(roots)
+
+    def library_file_path(self, ordinal: int, relative: str) -> str:
+        """The absolute path of a file named relative to library folder
+        `ordinal`, refused unless it stays inside that folder."""
+
+        root = self.library_root(ordinal)
+        parts = [part for part in str(relative).replace("\\", "/").split("/") if part]
+        if not parts or any(part in (".", "..") or ":" in part for part in parts):
+            raise HeadlessError("HEADLESS_MODEL_LIBRARY_FILE_MALFORMED", "That file name is not usable.")
+        path = root.joinpath(*parts)
+        if not _inside(path.resolve(), root):
+            raise HeadlessError("HEADLESS_MODEL_LIBRARY_FILE_MALFORMED", "That file name is not usable.")
+        return str(path)
+
+    def unrecognized(self, ordinal: int) -> list[dict[str, object]]:
+        """The model files in one library folder that no role took."""
+
+        with self._lock:
+            by_role = self._library_served.get(ordinal)
+            folder = self._library[ordinal] if 0 <= ordinal < len(self._library) else None
+        if not by_role or folder is None:
+            return []
+        catalogue = next(iter(by_role.values()))
+        if not catalogue.reachable:
+            return []
+        root = Path(catalogue.root_key)
+        try:
+            return catalogue.touch(
+                None, lambda: unrecognized_files(root, self._kinds, hint=folder.hint)
+            )
+        except HeadlessError:
+            return []
+        finally:
+            self._kinds.save()
 
     def configured_roots(self) -> dict[str, tuple[str, ...]]:
         """The paths as configured, in order. For the Settings page only."""
@@ -816,6 +1099,16 @@ class ModelRootRegistry:
             _, source = self.resolve(role, requested)
             references[role] = str(source.resolved)
         return references
+
+
+def _inside(child: Path, parent: Path) -> bool:
+    """Whether ``child`` is ``parent`` or below it (both resolved roots)."""
+
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def write_config_atomically(path: Path, document: dict[str, object]) -> None:

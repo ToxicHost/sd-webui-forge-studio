@@ -330,51 +330,45 @@ def clear_conditioning_caches() -> list[str]:
     that job starts exactly as it would have: with nothing cached.
     """
 
-    cleared: list[str] = []
-    try:
-        from modules import processing as _processing
-    except BaseException:  # noqa: BLE001 - see `_clear_class_level_state`
-        return cleared
-    for class_name in ("StableDiffusionProcessing", "StableDiffusionProcessingTxt2Img",
-                       "StableDiffusionProcessingImg2Img"):
-        klass = getattr(_processing, class_name, None)
-        if klass is None:
-            continue
-        for name in _CLASS_LIST_CACHES:
-            if name in vars(klass):
-                try:
-                    setattr(klass, name, [None] * len(getattr(klass, name)))
-                    cleared.append(f"{class_name}.{name}")
-                except Exception:  # noqa: BLE001
-                    pass
-    return cleared
+    return _reset_class_state(caches=True, accumulators=False) or []
 
 
 def _clear_class_level_state(report: ReleaseReport, *, keep_conditioning: bool = False) -> list[str]:
     """Reset the class attributes that outlive every instance."""
 
-    cleared: list[str] = []
+    cleared = _reset_class_state(caches=not keep_conditioning, accumulators=True)
+    if cleared is None:
+        report.notes.append("modules.processing unavailable; class caches untouched")
+        return []
+    return cleared
+
+
+def _reset_class_state(*, caches: bool, accumulators: bool) -> list[str] | None:
+    """The prompt caches and/or the sampling accumulators on Neo's three
+    processing classes, reset. None when `modules.processing` cannot be
+    imported. NEVER RAISES."""
+
     try:
         from modules import processing as _processing
     except BaseException:  # noqa: BLE001 - argparse can raise SystemExit here,
         # which is not an Exception. Cleanup must never raise, whatever the
         # importing context.
-        report.notes.append("modules.processing unavailable; class caches untouched")
-        return cleared
+        return None
 
+    cleared: list[str] = []
     for class_name in ("StableDiffusionProcessing", "StableDiffusionProcessingTxt2Img",
                        "StableDiffusionProcessingImg2Img"):
         klass = getattr(_processing, class_name, None)
         if klass is None:
             continue
-        for name in () if keep_conditioning else _CLASS_LIST_CACHES:
+        for name in _CLASS_LIST_CACHES if caches else ():
             if name in vars(klass):
                 try:
                     setattr(klass, name, [None] * len(getattr(klass, name)))
                     cleared.append(f"{class_name}.{name}")
                 except Exception:  # noqa: BLE001
                     pass
-        for name in _CLASS_LIST_ACCUMULATORS:
+        for name in _CLASS_LIST_ACCUMULATORS if accumulators else ():
             if name in vars(klass):
                 try:
                     getattr(klass, name).clear()

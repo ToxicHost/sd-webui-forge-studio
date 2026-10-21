@@ -878,9 +878,11 @@ def _ad_prompt(slot_prompt: str, main: str, region: int) -> str:
 
 
 def _is_live(request: Any) -> bool:
-    """LV1. A Live Painting frame: `output.purpose == "live"`. Raw img2img,
-    no file, no heatmap, no watermark (the Extension's `studio_live`)."""
-    return str(getattr(getattr(request, "output", None), "purpose", "") or "") == "live"
+    """LV1. A Live Painting frame (`generation_request.is_live_frame`): raw
+    img2img, no file, no heatmap, no watermark (the Extension's `studio_live`)."""
+    from .generation_request import is_live_frame
+
+    return is_live_frame(request)
 
 
 def _reuse_live_conditioning(processing: Any) -> None:
@@ -1399,6 +1401,9 @@ class StudioLiveGenerationPort:
         # a second time as a reference; Generate keeps that.
         if _is_live(request):
             overrides["klein_no_reference"] = True
+            # And the kept prompt encoding survives `processing.close()`, which
+            # clears Neo's cache itself when this option is off (code review).
+            overrides["persistent_cond_cache"] = True
 
         with job_scope(**overrides):
             outcome = self._generate_in_scope(request, progress)
@@ -2559,6 +2564,26 @@ class StudioLiveGenerationPort:
         if not progress.terminal:  # type: ignore[attr-defined]
             progress.advance_to(JobState.PUBLISHING)  # type: ignore[attr-defined]
 
+        seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))
+        if _is_live(request):
+            # LV1. A Live frame is shown and maybe applied to a layer, never
+            # saved: no file, no metadata, no watermark (the Extension's
+            # `studio_live` encodes the frame for its socket the same way).
+            # Before the format and the infotext, which a frame never uses.
+            frame = images[0]
+            width, height = frame.size
+            progress.mark_completed()  # type: ignore[attr-defined]
+            return GenerationOutcome(
+                job_id=request.request_id,  # type: ignore[attr-defined]
+                request_id=request.request_id,  # type: ignore[attr-defined]
+                result_relative_location="",
+                media_type="image/png",
+                width=int(width),
+                height=int(height),
+                seed=seed,
+                image_data_url=_png_data_url(frame),
+            )
+
         # The owner's chosen format, resolved ONCE so the name, the encoder
         # and the reported media type cannot disagree with each other.
         output = getattr(request, "output", None)
@@ -2574,25 +2599,6 @@ class StudioLiveGenerationPort:
         # into the file AND the Gallery, which both take this string.
         infotext = with_prompt_templates(infotext, request)
         infotext = with_time_taken(infotext, getattr(progress, "elapsed_seconds", None))
-        seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))
-
-        if _is_live(request):
-            # LV1. A Live frame is shown and maybe applied to a layer, never
-            # saved: no file, no metadata, no watermark (the Extension's
-            # `studio_live` encodes the frame for its socket the same way).
-            frame = images[0]
-            width, height = frame.size
-            progress.mark_completed()  # type: ignore[attr-defined]
-            return GenerationOutcome(
-                job_id=request.request_id,  # type: ignore[attr-defined]
-                request_id=request.request_id,  # type: ignore[attr-defined]
-                result_relative_location="",
-                media_type="image/png",
-                width=int(width),
-                height=int(height),
-                seed=seed,
-                image_data_url=_png_data_url(frame),
-            )
 
         image = _stamped(images[0], request)
 

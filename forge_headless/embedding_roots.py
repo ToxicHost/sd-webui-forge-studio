@@ -29,6 +29,11 @@ The engine builder then (Neo imported):
 
 Families without a CLIP encoder (Anima, Qwen, Lumina...) have no
 `EmbeddingDatabase`; nothing here touches them.
+
+ON1b. Embeddings from the owner's library folders arrive as FILES
+(`set_files`), never as a folder: Neo's `load_from_dir` loads every file it
+walks in full -- a checkpoint in a mixed folder included. Each is loaded with
+Neo's own `load_from_file`, after the folders, and reloaded when one changes.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ import re
 from typing import Any
 
 _ROOTS: tuple[str, ...] = ()
+_FILES: tuple[str, ...] = ()
 
 #: The CLIP text engines a diffusion engine may carry (`backend/
 #: diffusion_engine/*.py`: sd15 `text_processing_engine`, sdxl / flux / mugen
@@ -55,6 +61,40 @@ def set_roots(roots: Any) -> None:
 
 def roots() -> tuple[str, ...]:
     return _ROOTS
+
+
+def set_files(files: Any) -> None:
+    """The library's embedding files, in order (from `model_roots`)."""
+
+    global _FILES
+    _FILES = tuple(str(f) for f in (files or ()) if str(f))
+
+
+def files() -> tuple[str, ...]:
+    return _FILES
+
+
+def _files_signature() -> tuple:
+    signature = []
+    for path in _FILES:
+        try:
+            signature.append((path, os.stat(path).st_mtime_ns))
+        except OSError:
+            continue
+    return tuple(signature)
+
+
+def _load_files(database: Any) -> None:
+    """Neo's `load_from_dir` loop body, per library file."""
+
+    for path in _FILES:
+        try:
+            if os.stat(path).st_size == 0:
+                continue
+            database.load_from_file(path, os.path.basename(path))
+        except Exception:  # noqa: BLE001 - as Neo: one bad file is skipped
+            continue
+    database._studio_files = _files_signature()
 
 
 def apply_before_load() -> None:
@@ -76,7 +116,7 @@ def extend_engine(engine: Any) -> int:
     """Add the further roots to every CLIP text engine; returns how many
     databases were extended."""
 
-    if len(_ROOTS) < 2:
+    if len(_ROOTS) < 2 and not _FILES:
         return 0
     extended = 0
     for database in _databases(engine):
@@ -84,6 +124,7 @@ def extend_engine(engine: Any) -> int:
             if root not in database.embedding_dirs:
                 database.add_embedding_dir(root)
         database.load_textual_inversion_embeddings()
+        _load_files(database)
         extended += 1
     return extended
 
@@ -97,8 +138,11 @@ def refresh(engine: Any) -> int:
             changed = any(d.has_changed() for d in database.embedding_dirs.values())
         except OSError:
             changed = False
+        if getattr(database, "_studio_files", ()) != _files_signature():
+            changed = True
         if changed:
             database.load_textual_inversion_embeddings()
+            _load_files(database)
             reloaded += 1
     return reloaded
 
@@ -123,6 +167,11 @@ def list_embeddings() -> list[dict]:
                 stem, ext = os.path.splitext(filename)
                 if ext.lower() in _LISTED:
                     seen[stem] = {"name": stem, "file": filename}
+    for path in _FILES:
+        filename = os.path.basename(path)
+        stem, ext = os.path.splitext(filename)
+        if ext.lower() in _LISTED:
+            seen[stem] = {"name": stem, "file": filename}
     return sorted(seen.values(), key=lambda e: _natural(e["name"]))
 
 
@@ -145,5 +194,5 @@ def list_catalogued(entries: Any) -> list[dict]:
     return sorted(seen.values(), key=lambda e: _natural(e["name"]))
 
 
-__all__ = ("set_roots", "roots", "apply_before_load", "extend_engine", "refresh",
-           "list_embeddings", "list_catalogued")
+__all__ = ("set_roots", "roots", "set_files", "files", "apply_before_load", "extend_engine",
+           "refresh", "list_embeddings", "list_catalogued")

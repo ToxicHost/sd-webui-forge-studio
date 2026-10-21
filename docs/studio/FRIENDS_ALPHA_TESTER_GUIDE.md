@@ -5,7 +5,8 @@ candidate. Read [feature status](TESTER_FEATURE_STATUS.md) before planning work.
 
 ## First checks
 
-Choose model folders in Settings, select a checkpoint and any required text
+Add your model folders (the welcome screen asks on a fresh install; later in
+Settings > Model folders), select a checkpoint and any required text
 encoder/VAE, and generate one image. Then try a second job with the same model,
 Canvas painting and masks, queue cancellation, browser refresh and an app restart.
 Try optional Hires and Auto Detail separately after basic generation works.

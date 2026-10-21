@@ -292,7 +292,7 @@ _register("model_setup", {
         },
         {
           id: "sm_folders",
-          text: _t("showme.models.folders.text", "<em>Settings → General → Model folders.</em> One folder per kind of file: <strong>Checkpoint</strong>, <strong>Text encoder</strong>, <strong>VAE</strong>, plus Auto Detail detectors, LoRAs and embeddings.\n\nType a path or press <em>Browse…</em> to open the folder window. Studio lists only the files directly inside each folder, not subfolders."),
+          text: _t("showme.models.library.text", "<em>Settings → General → Model folders.</em> Add the folders where your models are — one big folder or several, however you keep them. Studio looks through every subfolder and sorts each file by what it is.\n\nNothing in your folders is moved or changed."),
           beforeShow: function () {
             _click('button[data-app="settings"]');
             return new Promise(function (r) {
@@ -303,9 +303,9 @@ _register("model_setup", {
           btn: _t("showme.models.folders.btn", "Next")
         },
         {
-          id: "sm_save",
-          text: _t("showme.models.save.text", "Press <em>Save folders</em>. Every folder is checked together; if one can’t be used, nothing changes and your current folders keep working.\n\nA folder on another computer needs <em>Allow network model folders</em> switched on first."),
-          spotlight: "#modelFoldersSave", advance: "click", btn: _t("showme.models.save.btn", "Next")
+          id: "sm_add",
+          text: _t("showme.models.add.text", "Press <em>Browse…</em> and pick a folder, or type its path and press <em>Add folder</em>. It is saved at once, and its row shows what Studio found there.\n\nA folder on another computer needs <em>Allow network model folders</em> switched on first."),
+          spotlight: "#modelLibraryBrowse", advance: "click", btn: _t("showme.models.save.btn", "Next")
         },
         {
           id: "sm_pick",

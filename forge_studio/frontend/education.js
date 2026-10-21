@@ -2,17 +2,20 @@
  * Forge Studio — Education System
  * by ToxicHost & Moritz
  *
- * Guided walkthrough + first-run experience.
- * Zero VRAM, zero network, zero performance impact.
+ * The first run, the orientation tour, the first-picture checklist and the
+ * first-encounter tips. Zero VRAM, zero network beyond Studio's own routes.
  *
- * Uses StudioTour engine for walkthrough rendering and navigation.
- * Education defines step content, branching logic, and path selection.
- *
- * Paths:
- *   - Beginner: Progressive reveal walkthrough. Makes first image, then
- *     reveals controls in groups. Inpaint branch if Result->Canvas clicked.
- *   - Experienced: Spatial orientation tour. Full UI visible from start.
- *     Covers what's different about Studio vs other AI/art tools.
+ * Onboarding redo (ON2-ON4, owner decisions 2026-10-21):
+ *   - ONE first-run screen. It asks about the owner's MODELS, not their skill:
+ *     "I already have models" adds folders right there (the same list as
+ *     Settings > Model folders, counts as each one is scanned); "I'm starting
+ *     fresh" explains where models come from -- guidance, never a download.
+ *   - Then a choice, never a requirement: "Show me around" (the orientation
+ *     tour plus the checklist) or "Skip". Both stay in Help and Settings.
+ *   - The first-picture checklist ticks itself from what the owner actually
+ *     does. It replaces the beginner walkthrough, which hid the UI until the
+ *     tour revealed it.
+ *   - Existing installs never see the first run.
  */
 "use strict";
 
@@ -24,6 +27,9 @@ var Education = (function () {
   }
 
   var STORAGE_PREFIX = "studio-edu-";
+  // The first-run card's own key (app.js used it before ON2); a browser that
+  // already has it is an existing install.
+  var ONBOARD_KEY = "studio-onboarded";
   var _state = {
     tier: null, enabled: true, guidedStep: 0, guidedActive: false,
     generationCount: 0, flags: {}, dismissedHints: []
@@ -47,13 +53,15 @@ var Education = (function () {
     } catch (e) { return {}; }
   }
 
-  function _mirrorToPrefs(state) {
+  function _setPrefsEducation(patch) {
     try {
       if (!(window.Prefs && window.Prefs.set)) return;
-      var edu = Object.assign({}, _prefsEducation());
-      edu.state = state;
-      window.Prefs.set("education", edu);
+      window.Prefs.set("education", Object.assign({}, _prefsEducation(), patch));
     } catch (e) { /* the browser copy still holds it */ }
+  }
+
+  function _mirrorToPrefs(state) {
+    _setPrefsEducation({ state: state });
   }
 
   function _load() {
@@ -106,203 +114,42 @@ var Education = (function () {
   }
 
   // ========================================================================
-  // REVEAL CLASSES
+  // SHOW ME AROUND — ORIENTATION TOUR
   // ========================================================================
 
-  var ALL_REVEAL = [
-    "edu-show-output", "edu-show-sampling", "edu-show-canvas", "edu-show-seed",
-    "edu-show-tools", "edu-show-layers", "edu-show-model", "edu-show-chrome",
-    "edu-show-inpaint", "edu-show-hires", "edu-show-adetailer"
-  ];
-
-  // ========================================================================
-  // MODEL ACQUISITION BRANCH
-  // ========================================================================
-
-  function getModelBranch() {
-    return [
-      {
-        id: "need_model",
-        text: _t("education.tour.modelBranch.needModel.text", "Before we start, Studio needs an AI <em>model</em> \u2014 the brain that generates images \u2014 and it can\u2019t see one yet.\n\nIf you don\u2019t have one, here\u2019s a good starter:\n<a href=\"https://pixeldrain.com/u/5pv797g8\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--accent-bright);text-decoration:underline;\">Download ToxicHost\u2019s recommended model</a>\n\nSave it in a folder of your own. Then open <em>Settings \u2192 General \u2192 Model folders</em>, add that folder as the <em>Checkpoint folder</em> (use <em>Browse\u2026</em>) and press <em>Save folders</em>.\n\nThe <em>Setting Up Models</em> article in the Codex has the details."),
-        spotlight: null, reveal: ["edu-show-model"], advance: "click",
-        btn: _t("education.tour.modelBranch.needModel.btn", "I\u2019ve saved the folder")
-      },
-      {
-        id: "refresh_models",
-        text: _t("education.tour.modelBranch.refreshModels.text", "Now click the <em>refresh button</em> (\u21bb) next to the Model dropdown. Studio will rescan your folders without needing a restart.\n\nOnce your model appears in the dropdown, select it and we\u2019ll get started."),
-        beforeShow: function () {
-          var canvasTab = document.querySelector('button[data-app="studio"]');
-          if (canvasTab) canvasTab.click();
-          return new Promise(function (resolve) { setTimeout(resolve, 200); });
-        },
-        spotlight: "#refreshModelsBtn", reveal: ["edu-show-model"],
-        advance: function (next, nextBtn, tour) {
-          var poll = setInterval(function () {
-            if (window.State && window.State.models && window.State.models.length > 0) {
-              clearInterval(poll);
-              _setFlag("model_downloaded");
-              next();
-            }
-          }, 1000);
-          tour.addCleanup(function () { clearInterval(poll); });
-        },
-        btn: null
-      },
-    ];
-  }
-
-  // ========================================================================
-  // BEGINNER — CORE WALKTHROUGH
-  // ========================================================================
-
-  function getCoreSteps() {
-    return [
-      // ── Make your first image (4 steps) ──
-      {
-        id: "welcome",
-        text: _t("education.tour.core.welcome.text", "Welcome to <em>Forge Studio</em>.\n\nLet\u2019s make your first image. See the text box on the right? Describe something you\u2019d like to see \u2014 anything at all."),
-        spotlight: "#paramPrompt", reveal: [],
-        advance: { poll: function () { var p = document.getElementById("paramPrompt"); return p && p.value.trim().length > 0; } },
-        focusTarget: "#paramPrompt", btn: null
-      },
-      {
-        id: "hit_generate",
-        text: _t("education.tour.core.hitGenerate.text", "Now hit <em>Generate</em>."),
-        spotlight: "#genBtn", reveal: [],
-        advance: { event: "click", selector: "#genBtn" }, btn: null
-      },
-      {
-        id: "generating",
-        text: _t("education.tour.core.generating.text", "Working on it \u2014 watch the progress bar.\n\nIf nothing starts, Studio is telling you what\u2019s missing (usually a model: pick one in the <em>Model</em> box, then press <em>Generate</em> again)."),
-        spotlight: null, reveal: [],
-        advance: function (next, nextBtn, tour) {
-          // Generate can be refused (no model chosen yet), and then there is no
-          // picture to wait for. The button lets the tester move on rather
-          // than watching a progress bar that will never move.
-          if (nextBtn) nextBtn.addEventListener("click", function () { next(); });
-          var poll = setInterval(function () {
-            if (window.State && !window.State.generating && window.State.sessionEntries && window.State.sessionEntries.length > 0) {
-              clearInterval(poll);
-              _setFlag("has_generated_first_image");
-              next();
-            }
-          }, 500);
-          tour.addCleanup(function () { clearInterval(poll); });
-        },
-        btn: _t("education.tour.core.generating.btn", "Skip this step")
-      },
-      {
-        id: "first_image",
-        text: _t("education.tour.core.firstImage.text", "That\u2019s yours. You just made that. No one else has this exact image.\n\nYou can put it on your canvas to paint over it \u2014 try clicking <em>Result \u2192 Canvas</em>. Or hit <em>Next</em> to see what else is here."),
-        spotlight: "#outputSection", reveal: ["edu-show-output"],
-        advance: function (next, nextBtn, tour) {
-          if (nextBtn) nextBtn.addEventListener("click", function () { next(); });
-          var rtc = document.getElementById("outputToCanvas");
-          if (rtc) {
-            var h = function () {
-              _setFlag("used_result_to_canvas");
-              for (var i = 0; i < tour.steps.length; i++) {
-                if (tour.steps[i].id === "first_image") {
-                  tour.spliceSteps(i, getInpaintBranch());
-                  break;
-                }
-              }
-              next();
-            };
-            rtc.addEventListener("click", h, { once: true });
-            tour.addCleanup(function () { rtc.removeEventListener("click", h); });
-          }
-        },
-        btn: _t("education.tour.core.firstImage.btn", "Next")
-      },
-
-      // ── Orient to the workspace (3 steps) ──
-      {
-        id: "reveal_settings",
-        text: _t("education.tour.core.revealSettings.text", "This panel is where you shape your results. A few things worth knowing right now:\n\n\u2022 <em>Model</em> \u2014 the AI brain. Different models, completely different styles.\n\u2022 <em>Denoise</em> \u2014 how much the AI changes existing canvas content. Your most important dial.\n\nEverything else \u2014 CFG, Steps, Seed, Sampler \u2014 you\u2019ll learn by experimenting. The <em>Codex</em> tab explains each one when you\u2019re ready."),
-        spotlight: "#panelSampling", reveal: ["edu-show-model", "edu-show-sampling", "edu-show-canvas", "edu-show-seed", "edu-show-hires", "edu-show-adetailer"], advance: "click",
-        btn: _t("education.tour.core.revealSettings.btn", "Next")
-      },
-      {
-        id: "reveal_workspace",
-        text: _t("education.tour.core.revealWorkspace.text", "<em>Toolstrip</em> (left) \u2014 19 painting tools. Start with <span class=\"cx-kbd\">B</span> for brush and <span class=\"cx-kbd\">E</span> for eraser.\n\n<em>Layers</em> (right panel) \u2014 generated images land on the bottom layer, your painting goes above. Regenerating never destroys your painted edits.\n\nThis is a real canvas. Paint, generate, paint more, generate again."),
-        spotlight: "#toolstrip", reveal: ["edu-show-tools", "edu-show-layers"], advance: "click",
-        btn: _t("education.tour.core.revealWorkspace.btn", "Next")
-      },
-      {
-        id: "complete",
-        text: _t("education.tour.core.complete.text", "That\u2019s the core: <em>describe, generate, paint, iterate</em>.\n\nThe rest of the UI is now open. Check the <em>Codex</em> tab anytime \u2014 it has reference docs for every tool, setting, and feature.\n\nEnjoy making things."),
-        spotlight: null, reveal: ["edu-show-chrome"], advance: "click",
-        btn: _t("education.tour.core.complete.btn", "Let\u2019s go")
-      },
-    ];
-  }
-
-  // ========================================================================
-  // BEGINNER — INPAINT BRANCH
-  // ========================================================================
-
-  function getInpaintBranch() {
-    return [
-      {
-        id: "branch_paint",
-        text: _t("education.tour.inpaint.paint.text", "Your image is on the canvas now \u2014 ready to work with.\n\nPick up the <em>brush</em> (<span class=\"cx-kbd\">B</span>) and paint something on top of it. Scribble, add a shape, change a color. Don\u2019t worry about being precise."),
-        spotlight: "#toolstrip", reveal: ["edu-show-tools"], advance: "click",
-        btn: _t("education.tour.inpaint.paint.btn", "I painted something"),
-        position: { bottom: "60px", left: "calc(50% - 190px)"}
-      },
-      {
-        id: "branch_regenerate",
-        text: _t("education.tour.inpaint.regenerate.text", "Now hit <em>Generate</em> again.\n\nThe AI sees your paint strokes and incorporates them. It reinterprets the whole canvas with your edits as input \u2014 not just pasting paint on top.\n\nThe <em>Denoise</em> slider controls how much it changes. Lower = keep more of what\u2019s there."),
-        spotlight: "#genBtn", reveal: ["edu-show-sampling"], advance: "click",
-        btn: _t("education.tour.inpaint.regenerate.btn", "Next")
-      },
-      {
-        id: "branch_masking",
-        text: _t("education.tour.inpaint.masking.text", "What if you only want to change <em>part</em> of the image?\n\nPress <span class=\"cx-kbd\">Q</span> to pick the <em>Inpaint Mask</em> tool. Your brush now paints a red overlay. The red tells the AI: \"only change this area.\"\n\nPaint the mask \u2192 write what should go there \u2192 Generate. Only the masked area changes. Press <span class=\"cx-kbd\">Q</span> again to go back to painting. You\u2019ll use this constantly."),
-        spotlight: '#toolstrip [data-tool="mask"]', reveal: [], advance: "click",
-        btn: _t("education.tour.inpaint.masking.btn", "Next")
-      },
-    ];
-  }
-
-  // ========================================================================
-  // EXPERIENCED — ORIENTATION TOUR
-  // ========================================================================
-
-  function getExperiencedSteps() {
+  function getTourSteps() {
     return [
       {
         id: "exp_layout",
-        text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools plus the Inpaint Mask). <em>Canvas</em> in the center \u2014 scroll to zoom, Space+drag to pan, right-click for the canvas menu. <em>Panel</em> on the right (Generate and Extensions tabs). <span class=\"cx-kbd\">\\</span> collapses it. <em>Settings</em> is its own tab at the top.\n\nContext bar above the canvas shows controls for the active tool."),
+        text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools plus the Inpaint Mask). <em>Canvas</em> in the center — scroll to zoom, Space+drag to pan, right-click for the canvas menu. <em>Panel</em> on the right (Generate and Extensions tabs). <span class=\"cx-kbd\">\\</span> collapses it. <em>Settings</em> is its own tab at the top.\n\nContext bar above the canvas shows controls for the active tool."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.layout.btn", "Next"),
         position: { bottom: "80px", left: "calc(50% - 190px)" }
       },
       {
         id: "exp_canvas_routing",
-        text: _t("education.tour.experienced.canvasRouting.text", "No separate txt2img/img2img tabs. Studio checks the canvas and routes automatically:\n\n\u2022 <strong>Blank canvas</strong> \u2192 txt2img\n\u2022 <strong>Content on canvas</strong> \u2192 img2img\n\u2022 <strong>Mask painted</strong> \u2192 inpainting\n\nThe pixels are the source of truth. Paint something, erase it all, generate \u2014 that\u2019s txt2img because the canvas is blank. No mode toggles."),
+        text: _t("education.tour.experienced.canvasRouting.text", "No separate txt2img/img2img tabs. Studio checks the canvas and routes automatically:\n\n• <strong>Blank canvas</strong> → txt2img\n• <strong>Content on canvas</strong> → img2img\n• <strong>Mask painted</strong> → inpainting\n\nThe pixels are the source of truth. Paint something, erase it all, generate — that’s txt2img because the canvas is blank. No mode toggles."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.canvasRouting.btn", "Next"),
         position: { bottom: "80px", left: "calc(50% - 190px)" }
       },
       {
         id: "exp_canvas_ux",
-        text: _t("education.tour.experienced.canvasUx.text", "A few things that work differently here:\n\n\u2022 Context bar values are <em>scrub labels</em> \u2014 drag horizontally to adjust, click to type a number.\n\u2022 Each tool <em>remembers its own settings</em> independently. Switch tools and back \u2014 settings preserved.\n\u2022 <span class=\"cx-kbd\">Shift+Drag</span> on canvas adjusts brush size (horizontal) and opacity (vertical).\n\u2022 <span class=\"cx-kbd\">Ctrl+Click</span> eyedrops from any tool without switching.\n\u2022 At 200%+ zoom, pixels render nearest-neighbor (crisp, not blurry)."),
+        text: _t("education.tour.experienced.canvasUx.text", "A few things that work differently here:\n\n• Context bar values are <em>scrub labels</em> — drag horizontally to adjust, click to type a number.\n• Each tool <em>remembers its own settings</em> independently. Switch tools and back — settings preserved.\n• <span class=\"cx-kbd\">Shift+Drag</span> on the canvas changes the brush size: drag right for bigger, left for smaller.\n• <span class=\"cx-kbd\">Ctrl+Click</span> eyedrops from any tool without switching.\n• Zoomed in, pixels show crisp, not blurry: from 100% with the GPU canvas preview, from 800% without it."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.canvasUx.btn", "Next"),
         position: { bottom: "80px", left: "calc(50% - 190px)" }
       },
       {
         id: "exp_mask_regions",
-        text: _t("education.tour.experienced.maskRegions.text", "The <em>Inpaint Mask</em> tool (<span class=\"cx-kbd\">Q</span>) paints a hard-edged generation mask. Beside it, the <em>Masks panel</em> (inside Layers) holds named masks \u2014 from a brush, a selection, tones, a colour or a prompt word \u2014 with their own opacity and hardness. The mask selected there is the one Generate inpaints with.\n\nThere are no separate txt2img/img2img/inpaint tabs: the canvas and the selected mask decide."),
+        text: _t("education.tour.experienced.maskRegions.text", "The <em>Inpaint Mask</em> tool (<span class=\"cx-kbd\">Q</span>) paints a hard-edged generation mask. Beside it, the <em>Masks panel</em> (inside Layers) holds named masks — from a brush, a selection, tones, a colour or a prompt word — with their own opacity and hardness. The mask selected there is the one Generate inpaints with.\n\nThere are no separate txt2img/img2img/inpaint tabs: the canvas and the selected mask decide."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.maskRegions.btn", "Next"),
         position: { bottom: "80px", left: "calc(50% - 190px)" }
       },
       {
         id: "exp_layers",
-        text: _t("education.tour.experienced.layers.text", "Real layer stack with blend modes, opacity, and reordering. Sending results to canvas creates a <em>new layer</em> \u2014 never overwrites your work.\n\nGeneration results go to a reusable \"Gen Result\" layer. Your painted edits on other layers are always safe. Export the full stack as PSD."),
+        text: _t("education.tour.experienced.layers.text", "Real layer stack with blend modes, opacity, and reordering. Sending results to canvas creates a <em>new layer</em> — never overwrites your work.\n\nGeneration results go to a reusable \"Gen Result\" layer. Your painted edits on other layers are always safe. Export the full stack as PSD."),
         spotlight: "#layersList", reveal: [], advance: "click",
         btn: _t("education.tour.experienced.layers.btn", "Next"),
         beforeShow: function () {
@@ -319,16 +166,16 @@ var Education = (function () {
       },
       {
         id: "exp_extras",
-        text: _t("education.tour.experienced.extras.text", "<em>Auto Detail</em> (3 slots, including a Words detector) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it \u2014 resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> \u2014 persists server-side across sessions \u2014 or as named <em>workflows</em>. Model folders, save folders and the file-name pattern are in <em>Settings</em>."),
+        text: _t("education.tour.experienced.extras.text", "<em>Auto Detail</em> (3 slots, including a Words detector) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it — resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> — persists server-side across sessions — or as named <em>workflows</em>. Model folders, save folders and the file-name pattern are in <em>Settings</em>."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.extras.btn", "Next"),
         position: { bottom: "80px", right: "340px" }
       },
       {
         id: "exp_shortcuts",
-        text: _t("education.tour.experienced.shortcuts.text", "Key shortcuts to know:\n\n<span class=\"cx-kbd\">Q</span> Mask mode \u2022 <span class=\"cx-kbd\">B</span> Brush \u2022 <span class=\"cx-kbd\">E</span> Eraser \u2022 <span class=\"cx-kbd\">V</span> Transform\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Brush size \u2022 <span class=\"cx-kbd\">Shift+Drag</span> Size + opacity\n<span class=\"cx-kbd\">Ctrl+Enter</span> Generate \u2022 <span class=\"cx-kbd\">\\</span> Toggle panel\n<span class=\"cx-kbd\">Ctrl+Z</span> Undo \u2022 <span class=\"cx-kbd\">Space+Drag</span> Pan \u2022 <span class=\"cx-kbd\">Scroll</span> Zoom\n\nFull list in the <em>Codex</em> tab (highlighted above) under Keyboard Shortcuts.\n\nYou\u2019re set. Go make something."),
+        text: _t("education.tour.experienced.shortcuts.text", "Key shortcuts to know:\n\n<span class=\"cx-kbd\">Q</span> Mask mode • <span class=\"cx-kbd\">B</span> Brush • <span class=\"cx-kbd\">E</span> Eraser • <span class=\"cx-kbd\">V</span> Transform\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Brush size • <span class=\"cx-kbd\">Shift+Drag</span> Brush size (drag sideways)\n<span class=\"cx-kbd\">Ctrl+Enter</span> Generate • <span class=\"cx-kbd\">\\</span> Toggle panel\n<span class=\"cx-kbd\">Ctrl+Z</span> Undo • <span class=\"cx-kbd\">Space+Drag</span> Pan • <span class=\"cx-kbd\">Scroll</span> Zoom\n\nFull list in the <em>Codex</em> tab (highlighted above) under Keyboard Shortcuts.\n\nYou’re set. Go make something."),
         spotlight: null, reveal: [], advance: "click",
-        btn: _t("education.tour.experienced.shortcuts.btn", "Let\u2019s go"),
+        btn: _t("education.tour.experienced.shortcuts.btn", "Let’s go"),
         position: { bottom: "80px", left: "calc(50% - 190px)" },
         beforeShow: function () {
           var codexTab = document.querySelector('button[data-module="codex"]');
@@ -342,201 +189,414 @@ var Education = (function () {
     ];
   }
 
-  // ========================================================================
-  // FIRST-RUN MODAL
-  // ========================================================================
-
-  function _showFirstRun() {
-    var overlay = document.createElement("div"); overlay.className = "edu-modal-overlay";
-    overlay.innerHTML = '<div class="edu-modal">' +
-      '<div class="edu-modal-brand"><em>FORGE</em>&ensp;<span class="edu-brand-studio">STUDIO</span></div>' +
-      '<div class="edu-modal-subtitle" data-i18n="education.pathPicker.title">' + _t("education.pathPicker.title", "How would you like to get started?") + '</div>' +
-      '<div class="edu-cards">' +
-        '<div class="edu-card" data-tier="beginner">' +
-          '<div class="edu-card-icon">\u2726</div>' +
-          '<div class="edu-card-body">' +
-            '<div class="edu-card-title" data-i18n="education.pathPicker.beginner.title">' + _t("education.pathPicker.beginner.title", "I\u2019m new to AI image generation") + '</div>' +
-            '<div class="edu-card-desc" data-i18n="education.pathPicker.beginner.desc">' + _t("education.pathPicker.beginner.desc", "Walk me through making my first image and show me the tools.") + '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="edu-card" data-tier="experienced">' +
-          '<div class="edu-card-icon">\u26a1</div>' +
-          '<div class="edu-card-body">' +
-            '<div class="edu-card-title" data-i18n="education.pathPicker.experienced.title">' + _t("education.pathPicker.experienced.title", "I\u2019ve used Stable Diffusion, Photoshop, or similar tools") + '</div>' +
-            '<div class="edu-card-desc" data-i18n="education.pathPicker.experienced.desc">' + _t("education.pathPicker.experienced.desc", "Show me where things are and what\u2019s different here.") + '</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-      '<button class="edu-skip-link" data-tier="skip_quiet" data-i18n="education.pathPicker.skip">' + _t("education.pathPicker.skip", "I\u2019ll figure it out on my own") + '</button>' +
-    '</div>';
-    overlay.querySelectorAll(".edu-card").forEach(function (c) {
-      c.addEventListener("click", function () { _selectTier(c.dataset.tier); overlay.remove(); });
-    });
-    overlay.querySelector(".edu-skip-link").addEventListener("click", function () { _selectTier("skip"); overlay.remove(); });
-    document.body.appendChild(overlay);
-  }
-
-  function _selectTier(tier) {
-    _state.tier = tier; _state.guidedStep = 0; _state.guidedActive = false; _save();
-    if (tier === "beginner") _startGuidedWalkthrough();
-    else if (tier === "experienced") _startExperiencedTour();
-  }
-
-  // ========================================================================
-  // BEGINNER WALKTHROUGH
-  // ========================================================================
-
-  function _tagCollapse() {
-    var map = [
-      ["panelSampling", "eduSamplingSection"],
-      ["panelCanvas", "eduCanvasSection"],
-      ["panelSeedBatch", "eduSeedSection"],
-      ["panelHires", "eduHiresSection"],
-      ["panelAD", "eduADetailerSection"]
-    ];
-    map.forEach(function (pair) {
-      var el = document.getElementById(pair[0]);
-      if (el) { var s = el.closest(".collapse-section"); if (s) s.id = pair[1]; }
-    });
-  }
-
-  function _openPanel() {
-    var p = document.getElementById("panelRight");
-    var b = document.getElementById("panelCollapseBtn");
-    if (p && p.classList.contains("collapsed")) {
-      p.classList.remove("collapsed");
-      if (b) b.classList.remove("collapsed");
-    }
-    var genTab = document.querySelector('[data-panel="generate"]');
-    if (genTab) genTab.click();
-  }
-
-  function _createBeginnerTour(steps) {
-    return StudioTour.create({
-      id: "beginner-walkthrough",
-      steps: steps,
-      persist: true,
-      bodyClass: "edu-guided",
-      confirmCancel: true,
-      cancelPrompt: _t("education.cancelConfirm.walkthrough", "End the walkthrough? You can restart it anytime from Settings."),
-      onComplete: _completeWalkthrough,
-      onCancel: _completeWalkthrough,
-    });
-  }
-
-  function _startGuidedWalkthrough() {
-    _state.guidedActive = true;
-    var steps = getCoreSteps();
-
-    var hasModels = window.State && window.State.models && window.State.models.length > 0;
-    if (!hasModels) {
-      var modelBranch = getModelBranch();
-      for (var i = modelBranch.length - 1; i >= 0; i--) {
-        steps.unshift(modelBranch[i]);
-      }
-      _setFlag("needed_model_download");
-      console.log("[Education] No models detected \u2014 model acquisition branch added");
-    }
-
-    _save();
-    _tagCollapse();
-    _openPanel();
-
-    _tour = _createBeginnerTour(steps);
-    _tour.start(0);
-  }
-
-  function _resumeWalkthrough() {
-    var steps = getCoreSteps();
-
-    if (_state.flags.needed_model_download && !_state.flags.model_downloaded) {
-      var modelBranch = getModelBranch();
-      for (var m = modelBranch.length - 1; m >= 0; m--) {
-        steps.unshift(modelBranch[m]);
-      }
-    }
-
-    if (_state.flags.used_result_to_canvas) {
-      var fi = -1;
-      for (var j = 0; j < steps.length; j++) {
-        if (steps[j].id === "first_image") { fi = j; break; }
-      }
-      if (fi >= 0) {
-        var inpaintBranch = getInpaintBranch();
-        for (var k = 0; k < inpaintBranch.length; k++) {
-          steps.splice(fi + 1 + k, 0, inpaintBranch[k]);
-        }
-      }
-    }
-
-    _tagCollapse();
-    _openPanel();
-
-    _tour = _createBeginnerTour(steps);
-    _tour.start();
-  }
-
-  function _completeWalkthrough() {
-    _state.guidedActive = false;
-    _state.guidedStep = 999;
-    _save();
-    _tour = null;
-    document.body.classList.remove("edu-guided");
-    ALL_REVEAL.forEach(function (c) { document.body.classList.remove(c); });
-    console.log("[Education] Walkthrough complete");
-  }
-
-  // ========================================================================
-  // EXPERIENCED TOUR
-  // ========================================================================
-
   function _clearCodexHighlight() {
     var codexTab = document.querySelector('button[data-module="codex"]');
     if (codexTab) { codexTab.style.outline = ""; codexTab.style.outlineOffset = ""; codexTab.style.borderRadius = ""; }
   }
 
-  function _startExperiencedTour() {
+  function _startTour() {
+    if (!window.StudioTour) return;
+    if (_tour && _tour.isActive) _tour._forceCancel();
+    var canvasTab = document.querySelector('button[data-app="studio"]');
+    if (canvasTab) canvasTab.click();
     _tour = StudioTour.create({
       id: "experienced-tour",
-      steps: getExperiencedSteps(),
+      steps: getTourSteps(),
       persist: false,
       bodyClass: null,
       confirmCancel: true,
       cancelPrompt: _t("tour.endConfirm", "End the tour? You can restart it anytime from Settings."),
-      onComplete: function () { _clearCodexHighlight(); _tour = null; console.log("[Education] Experienced tour complete"); },
+      onComplete: function () { _clearCodexHighlight(); _tour = null; },
       onCancel: function () { _clearCodexHighlight(); _tour = null; },
     });
     _tour.start(0);
   }
 
   // ========================================================================
+  // FIRST RUN (ON2) — one screen: your models, then an optional look around
+  // ========================================================================
+
+  function _el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function _card(choice, icon, title, desc) {
+    var card = _el("button", "edu-card");
+    card.type = "button";
+    card.dataset.choice = choice;
+    card.appendChild(_el("div", "edu-card-icon", icon));
+    var body = _el("div", "edu-card-body");
+    body.appendChild(_el("div", "edu-card-title", title));
+    body.appendChild(_el("div", "edu-card-desc", desc));
+    card.appendChild(body);
+    return card;
+  }
+
+  function _paragraphs(host, text) {
+    String(text).split("\n\n").forEach(function (block) {
+      host.appendChild(_el("p", "edu-welcome-text", block));
+    });
+  }
+
+  function _foot(buttons) {
+    var foot = _el("div", "edu-welcome-foot");
+    buttons.forEach(function (b) {
+      var button = _el("button", b.primary ? "edu-welcome-btn primary" : "edu-welcome-btn", b.label);
+      button.type = "button";
+      button.addEventListener("click", b.onClick);
+      foot.appendChild(button);
+    });
+    return foot;
+  }
+
+  function _showFirstRun() {
+    if (document.getElementById("eduWelcome")) return;
+    var overlay = _el("div", "edu-modal-overlay");
+    overlay.id = "eduWelcome";
+    var modal = _el("div", "edu-modal edu-welcome");
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function brand() {
+      var b = _el("div", "edu-modal-brand");
+      var em = _el("em", "", "FORGE");
+      b.appendChild(em);
+      b.appendChild(document.createTextNode(" "));
+      b.appendChild(_el("span", "edu-brand-studio", "STUDIO"));
+      return b;
+    }
+
+    function show(step) {
+      modal.textContent = "";
+      modal.dataset.step = step;
+      modal.appendChild(brand());
+      STEPS[step]();
+    }
+
+    function finish(tier) {
+      _state.tier = tier; _state.guidedStep = 0; _state.guidedActive = false; _save();
+      try { localStorage.setItem(ONBOARD_KEY, "1"); } catch (e) {}
+      _setPrefsEducation({ onboarded: true });
+      overlay.remove();
+      if (tier === "tour") {
+        _setChecklistOpen(true);
+        _startTour();
+      }
+    }
+
+    var STEPS = {
+      models: function () {
+        modal.appendChild(_el("div", "edu-modal-subtitle", _t("education.welcome.title", "Welcome to Forge Studio")));
+        modal.appendChild(_el("p", "edu-welcome-text", _t("education.welcome.models", "First, your models — the files Studio makes pictures with.")));
+        var cards = _el("div", "edu-cards");
+        var have = _card("have", "✦", _t("education.welcome.have.title", "I already have models"),
+          _t("education.welcome.have.desc", "Point Studio at the folders they’re in. A Forge, A1111 or ComfyUI install works too."));
+        var fresh = _card("fresh", "✧", _t("education.welcome.fresh.title", "I’m starting fresh"),
+          _t("education.welcome.fresh.desc", "I don’t have any models yet."));
+        have.addEventListener("click", function () { show("have"); });
+        fresh.addEventListener("click", function () { show("fresh"); });
+        cards.appendChild(have);
+        cards.appendChild(fresh);
+        modal.appendChild(cards);
+        var later = _el("button", "edu-skip-link", _t("education.welcome.later", "I’ll set this up later"));
+        later.type = "button";
+        later.addEventListener("click", function () { show("tour"); });
+        modal.appendChild(later);
+      },
+      have: function () {
+        modal.appendChild(_el("div", "edu-modal-subtitle", _t("education.welcome.add.title", "Add your model folders")));
+        modal.appendChild(_el("p", "edu-welcome-text", _t("education.welcome.add.desc",
+          "Add as many as you like. Studio looks through every subfolder and sorts what it finds; nothing in them is moved or changed.")));
+        var list = _el("div", "settings-model-library edu-welcome-library");
+        list.setAttribute("data-model-library-list", "");
+        modal.appendChild(list);
+        var row = _el("div", "edu-welcome-add");
+        var input = _el("input", "param-val settings-text-input");
+        input.type = "text";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        input.placeholder = _t("settings.modelFolders.placeholder", "Type a folder path to add, or use Browse");
+        var add = _el("button", "defaults-btn", _t("settings.modelFolders.add", "Add folder"));
+        add.type = "button";
+        var browse = _el("button", "defaults-btn primary", _t("settings.modelFolders.browse", "Browse…"));
+        browse.type = "button";
+        row.appendChild(input);
+        row.appendChild(add);
+        row.appendChild(browse);
+        modal.appendChild(row);
+        var picker = window.StudioDirPicker;
+        function addPath(path) {
+          if (picker && picker.addFolder) picker.addFolder(path);
+          input.value = "";
+        }
+        add.addEventListener("click", function () { addPath(input.value); });
+        input.addEventListener("keydown", function (e) { if (e.key === "Enter") addPath(input.value); });
+        browse.addEventListener("click", function () {
+          if (!window.studioPickFolder) return;
+          window.studioPickFolder({ purpose: "library", start: input.value }).then(function (path) {
+            if (path) addPath(path);
+          });
+        });
+        if (picker && picker.refresh) picker.refresh().catch(function () {});
+        modal.appendChild(_foot([
+          { label: _t("education.welcome.back", "Back"), onClick: function () { show("models"); } },
+          { label: _t("education.welcome.continue", "Continue"), primary: true, onClick: function () { show("tour"); } },
+        ]));
+      },
+      fresh: function () {
+        modal.appendChild(_el("div", "edu-modal-subtitle", _t("education.welcome.freshGuide.title", "Getting your first model")));
+        _paragraphs(modal, _t("education.welcome.freshGuide.text",
+          "Studio makes pictures with a model called a checkpoint. Many are free on sites such as Civitai and Hugging Face — pick one made for the kind of pictures you want.\n\nPrefer .safetensors files. Older .ckpt and .pt files can carry code, and Studio never opens them to look inside.\n\nSome checkpoints also need a text encoder and a VAE. Their page says so; put those in the same folder."));
+        var note = _el("p", "edu-welcome-text edu-welcome-note", "");
+        var useStudio = _el("button", "defaults-btn primary", _t("education.welcome.freshGuide.useStudio", "Use Studio’s models folder"));
+        useStudio.type = "button";
+        useStudio.addEventListener("click", function () {
+          var picker = window.StudioDirPicker;
+          if (!(picker && picker.useStudioFolder)) return;
+          useStudio.disabled = true;
+          picker.useStudioFolder().then(function (answer) {
+            note.textContent = _t("education.welcome.freshGuide.ready",
+              "Done — Studio opened {folder}. Put your checkpoint there; it shows up in the Model box by itself after you press ↻.",
+              { folder: (answer && answer.checkpoints) || "" });
+          }).catch(function () {
+            useStudio.disabled = false;
+            note.textContent = _t("education.welcome.freshGuide.failed", "Studio’s models folder could not be set up. Add a folder of your own instead.");
+          });
+        });
+        var mine = _el("button", "defaults-btn", _t("education.welcome.freshGuide.mine", "Use a folder of my own"));
+        mine.type = "button";
+        mine.addEventListener("click", function () { show("have"); });
+        var row = _el("div", "edu-welcome-add");
+        row.appendChild(useStudio);
+        row.appendChild(mine);
+        modal.appendChild(row);
+        modal.appendChild(note);
+        modal.appendChild(_foot([
+          { label: _t("education.welcome.back", "Back"), onClick: function () { show("models"); } },
+          { label: _t("education.welcome.continue", "Continue"), primary: true, onClick: function () { show("tour"); } },
+        ]));
+      },
+      tour: function () {
+        modal.appendChild(_el("div", "edu-modal-subtitle", _t("education.welcome.tour.title", "Want a quick look around?")));
+        var cards = _el("div", "edu-cards");
+        var around = _card("tour", "➤", _t("education.welcome.tour.yes.title", "Show me around"),
+          _t("education.welcome.tour.yes.desc", "A short tour of where things are, and a checklist for your first picture."));
+        var skip = _card("skip", "✕", _t("education.welcome.tour.no.title", "Skip"),
+          _t("education.welcome.tour.no.desc", "I’ll explore on my own. The tour and the checklist stay in Settings and the Codex."));
+        around.addEventListener("click", function () { finish("tour"); });
+        skip.addEventListener("click", function () { finish("skip"); });
+        cards.appendChild(around);
+        cards.appendChild(skip);
+        modal.appendChild(cards);
+      },
+    };
+
+    show("models");
+    if (window.I18N && typeof window.I18N.applyToDom === "function") { try { window.I18N.applyToDom(overlay); } catch (e) {} }
+  }
+
+  // An existing install never sees the first run: a choice already made, the
+  // old card's mark, saved defaults or a session, or model folders already set.
+  function _isExistingInstall() {
+    if (_state.tier) return Promise.resolve(true);
+    try { if (localStorage.getItem(ONBOARD_KEY)) return Promise.resolve(true); } catch (e) {}
+    if (_prefsEducation().onboarded) return Promise.resolve(true);
+    if (window.__studioHadStoredConfig) return Promise.resolve(true);
+    return fetch("/studio/model_roots").then(function (r) { return r.ok ? r.json() : null; }).then(function (doc) {
+      return !!(doc && Number(doc.library_folders) > 0);
+    }).catch(function () { return false; });
+  }
+
+  // ========================================================================
+  // FIRST-PICTURE CHECKLIST (ON4)
+  // ========================================================================
+  // Non-modal and never in the way: a small card in the corner that ticks
+  // itself from what the owner actually does. Each item, clicked, goes to
+  // the place it is about. A ticked item stays ticked.
+
+  var CHECKLIST = [
+    { id: "folder", key: "education.checklist.folder", fallback: "Add a model folder",
+      done: function () { return !!(window.State && window.State.models && window.State.models.length); },
+      go: function () {
+        var s = document.querySelector('button[data-app="settings"]'); if (s) s.click();
+        setTimeout(function () {
+          var g = document.querySelector('[data-settings-nav="general"]'); if (g) g.click();
+          var c = document.querySelector('[data-settings-section="model-folders"]'); if (c) c.scrollIntoView({ block: "start" });
+        }, 200);
+      } },
+    { id: "model", key: "education.checklist.model", fallback: "Choose a model in the Model box",
+      done: function () { var m = document.getElementById("paramModel"); return !!(m && m.value && m.value !== "None"); },
+      go: function () { _toCanvas(); _focus("paramModel"); } },
+    { id: "prompt", key: "education.checklist.prompt", fallback: "Describe your picture",
+      done: function () { var p = document.getElementById("paramPrompt"); return !!(p && p.value.trim()); },
+      go: function () { _toCanvas(); _focus("paramPrompt"); } },
+    { id: "generate", key: "education.checklist.generate", fallback: "Press Generate",
+      done: function () { return _state.generationCount > 0; },
+      go: function () { _toCanvas(); _focus("genBtn"); } },
+    { id: "canvas", key: "education.checklist.canvas", fallback: "Send it to the canvas and paint over it",
+      done: function () { return !!_state.flags.used_result_to_canvas; },
+      go: function () { _toCanvas(); _focus("outputToCanvas"); } },
+  ];
+  var _checklistEl = null;
+  var _checklistTimer = null;
+
+  function _toCanvas() {
+    var c = document.querySelector('button[data-app="studio"]'); if (c) c.click();
+  }
+
+  function _focus(id) {
+    setTimeout(function () {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (typeof el.focus === "function") el.focus();
+      el.classList.add("edu-checklist-flash");
+      setTimeout(function () { el.classList.remove("edu-checklist-flash"); }, 1600);
+    }, 200);
+  }
+
+  function _setChecklistOpen(open) {
+    _setFlag("checklist_open", !!open);
+    if (open) _renderChecklist(); else _removeChecklist();
+  }
+
+  function _removeChecklist() {
+    if (_checklistEl) { _checklistEl.remove(); _checklistEl = null; }
+    if (_checklistTimer) { clearInterval(_checklistTimer); _checklistTimer = null; }
+  }
+
+  function _checklistDone() {
+    var done = _state.flags.checklist_done || {};
+    var changed = false;
+    CHECKLIST.forEach(function (item) {
+      if (!done[item.id]) {
+        var ok = false;
+        try { ok = item.done(); } catch (e) { ok = false; }
+        if (ok) { done[item.id] = true; changed = true; }
+      }
+    });
+    if (changed) _setFlag("checklist_done", done);
+    return done;
+  }
+
+  function _tickChecklist(id, value) {
+    var done = Object.assign({}, _state.flags.checklist_done || {});
+    if (value) done[id] = true; else delete done[id];
+    _setFlag("checklist_done", done);
+    _renderChecklist();
+  }
+
+  function _renderChecklist() {
+    var done = _checklistDone();
+    if (!_checklistEl) {
+      _checklistEl = _el("aside", "edu-checklist");
+      _checklistEl.setAttribute("aria-label", _t("education.checklist.title", "Your first picture"));
+      document.body.appendChild(_checklistEl);
+      _checklistTimer = setInterval(function () { if (_checklistEl) _renderChecklist(); }, 1000);
+    }
+    var count = CHECKLIST.filter(function (item) { return done[item.id]; }).length;
+    var all = count === CHECKLIST.length;
+    var signature = JSON.stringify(done);
+    if (_checklistEl.dataset.signature === signature) return;
+    _checklistEl.dataset.signature = signature;
+    _checklistEl.textContent = "";
+    var head = _el("div", "edu-checklist-head");
+    head.appendChild(_el("span", "edu-checklist-title", all
+      ? _t("education.checklist.allDone", "That’s your first picture. Enjoy!")
+      : _t("education.checklist.title", "Your first picture")));
+    head.appendChild(_el("span", "edu-checklist-count", count + "/" + CHECKLIST.length));
+    var close = _el("button", "edu-checklist-close", "×");
+    close.type = "button";
+    close.title = _t("education.checklist.hide", "Hide the checklist (it stays in Settings)");
+    close.addEventListener("click", function () { _setChecklistOpen(false); });
+    head.appendChild(close);
+    _checklistEl.appendChild(head);
+    var list = _el("ul", "edu-checklist-items");
+    CHECKLIST.forEach(function (item) {
+      var li = _el("li", done[item.id] ? "edu-checklist-item done" : "edu-checklist-item");
+      // The box ticks by hand too (owner, 2026-10-21): the checklist is a
+      // guide, not a test -- someone who did a step another way is not stuck.
+      var mark = _el("button", "edu-checklist-mark", done[item.id] ? "✓" : "");
+      mark.type = "button";
+      mark.setAttribute("role", "checkbox");
+      mark.setAttribute("aria-checked", done[item.id] ? "true" : "false");
+      mark.title = done[item.id]
+        ? _t("education.checklist.untick", "Mark as not done")
+        : _t("education.checklist.tick", "Mark as done");
+      mark.addEventListener("click", function () { _tickChecklist(item.id, !done[item.id]); });
+      li.appendChild(mark);
+      var button = _el("button", "edu-checklist-go");
+      button.type = "button";
+      button.appendChild(_el("span", "edu-checklist-text", _t(item.key, item.fallback)));
+      button.addEventListener("click", item.go);
+      li.appendChild(button);
+      list.appendChild(li);
+    });
+    _checklistEl.appendChild(list);
+    if (all) setTimeout(function () { if (_checklistEl) _setChecklistOpen(false); }, 6000);
+  }
+
+  // ========================================================================
+  // THE FIRST SAVED PICTURE — one note, once (owner decision 4)
+  // ========================================================================
+
+  // `path` is the saved file when the page knows it (the legacy path); a
+  // queued job's result names no path, and then the note names the save
+  // folder and offers to open it (`/studio/open_folder`, which opens Studio's
+  // own output folder for a blank setting).
+  function notifySaved(path) {
+    var text = String(path || "");
+    if (_prefsEducation().savedNoteShown) return;
+    _setPrefsEducation({ savedNoteShown: true });
+    var folder = text.replace(/[\\/][^\\/]*$/, "");
+    var el = _el("div", "edu-tip edu-saved-note");
+    el.setAttribute("role", "note");
+    el.appendChild(_el("div", "edu-tip-text", folder
+      ? _t("education.saved.text", "Your picture was saved to {folder}", { folder: folder })
+      : _t("education.saved.textFolder", "Your picture was saved to your save folder.")));
+    var row = _el("div", "edu-tip-actions");
+    var open = _el("button", "edu-tip-btn", _t("education.saved.open", "Open folder"));
+    open.type = "button";
+    open.addEventListener("click", function () {
+      var dir = (window.State && window.State.saveDir) || "";
+      fetch("/studio/open_folder", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dir }),
+      }).catch(function () {});
+    });
+    row.appendChild(open);
+    var change = _el("button", "edu-tip-btn edu-tip-learn", _t("education.saved.change", "Change where pictures save"));
+    change.type = "button";
+    change.addEventListener("click", function () {
+      el.remove();
+      var s = document.querySelector('button[data-app="settings"]'); if (s) s.click();
+      setTimeout(function () { var o = document.querySelector('[data-settings-nav="output-files"]'); if (o) o.click(); }, 200);
+    });
+    var ok = _el("button", "edu-tip-btn edu-tip-dismiss", _t("education.tip.gotIt", "Got it"));
+    ok.type = "button";
+    ok.addEventListener("click", function () { el.remove(); });
+    row.appendChild(change);
+    row.appendChild(ok);
+    el.appendChild(row);
+    document.body.appendChild(el);
+    setTimeout(function () { if (el.parentNode) el.remove(); }, 20000);
+  }
+
+  // ========================================================================
   // SETTINGS
   // ========================================================================
 
-  // Replays the tester's own path from the beginning WITHOUT forgetting it.
-  // Settings > Education > Restart Tour and the "Show Me" buttons on the
-  // Core Workflow and Making Your First Image articles both land here. With no
-  // path chosen yet there is nothing to replay: `pickIfUnset` shows the picker
-  // (Show Me) instead of a toast (the Settings button).
-  function _restartTour(pickIfUnset) {
-    if (!_state.tier || _state.tier === "skip") {
-      if (pickIfUnset) _showFirstRun();
-      else if (window.showToast) window.showToast(_t("education.toast.selectPath", "Select a path first"), "info");
-      return;
-    }
-    if (_tour && _tour.isActive) _tour._forceCancel();
-
-    if (_state.tier === "beginner") {
-      var gt = document.querySelector('[data-panel="generate"]'); if (gt) gt.click();
-      _state.guidedStep = 0; _state.guidedActive = true;
-      delete _state.flags.used_result_to_canvas;
-      delete _state.flags.needed_model_download;
-      delete _state.flags.model_downloaded;
-      _save();
-      setTimeout(function () { _startGuidedWalkthrough(); }, 200);
-    } else if (_state.tier === "experienced" || _state.tier === "ai_user" || _state.tier === "art_user") {
-      setTimeout(function () { _startExperiencedTour(); }, 200);
-    }
+  // Settings > Appearance & Layout > Accessibility, and the Codex "Show Me"
+  // buttons: the tour, the checklist and the welcome screen are all
+  // replayable, and none is ever required.
+  function _restartTour() {
+    _setChecklistOpen(true);
+    setTimeout(_startTour, 200);
   }
 
   function _injectSettings() {
@@ -551,33 +611,30 @@ var Education = (function () {
       || document.querySelector("#app-settings");
     if (!host) return;
 
-    var g = document.createElement("div"); g.className = "settings-edu-inject";
-    g.innerHTML =
-      '<p class="settings-eyebrow" data-i18n="education.settings.title">' + _t("education.settings.title", "Education") + '</p>' +
-      '<div class="settings-item"><div class="settings-item-copy">' +
-        '<span class="settings-item-title" data-i18n="education.settings.currentPath">' + _t("education.settings.currentPath", "Current path") + '</span></div>' +
-        '<div class="settings-item-control"><span class="settings-mono-value" id="eduCurrentTier">' + _tierLabel(_state.tier) + '</span></div></div>' +
-      '<div class="settings-item settings-item-actions"><div class="settings-item-control settings-btn-group settings-btn-group-end">' +
-        '<button class="defaults-btn" id="eduRestartTour" data-i18n="education.settings.restartTour">' + _t("education.settings.restartTour", "Restart Tour") + '</button>' +
-        '<button class="defaults-btn" id="eduChangePath" data-i18n="education.settings.changePath">' + _t("education.settings.changePath", "Change Path") + '</button></div></div>';
+    var g = _el("div", "settings-edu-inject");
+    g.appendChild(_el("p", "settings-eyebrow", _t("education.settings.title", "Getting started")));
+    function item(titleKey, titleFallback, descKey, descFallback, id, labelKey, labelFallback, onClick) {
+      var row = _el("div", "settings-item");
+      var copy = _el("div", "settings-item-copy");
+      copy.appendChild(_el("span", "settings-item-title", _t(titleKey, titleFallback)));
+      copy.appendChild(_el("p", "settings-item-description", _t(descKey, descFallback)));
+      row.appendChild(copy);
+      var control = _el("div", "settings-item-control");
+      var button = _el("button", "defaults-btn", _t(labelKey, labelFallback));
+      button.type = "button";
+      button.id = id;
+      button.addEventListener("click", onClick);
+      control.appendChild(button);
+      row.appendChild(control);
+      g.appendChild(row);
+    }
+    item("education.settings.tour.title", "Show me around", "education.settings.tour.desc", "A short tour of where things are.",
+      "eduRestartTour", "education.settings.tour.button", "Start the tour", function () { _restartTour(); });
+    item("education.settings.checklist.title", "First-picture checklist", "education.settings.checklist.desc", "Ticks itself off as you make your first picture.",
+      "eduShowChecklist", "education.settings.checklist.button", "Show the checklist", function () { _setChecklistOpen(true); });
+    item("education.settings.welcome.title", "Welcome screen", "education.settings.welcome.desc", "The first-run screen, with model folders and the tour.",
+      "eduShowWelcome", "education.settings.welcome.button", "Show it again", function () { _showFirstRun(); });
     if (anchor && anchor.parentNode === host) host.insertBefore(g, anchor); else host.appendChild(g);
-    if (window.I18N && typeof window.I18N.applyToDom === "function") { try { window.I18N.applyToDom(g); } catch (e) {} }
-
-    g.querySelector("#eduRestartTour").addEventListener("click", function () { _restartTour(false); });
-
-    g.querySelector("#eduChangePath").addEventListener("click", function () {
-      if (_tour && _tour.isActive) _tour._forceCancel();
-      _tour = null;
-      _reset(); _showFirstRun();
-      var upd = setInterval(function () {
-        if (_state.tier) { var l = g.querySelector("#eduCurrentTier"); if (l) l.textContent = _tierLabel(_state.tier); clearInterval(upd); }
-      }, 500);
-      setTimeout(function () { clearInterval(upd); }, 30000);
-    });
-  }
-
-  function _tierLabel(t) {
-    return { beginner: "Beginner", experienced: "Experienced", ai_user: "Experienced", skip: "Skipped" }[t] || "Not set";
   }
 
   // ========================================================================
@@ -595,18 +652,36 @@ var Education = (function () {
         was = window.State.generating;
       }
     }, 1000);
+    // The job queue, which is how Generate runs on every real install, never
+    // sets `State.generating` (app.js `handleProgress` says why), so the poll
+    // above only ever saw the legacy path and "Press Generate" never ticked.
+    // A queued picture is counted when it is delivered.
+    document.addEventListener("studio:result-delivered", function () {
+      _state.generationCount++;
+      _save();
+      if (_checklistEl) _renderChecklist();
+      // Queue results carry no file path (the server keeps paths out of the
+      // browser), so the note names the save folder rather than the file.
+      if (window.State && window.State.saveOutputs) notifySaved("");
+    });
+    // The checklist's last item: Result -> Canvas, however it is reached.
+    document.addEventListener("click", function (e) {
+      if (e.target && e.target.closest && e.target.closest("#outputToCanvas") && !_state.flags.used_result_to_canvas) {
+        _setFlag("used_result_to_canvas");
+      }
+    }, true);
   }
 
   // ========================================================================
   // FIRST-ENCOUNTER TIPS
   // ========================================================================
-  // Static callouts (today only Layers), each shown once on the first
-  // meaningful interaction and never again after dismissal. The Regions and
-  // `regions` and `live` were removed with their features (CX1) and came back
-  // when those features could generate (RG1-RG3, LV1; the Extension's tips).
-  // Seen-state persists server-side via prefs key "education"
-  // ({seen:{layers:true,...}}), so it survives reloads and Clear Storage.
-  // Deliberately not a tour engine. Copy teaches workflow, not UI labels.
+  // Static callouts, each shown once on the first meaningful interaction and
+  // never again after dismissal. `regions` and `live` were removed with their
+  // features (CX1) and came back when those features could generate (RG1-RG3,
+  // LV1; the Extension's tips). Seen-state persists server-side via prefs key
+  // "education" ({seen:{layers:true,...}}), so it survives reloads and Clear
+  // Storage. Deliberately not a tour engine. Copy teaches workflow, not UI
+  // labels.
 
   var TIPS = {
     layers: {
@@ -688,8 +763,8 @@ var Education = (function () {
   // ========================================================================
 
   // Internal-alpha smoke mode: `?onboarding=off` in the launch URL keeps the
-  // path-picker overlay away for this visit. Per-visit only -- nothing is
-  // written, so normal owner mode still shows the picker once.
+  // first-run screen away for this visit. Per-visit only -- nothing is
+  // written, so normal owner mode still shows it once.
   function _onboardingSuppressedByUrl() {
     try {
       return new URLSearchParams(window.location.search).get("onboarding") === "off";
@@ -698,8 +773,8 @@ var Education = (function () {
 
   function init() {
     // ED1. Wait for Studio's preferences (a cached promise app.js also
-    // awaits at boot) before deciding whether to show the tutorial picker:
-    // the saved choice may live only there. A failed load decides from the
+    // awaits at boot) before deciding whether to show the first run: the
+    // saved choice may live only there. A failed load decides from the
     // browser alone, as before.
     var loading = null;
     try { if (window.Prefs && window.Prefs.load) loading = window.Prefs.load(); } catch (e) {}
@@ -707,31 +782,27 @@ var Education = (function () {
   }
 
   function _start() {
-    if (!window.StudioTour) {
-      console.error("[Education] StudioTour engine not loaded \u2014 walkthroughs disabled");
-      _load();
-      _hookGeneration();
-      _injectSettings();
-      if (!_state.tier && !_onboardingSuppressedByUrl()) { setTimeout(function () { _showFirstRun(); }, 800); }
-      return;
-    }
-
     _load();
-    console.log("[Education] Init \u2014 tier:", _state.tier, "guided:", _state.guidedActive, "step:", _state.guidedStep);
     _hookGeneration();
     _injectSettings();
 
-    if (!_state.tier) {
-      if (!_onboardingSuppressedByUrl()) {
-        setTimeout(function () { _showFirstRun(); }, 800);
-      }
+    // The beginner walkthrough is gone (ON4). Someone in the middle of it
+    // gets the checklist, which covers the same first picture.
+    if (_state.guidedActive) {
+      _state.guidedActive = false;
+      _save();
+      _setChecklistOpen(true);
       return;
     }
+    if (_state.flags.checklist_open) _renderChecklist();
 
-    if (_state.tier === "beginner" && _state.guidedActive) {
-      _resumeWalkthrough();
-      return;
-    }
+    if (_onboardingSuppressedByUrl()) return;
+    _isExistingInstall().then(function (existing) {
+      if (existing || _onboardingSuppressedByUrl()) return;
+      // Asked again when it would show: app.js learns about saved defaults
+      // during its own start, which may finish after this one.
+      setTimeout(function () { if (!window.__studioHadStoredConfig) _showFirstRun(); }, 800);
+    });
   }
 
   // ========================================================================
@@ -750,8 +821,10 @@ var Education = (function () {
     setFlag: _setFlag,
     reset: _reset,
     showFirstRun: _showFirstRun,
-    startExperiencedTour: _startExperiencedTour,
-    restartTour: function () { _restartTour(true); },
+    startTour: _startTour,
+    restartTour: _restartTour,
+    showChecklist: function () { _setChecklistOpen(true); },
+    notifySaved: notifySaved,
     maybeShowTip: maybeShowTip,
     get tour() { return _tour; },
   };

@@ -26,8 +26,8 @@ release. Every model must match packaging/assets.json in size and SHA-256 before
 it is installed. A failed/interrupted download can be retried; existing files with
 different contents are preserved and reported. Existing valid assets need no network.
 
-Then Studio opens in your browser. Supply your own checkpoint, VAE and text encoders
-and choose their folders in Settings. The launcher creates empty models/Stable-diffusion,
+Then Studio opens in your browser. Supply your own checkpoint, VAE and text encoders;
+the welcome screen asks where they are (one folder or several, subfolders included). The launcher creates empty models/Stable-diffusion,
 models/VAE and models/text_encoder folders for convenience. Five Auto Detail detectors
 and Remacri are prepared by setup; no generation checkpoint is downloaded.
 

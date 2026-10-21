@@ -2,7 +2,7 @@
  * Forge Studio — Education System Styles
  * by ToxicHost & Moritz
  *
- * First-run modal, progressive reveal, highlight reel, settings.
+ * Welcome screen, first-picture checklist, highlight reel, tips.
  * Tour guide bubble and spotlight styles are in studio-tour.css.
  */
 
@@ -49,7 +49,7 @@
 .edu-card-desc { font-size: 10px; color: var(--text-3); line-height: 1.5; }
 
 .edu-skip-link {
-  display: block; text-align: center; margin-top: 16px; font-size: 10px;
+  display: block; text-align: center; margin: 16px auto 0; font-size: 10px;
   color: var(--text-4); cursor: pointer; transition: color 0.12s;
   background: none; border: none; font-family: var(--font);
 }
@@ -57,51 +57,61 @@
 
 
 /* ═══════════════════════════════════════════
-   GUIDED MODE — PROGRESSIVE REVEAL
+   WELCOME SCREEN (ON2) — models, then an optional look around
    ═══════════════════════════════════════════ */
 
-/* Settings tab always accessible — only generation chrome is dimmed */
-.edu-guided .toolstrip,
-.edu-guided .statusbar {
-  opacity: 0.15; pointer-events: none; transition: opacity 0.3s;
+/* The cards are buttons now (keyboard reachable). */
+button.edu-card { width: 100%; text-align: left; font-family: var(--font); color: inherit; }
+.edu-welcome { width: 620px; max-height: 88vh; overflow-y: auto; }
+.edu-welcome .edu-modal-subtitle { font-size: 14px; font-weight: 600; color: var(--text-1); margin-bottom: 10px; }
+.edu-welcome-text { font-size: 11px; color: var(--text-2); line-height: 1.6; margin: 0 0 12px; }
+.edu-welcome-note { color: var(--accent-bright); min-height: 1em; }
+.edu-welcome-library { max-height: 40vh; overflow-y: auto; }
+.edu-welcome-add { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+.edu-welcome-add .settings-text-input { flex: 1 1 240px; min-width: 0; }
+.edu-welcome-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 18px; }
+.edu-welcome-btn {
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-2); font-size: 11px; font-family: var(--font); padding: 7px 16px; cursor: pointer;
 }
+.edu-welcome-btn:hover { border-color: var(--border-hover); color: var(--text-1); }
+.edu-welcome-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.studio-library-install { border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  padding: 8px 10px; margin-bottom: 6px; background: var(--accent-dim); }
 
-.edu-guided #page-generate .collapse-section,
-.edu-guided #regionSection, .edu-guided #softInpaintSection,
-.edu-guided #outputSection, .edu-guided .context-bar,
-.edu-guided .brush-presets, .edu-guided #dynamicsPanel,
-.edu-guided #page-generate .section-header,
-.edu-guided #layersList, .edu-guided #historyList { display: none !important; }
 
-.edu-guided #page-generate .param-section { display: none !important; }
-.edu-guided .prompt-section { display: block !important; }
-.edu-guided .gen-actions { display: flex !important; }
+/* ═══════════════════════════════════════════
+   FIRST-PICTURE CHECKLIST (ON4) — non-modal, in a corner
+   ═══════════════════════════════════════════ */
 
-/* Progressive reveal */
-.edu-show-output #outputSection { display: block !important; }
-.edu-show-sampling .collapse-section:has(#panelSampling) { display: block !important; }
-.edu-show-sampling #eduSamplingSection { display: block !important; }
-.edu-show-canvas .collapse-section:has(#panelCanvas) { display: block !important; }
-.edu-show-canvas #eduCanvasSection { display: block !important; }
-.edu-show-seed .collapse-section:has(#panelSeedBatch) { display: block !important; }
-.edu-show-seed #eduSeedSection { display: block !important; }
-.edu-show-tools .toolstrip { opacity: 1 !important; pointer-events: auto !important; }
-.edu-show-tools .context-bar { display: flex !important; }
-.edu-show-tools .brush-presets { display: flex !important; }
-.edu-show-layers #page-generate .section-header,
-.edu-show-layers #layersList { display: flex !important; }
-.edu-show-layers #layersList { display: block !important; }
-.edu-show-model #page-generate .param-section { display: block !important; }
-.edu-show-chrome .statusbar { opacity: 1 !important; pointer-events: auto !important; }
-.edu-show-inpaint .context-bar.inpaint-bar { display: flex !important; }
-
-/* Reveal HiRes Fix section */
-.edu-show-hires .collapse-section:has(#panelHires) { display: block !important; }
-.edu-show-hires #eduHiresSection { display: block !important; }
-
-/* Reveal ADetailer section */
-.edu-show-adetailer .collapse-section:has(#panelAD) { display: block !important; }
-.edu-show-adetailer #eduADetailerSection { display: block !important; }
+.edu-checklist {
+  position: fixed; left: 16px; bottom: 44px; z-index: 9000; width: 260px;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); padding: 8px 10px; font-size: var(--ui-font-small);
+  color: var(--text-2); animation: eduTipIn 0.25s ease;
+}
+.edu-checklist-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.edu-checklist-title { flex: 1; font-weight: 600; color: var(--text-1); }
+.edu-checklist-count { color: var(--text-4); font-size: 10px; }
+.edu-checklist-close { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 14px; padding: 0 2px; }
+.edu-checklist-items { list-style: none; margin: 0; padding: 0; }
+.edu-checklist-item { display: flex; align-items: center; gap: 6px; }
+.edu-checklist-go {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: none; border: none;
+  color: inherit; font-family: var(--font); font-size: inherit; text-align: left; padding: 4px 2px;
+  cursor: pointer; border-radius: var(--radius-sm);
+}
+.edu-checklist-go:hover { background: var(--accent-dim); }
+.edu-checklist-mark {
+  width: 14px; height: 14px; flex-shrink: 0; border: 1px solid var(--border-hover); border-radius: 3px;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: #fff;
+  /* A button of its own: it ticks by hand. */
+  background: none; padding: 0; cursor: pointer; font-family: var(--font); margin-left: 2px;
+}
+.edu-checklist-mark:hover { border-color: var(--accent); }
+.edu-checklist-item.done .edu-checklist-mark { background: var(--accent); border-color: var(--accent); }
+.edu-checklist-item.done .edu-checklist-text { color: var(--text-4); text-decoration: line-through; }
+.edu-checklist-flash { outline: 2px solid var(--accent-bright) !important; outline-offset: 2px; }
 
 
 /* ═══════════════════════════════════════════
@@ -180,8 +190,8 @@
 
 [data-motion="reduced"] .edu-modal, [data-motion="reduced"] .edu-modal-overlay,
 [data-motion="reduced"] .edu-reel, [data-motion="reduced"] .edu-reel-overlay,
-[data-motion="reduced"] .edu-tip { animation: none !important; }
+[data-motion="reduced"] .edu-tip, [data-motion="reduced"] .edu-checklist { animation: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
-  .edu-modal, .edu-modal-overlay, .edu-reel, .edu-reel-overlay, .edu-tip { animation: none !important; }
+  .edu-modal, .edu-modal-overlay, .edu-reel, .edu-reel-overlay, .edu-tip, .edu-checklist { animation: none !important; }
 }

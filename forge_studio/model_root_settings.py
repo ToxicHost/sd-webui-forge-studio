@@ -28,6 +28,14 @@ from threading import RLock
 from typing import Any
 
 from forge_headless.contracts import HeadlessError
+from forge_headless.model_library import (
+    CORRECTIONS_KEY,
+    LIBRARY_KEY,
+    LibraryFolder,
+    install_models_folder,
+    normalize_library,
+    storable_library,
+)
 from forge_headless.model_roots import (
     ALLOW_NETWORK_KEY,
     CONFIG_KEY,
@@ -105,9 +113,13 @@ class ModelRootSettings:
         *,
         config_path: Path | None = None,
         last_model_selection: dict[str, str] | None = None,
+        studio_models_folder: Path | None = None,
     ) -> None:
         self._registry = registry
         self._config_path = Path(config_path) if config_path is not None else None
+        #: ON2. Studio's own `models` folder (`app/models`), offered to an
+        #: owner starting fresh. None where the host has none.
+        self._studio_models = Path(studio_models_folder) if studio_models_folder else None
         self._lock = RLock()
         # Seeded from the launch config and updated on write, rather than
         # re-read from disk on every describe. Held here because this object
@@ -115,6 +127,9 @@ class ModelRootSettings:
         # second writer to the same file is how two pages end up overwriting
         # each other's keys.
         self._last_selection = dict(last_model_selection or {})
+        #: ON1b. The owner's corrections from the Unrecognized list, absolute
+        #: path -> kind, as saved under `model_library_corrections`.
+        self._corrections: dict[str, str] = {}
         # Notified after a successful roots write. A directory handle IS
         # authority over a directory, and authority granted under one
         # configuration must not survive into the next -- otherwise
@@ -170,9 +185,15 @@ class ModelRootSettings:
         configured = self._registry.configured_roots()
         with self._lock:
             remembered = dict(self._last_selection)
+        library = self._registry.configured_library()
         return {
             "roles": [statuses[role].to_dict() for role in sorted(statuses)],
             "roots": configured,
+            # ON1b. The owner's library folders (paths: this page only) and,
+            # by ordinal, what each one holds.
+            LIBRARY_KEY: [folder.to_dict() for folder in library],
+            "library_status": self._registry.describe_library(),
+            "studio_models_folder": str(self._studio_models) if self._studio_models else "",
             "persistable": self.persistable,
             ALLOW_NETWORK_KEY: bool(getattr(self._registry, "allow_network", False)),
             # Three opaque catalogue ids, or fewer. The page pre-selects its
@@ -199,6 +220,16 @@ class ModelRootSettings:
                 "Expected a JSON object.",
             )
         raw_roots = payload.get(CONFIG_KEY, payload.get("roots"))
+        library = None
+        if LIBRARY_KEY in payload:
+            # ON1b. The library list, validated like the roots; the role
+            # folders (Studio's bundled detectors) stay as they are unless
+            # the payload names them too.
+            library = normalize_library(payload.get(LIBRARY_KEY))
+            for ordinal, folder in enumerate(library):
+                self._check_path(folder.path, f"Model folder {ordinal + 1}")
+            if raw_roots is None:
+                raw_roots = self._registry.configured_roots()
         if raw_roots is None:
             raise SettingsError(
                 "STUDIO_SETTINGS_MALFORMED",
@@ -214,16 +245,7 @@ class ModelRootSettings:
                 where = f"The {role} directory" + (
                     f" at position {ordinal + 1}" if len(paths) > 1 else ""
                 )
-                if len(text) > MAX_ROOT_LENGTH:
-                    raise SettingsError(
-                        "STUDIO_SETTINGS_ROOT_TOO_LONG",
-                        f"{where} path is too long.",
-                    )
-                if "\x00" in text:
-                    raise SettingsError(
-                        "STUDIO_SETTINGS_ROOT_MALFORMED",
-                        f"{where} path contains a null byte.",
-                    )
+                self._check_path(text, where)
 
         # "Allow network model folders". Absent keeps the current value, so a
         # page that predates the checkbox cannot switch it off by omission.
@@ -241,8 +263,17 @@ class ModelRootSettings:
             # configuration serving, and propagates its stable code. The
             # opt-in changes in the SAME transaction: a refused save leaves
             # it as it was.
-            self._registry.configure(roots, allow_network=allow_network)
-            persisted = self._persist(roots, self._registry.allow_network)
+            self._registry.configure(roots, library=library, allow_network=allow_network)
+            if library is not None and CONFIG_KEY not in payload and "roots" not in payload:
+                # A library save leaves the file's `model_roots` alone: it is
+                # what an older build reads, and the roots served now are
+                # Studio's own seeds, which are never written.
+                persisted = self._persist_keys({
+                    LIBRARY_KEY: storable_library(library),
+                    ALLOW_NETWORK_KEY: bool(self._registry.allow_network),
+                })
+            else:
+                persisted = self._persist(roots, self._registry.allow_network, library)
         # AFTER the lock and only on success. A refused write changed nothing,
         # so invalidating handles for it would cost the owner their place in a
         # directory tree for no reason.
@@ -251,6 +282,128 @@ class ModelRootSettings:
         result = self.describe()
         result["persisted"] = persisted
         return result
+
+    def _check_path(self, text: str, where: str) -> None:
+        if len(text) > MAX_ROOT_LENGTH:
+            raise SettingsError("STUDIO_SETTINGS_ROOT_TOO_LONG", f"{where} path is too long.")
+        if "\x00" in text:
+            raise SettingsError("STUDIO_SETTINGS_ROOT_MALFORMED", f"{where} path contains a null byte.")
+
+    # -- the library (ON1b) -------------------------------------------------
+
+    def persist_library(self) -> bool:
+        """Save the library as configured now -- the one-time conversion of
+        the role folders, written by `launch.run`. Never raises."""
+
+        try:
+            with self._lock:
+                return self._persist_keys(
+                    {LIBRARY_KEY: storable_library(self._registry.configured_library())}
+                )
+        except HeadlessError:
+            return False
+
+    def load_corrections(self, corrections: Any) -> None:
+        """The saved corrections, at startup, before the first scan."""
+
+        self._corrections = {
+            str(path): str(kind) for path, kind in (corrections or {}).items()
+            if isinstance(path, str) and isinstance(kind, str)
+        } if isinstance(corrections, dict) else {}
+        self._registry.set_corrections(self._corrections)
+
+    def unrecognized(self, payload: Any) -> dict[str, Any]:
+        """The files in one library folder that no role took. Paths are
+        relative to that folder; this page already knows the folder."""
+
+        ordinal = self._ordinal(payload)
+        root = self._registry.library_root(ordinal)
+        corrected = []
+        for path, kind in sorted(self._corrections.items()):
+            try:
+                relative = Path(path).relative_to(root).as_posix()
+            except ValueError:
+                continue
+            corrected.append({"relative": relative, "kind": kind})
+        return {"folder": ordinal, "files": self._registry.unrecognized(ordinal),
+                "corrected": corrected}
+
+    def correct(self, payload: Any) -> dict[str, Any]:
+        """The owner says what one library file is ("" = let Studio decide)."""
+
+        ordinal = self._ordinal(payload)
+        relative = payload.get("relative") if isinstance(payload, dict) else None
+        kind = payload.get("kind", "") if isinstance(payload, dict) else None
+        if not isinstance(relative, str) or not relative.strip() or not isinstance(kind, str):
+            raise SettingsError("STUDIO_SETTINGS_MALFORMED", "A file and a kind are required.")
+        path = self._registry.library_file_path(ordinal, relative)
+        with self._lock:
+            corrections = dict(self._corrections)
+            if kind:
+                corrections[path] = kind
+            else:
+                corrections.pop(path, None)
+            self._registry.set_corrections(corrections)
+            self._corrections = corrections
+            persisted = self._persist_keys({CORRECTIONS_KEY: dict(corrections)})
+        self._notify_change()
+        result = self.describe()
+        result["persisted"] = persisted
+        return result
+
+    def inspect(self, payload: Any) -> dict[str, Any]:
+        """Whether a folder the owner picked is an install root (ON2), and
+        its models folder. Looks only inside that folder."""
+
+        path = payload.get("path") if isinstance(payload, dict) else None
+        if not isinstance(path, str) or not path.strip():
+            raise SettingsError("STUDIO_SETTINGS_MALFORMED", "A folder path is required.")
+        self._check_path(path, "The folder")
+        found = install_models_folder(path.strip())
+        if found is None:
+            return {"install": None}
+        kind, models = found
+        return {"install": kind, "models": models}
+
+    def use_studio_folder(self) -> dict[str, Any]:
+        """Starting fresh (ON2): add Studio's own models folder to the library,
+        with a `Stable-diffusion` folder inside for checkpoints -- Forge's
+        layout, which the classifier's folder hint reads -- and say where
+        that is so the page can open it. Studio's own folder, so making a
+        subfolder there writes nothing of the owner's."""
+
+        if self._studio_models is None:
+            raise SettingsError("STUDIO_SETTINGS_NO_STUDIO_FOLDER", "This Studio has no models folder of its own.")
+        checkpoints = self._studio_models / "Stable-diffusion"
+        try:
+            checkpoints.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            raise SettingsError("STUDIO_SETTINGS_NO_STUDIO_FOLDER", "Studio's models folder could not be prepared.") from None
+        library = tuple(self._registry.configured_library())
+        if not any(Path(f.path) == self._studio_models for f in library):
+            library = library + (LibraryFolder(str(self._studio_models)),)
+            with self._lock:
+                self._registry.configure(self._registry.configured_roots(), library=library)
+                persisted = self._persist_keys({LIBRARY_KEY: storable_library(library)})
+            self._notify_change()
+        else:
+            persisted = True
+        result = self.describe()
+        result["persisted"] = persisted
+        result["checkpoints"] = str(checkpoints)
+        return result
+
+    def folder_to_open(self, payload: Any) -> Path:
+        """The library folder (by number) the page asked to open."""
+
+        return self._registry.library_root(self._ordinal(payload))
+
+    @staticmethod
+    def _ordinal(payload: Any) -> int:
+        value = payload.get("folder") if isinstance(payload, dict) else None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise SettingsError("STUDIO_SETTINGS_MALFORMED", "A model folder number is required.")
+        return value
 
     # -- the unprivileged write --------------------------------------------
 
@@ -301,13 +454,16 @@ class ModelRootSettings:
 
         return {SELECTION_KEY: dict(selection), "persisted": persisted}
 
-    def _persist(self, roots, allow_network: bool = False) -> bool:
+    def _persist(self, roots, allow_network: bool = False, library=None) -> bool:  # type: ignore[no-untyped-def]
         # One read-modify-write for both keys, so the roots and the switch
         # they were validated under can never be saved half each.
-        return self._persist_keys({
+        values: dict[str, Any] = {
             CONFIG_KEY: _storable_roots(roots),
             ALLOW_NETWORK_KEY: bool(allow_network),
-        })
+        }
+        if library is not None:
+            values[LIBRARY_KEY] = storable_library(library)
+        return self._persist_keys(values)
 
     def _persist_key(self, key: str, value: Any) -> bool:
         return self._persist_keys({key: value})

@@ -4,6 +4,53 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.3: Model folders as one list, a new welcome — 2026-10-21
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Model folders are one list now.** Settings > General > Model folders no
+  longer has a box per kind of model. Add any folders you like (one big
+  folder, or LoRAs, checkpoints and the rest kept apart); Studio looks
+  through every subfolder and sorts each file by what it is: checkpoint,
+  text encoder, VAE, LoRA, ControlNet, embedding, upscaler or Auto Detail
+  detector. Each folder's row says what was found ("Checkpoints 8 · LoRAs
+  300"). Nothing in your folders is moved or changed.
+  - **Your folders are kept.** The first time 0.9.3 starts, the folders you
+    had set become list entries. The selected models stay selected.
+  - **Unrecognized.** Older `.ckpt`, `.pt` and `.pth` files are never opened,
+    so a name may be all Studio has. Files it cannot place are listed under
+    a folder's **Unrecognized**, where you can say what each one is (and set
+    it back to "Let Studio decide").
+  - Picking a whole **Forge, A1111 or ComfyUI install** asks "Use its models
+    folder?" instead of walking the whole install.
+  - Your own Auto Detail detectors now sit beside the ones Studio ships,
+    instead of replacing them.
+  - Workshop saves a merge beside your checkpoints.
+- **A new welcome screen** for a fresh install (an install that already has
+  model folders never sees it). It asks about your models: add the folders
+  they're in, or, starting fresh, read where models come from and let Studio
+  make a models folder for you. Then **Show me around** (a short tour) or
+  **Skip**: nothing is required. The old "How would you like to get
+  started?" choice and the preferences card are gone; Studio's defaults
+  apply, and after your first saved picture one note says where it went.
+- **First-picture checklist.** With Show me around, a small checklist in the
+  corner ticks itself off as you add a model folder, choose a model, write a
+  prompt, press Generate and send the picture to the canvas. It replaces the
+  beginner walkthrough, which hid parts of the window. Settings > Appearance
+  & Layout > Accessibility > **Getting started** brings back the tour, the
+  checklist or the welcome screen at any time.
+- **Generate says what is missing** before it starts: no model chosen, or a
+  model that needs a text encoder or a VAE that is not set. Empty LoRA,
+  ControlNet, detector and wildcard lists say why they are empty.
+- **Live fixes** from a code review: each open tab shows only its own Live
+  frames; stopping and starting Live while a frame runs no longer shows the
+  old canvas's frame; after Studio restarts under a page with Live on, Live
+  picks up again instead of sitting on "generating"; a frame that never
+  finishes is given up after 10 minutes; a failed submit no longer leaves
+  the button on "generating". With Develop on in the GPU canvas preview,
+  moving the cursor is cheaper again.
+
 ## 0.9.2: Live Painting — 2026-10-21
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

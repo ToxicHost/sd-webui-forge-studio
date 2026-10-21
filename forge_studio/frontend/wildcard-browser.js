@@ -547,7 +547,13 @@
       listEl.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "wc-empty";
-      empty.innerHTML = `<span class="wc-empty-text">${allWildcards.length === 0 ? "No wildcards found" : "No wildcards match your search"}</span>`;
+      // ON3: an empty list says where wildcards come from.
+      const text = document.createElement("span");
+      text.className = "wc-empty-text";
+      text.textContent = allWildcards.length === 0
+        ? _t("wildcards.empty.none", "No wildcards yet — add .txt files to your wildcard folder (Settings → Prompts & Metadata → Wildcard folder)")
+        : _t("wildcards.empty.noMatch", "No wildcards match your search");
+      empty.appendChild(text);
       wrap.appendChild(empty);
       hidePreview();
       return;

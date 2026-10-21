@@ -37,6 +37,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
 
 from forge_studio.result_delivery import CasePolicy
 
@@ -377,6 +378,15 @@ class _ScanBudget:
         return True
 
 
+class KindSorter(Protocol):
+    """What a library folder's catalogue asks of `model_library.KindCache`."""
+
+    def kind_of(self, path: Path, *, relative: str, hint: str, size: int, mtime_ns: int,
+                root_name: str) -> Any: ...
+
+    def skips(self, directory_name: str) -> bool: ...
+
+
 class ModelCatalogue:
     """Explicit-root model enumeration with fail-closed containment."""
 
@@ -390,6 +400,8 @@ class ModelCatalogue:
         role: str = MODEL_ROLE_CHECKPOINT,
         allow_external: bool = False,
         allow_network: bool = False,
+        sorter: "KindSorter | None" = None,
+        hint: str = "",
     ) -> None:
         if role not in ROLE_FORMAT_SUPPORT:
             raise HeadlessError(
@@ -438,6 +450,12 @@ class ModelCatalogue:
         self._recursive = recursive
         self._role = role
         self._external = allow_external
+        #: ON1b. A LIBRARY folder's catalogue keeps only the files whose
+        #: content says they are this role (`model_library.KindCache`), so one
+        #: mixed folder serves every role. None: a role folder, every file of
+        #: a supported format, as before.
+        self._sorter = sorter
+        self._hint = hint
         # A caller-supplied policy is a decision and is never re-probed; a
         # detected one may be revisited when the root's contents change.
         self._policy_pinned = case_policy is not None
@@ -480,6 +498,12 @@ class ModelCatalogue:
     @property
     def root_configured(self) -> bool:
         return True
+
+    @property
+    def sorted_by_content(self) -> bool:
+        """A library folder's catalogue (ON1b), not a role folder's."""
+
+        return self._sorter is not None
 
     # -- network roots -----------------------------------------------------
 
@@ -663,6 +687,9 @@ class ModelCatalogue:
         self._assert_root_unchanged()
         entry_path = self._root.joinpath(*relative.split("/"))
         candidate = self._describe(relative, entry_path)
+        if candidate is not None and self._sorter is not None and not self._is_mine(relative, entry_path):
+            # Replaced since the scan by a file of another kind.
+            candidate = None
         if candidate is None:
             # Format or containment changed under us since the snapshot.
             raise HeadlessError(
@@ -760,6 +787,11 @@ class ModelCatalogue:
                 # MAX_SCANNED_ENTRIES and `len(found)` caps entries KEPT at
                 # MAX_CATALOGUE_ENTRIES, both inside this recursion. Depth was
                 # never what made the walk finite.
+                if self._sorter is not None and self._sorter.skips(name):
+                    # A library folder may be a whole Forge `models` folder,
+                    # whose preprocessor and face-restorer downloads are not
+                    # models the owner picks.
+                    continue
                 if self._recursive:
                     self._scan(
                         Path(entry.path),
@@ -778,8 +810,24 @@ class ModelCatalogue:
             _, support = classify_format(name, self._role)
             if support is LoadSupport.UNSUPPORTED:
                 continue
+            if self._sorter is not None and not self._is_mine(relative, Path(entry.path)):
+                continue
             found.append((relative, Path(entry.path)))
         return
+
+    def _is_mine(self, relative: str, path: Path) -> bool:
+        """A library file belongs to this role when its content says so."""
+
+        try:
+            facts = path.stat()
+        except OSError:
+            return False
+        kind = self._sorter.kind_of(
+            path, relative=relative, hint=self._hint,
+            size=int(facts.st_size), mtime_ns=int(facts.st_mtime_ns),
+            root_name=self._root.name,
+        )
+        return kind.kind == self._role
 
     def _describe(self, relative: str, path: Path) -> ModelCandidate | None:
         name = relative.rsplit("/", 1)[-1]

@@ -76,6 +76,19 @@ def configured_roots(registry: Any) -> tuple[str, ...]:
     return tuple(str(root) for root in roots if str(root))
 
 
+def lora_folders(registry: Any) -> tuple[str, ...]:
+    """Every folder holding the owner's LoRAs: the role folders, then the
+    library folders with LoRAs in them (ON1b). For Open Folder and for the
+    folder beside a LoRA -- NOT for the engine, which is handed library LoRAs
+    one file at a time (`lora_bridge`)."""
+
+    try:
+        library = tuple(registry.library_roots("lora"))
+    except Exception:  # noqa: BLE001 - a registry without a library has none
+        library = ()
+    return configured_roots(registry) + tuple(r for r in library if r)
+
+
 def project_roots(roots: tuple[str, ...]) -> bool:
     """Point the engine's scan at the owner's roots. True if it took.
 
@@ -154,7 +167,9 @@ def available_loras(registry: Any) -> tuple[LoraEntry, ...]:
 
     roots = configured_roots(registry)
     if not roots:
-        return ()
+        # ON1b. Library LoRAs only: Studio's scan holds them (a name is the
+        # file stem either way), and no folder is projected for the engine.
+        return catalogued_loras(registry)
     has_network = getattr(registry, "has_network_roots", None)
     if has_network is not None and has_network("lora"):
         # A LoRA folder on another machine. `list_available_networks()` walks
@@ -187,6 +202,10 @@ def available_loras(registry: Any) -> tuple[LoraEntry, ...]:
         # AFTER the projection. Startup ran this against the default
         # directory, so without a refresh the answer would ignore the root the
         # owner just configured and say nothing about it.
+        # ON1b: the library's LoRA files too, armed or not.
+        from .lora_bridge import _include_library
+
+        _include_library(networks)
         networks.list_available_networks()
         found = networks.available_networks
     except (Exception, SystemExit):
@@ -211,4 +230,4 @@ def available_loras(registry: Any) -> tuple[LoraEntry, ...]:
 
 
 __all__ = ("LoraEntry", "available_loras", "catalogued_loras",
-           "configured_roots", "project_roots")
+           "configured_roots", "lora_folders", "project_roots")

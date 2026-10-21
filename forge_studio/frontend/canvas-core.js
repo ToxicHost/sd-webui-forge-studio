@@ -462,6 +462,10 @@ let _eraseScratch = null, _eraseScratchCtx = null;
 // mutates layers, develop params, regions, masks, or canvas dims.
 let _compBufCache = null;
 let _compBufCacheVer = -1;
+// DV1 (code review). Whether the cached buffer went through Develop: under
+// WebGL it does not (`_composite2D`), and a frame may reuse only a buffer
+// made the way it would make one.
+let _compBufCacheDeveloped = true;
 let _compositeVersion = 0;
 // DV1. The PICTURE's version: every composite change except Develop's own
 // (`markDevelopDirty`). Develop's caches and its display worker key on it, so
@@ -7552,10 +7556,17 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
     //   (2) Smudge / blur / dodge / clone / liquify mutate L.canvas per
     //       dab without per-dab version bumps, so caching mid-stroke
     //       would freeze the display on the first dab.
+    // DV1. Develop is NOT run here while the WebGL preview owns the display
+    // and Develop is on: this buffer's readers are then the 2D blit (off) and
+    // this cache, and the picture on screen comes from `getDisplayImageData`,
+    // which develops on its own. Running it here as well was a second full
+    // Develop pass per frame (60 ms of a 121 ms redraw at 768x768), thrown away.
+    const developSkipped = S.imagePreviewActive && !!(S.developParams && S.developParams.enabled);
     const canUseCache = !strokeDrawCanvas
         && !S.drawing
         && _compBufCache
         && _compBufCacheVer === _compositeVersion
+        && _compBufCacheDeveloped === !developSkipped
         && _compBufCache.width === w
         && _compBufCache.height === h;
 
@@ -7601,22 +7612,17 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
             }
         }
         // Develop: global, always-last, applied to the document-resolution buffer.
-        // Runs before UI overlays so HUD elements aren't tinted.
-        //
-        // DV1. NOT while the WebGL preview owns the display. This buffer's
-        // readers are the 2D blit (off then) and the cache below; the picture
-        // on screen comes from `getDisplayImageData`, which develops on its
-        // own. Running it here as well was a second full Develop pass per
-        // frame (60 ms of a 121 ms redraw at 768x768), thrown away.
-        const developSkipped = S.imagePreviewActive && !!(S.developParams && S.developParams.enabled);
+        // Runs before UI overlays so HUD elements aren't tinted. Not under
+        // WebGL with Develop on (`developSkipped`, above).
         if (!developSkipped) _applyDevelop(x, w, h, S.developParams);
 
-        // Snapshot the developed result for cursor-move re-use. Skip while
-        // a stroke is in progress — see the canUseCache comment above for
-        // why this matters even when strokeDrawCanvas itself is null.
-        // DV1: and never an UNdeveloped buffer, which a later 2D frame (the
-        // live fallback) would otherwise reuse as if it were developed.
-        if (!strokeDrawCanvas && !S.drawing && !developSkipped) {
+        // Snapshot the result for cursor-move re-use. Skip while a stroke is
+        // in progress — see the canUseCache comment above for why this matters
+        // even when strokeDrawCanvas itself is null. Tagged with whether it was
+        // developed, so a 2D frame (the live fallback) never reuses an
+        // undeveloped buffer as if it were developed, and WebGL frames keep
+        // their cursor-move cache with Develop on.
+        if (!strokeDrawCanvas && !S.drawing) {
             if (!_compBufCache || _compBufCache.width !== w || _compBufCache.height !== h) {
                 _compBufCache = _createCanvas(w, h);
             }
@@ -7625,6 +7631,7 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
             cacheCtx.clearRect(0, 0, w, h);
             cacheCtx.drawImage(_compBuffer, 0, 0);
             _compBufCacheVer = _compositeVersion;
+            _compBufCacheDeveloped = !developSkipped;
         }
     }
 

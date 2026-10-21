@@ -121,6 +121,12 @@ def _admitted(
         )
     except OSError:
         return []
+    return _admit(candidates, known)
+
+
+def _admit(candidates, known: Mapping[str, str]) -> list[tuple[Detector, Path]]:  # type: ignore[no-untyped-def]
+    """The admission rule itself, for files already found -- a root's walk,
+    or the library's detector files (ON1b)."""
 
     found: list[tuple[Detector, Path]] = []
     seen: set[str] = set()
@@ -212,17 +218,16 @@ def resolve_detector_path(
         return None
 
     seen: set[str] = set()
-    for root in roots:
-        for detector, path in _admitted(root, known):
-            # Every name is claimed as it is passed, not only the wanted one.
-            # Otherwise a second root holding the same name would answer for a
-            # file the catalogue never offered -- first root wins, exactly as
-            # `scan_configured_detectors` decides it.
-            if detector.name in seen:
-                continue
-            seen.add(detector.name)
-            if detector.name == wanted:
-                return path
+    for detector, path in _configured_admissions(registry, roots, known):
+        # Every name is claimed as it is passed, not only the wanted one.
+        # Otherwise a second root holding the same name would answer for a
+        # file the catalogue never offered -- first root wins, exactly as
+        # `scan_configured_detectors` decides it.
+        if detector.name in seen:
+            continue
+        seen.add(detector.name)
+        if detector.name == wanted:
+            return path
     return None
 
 
@@ -252,17 +257,32 @@ def scan_configured_detectors(registry: Any) -> tuple[Detector, ...]:
 
     found: list[Detector] = []
     seen: set[str] = set()
-    for root in roots:
-        for detector in scan_detectors(root):
-            # First root wins, matching the single-root rule inside
-            # `scan_detectors`: two files of the same name in two roots are
-            # one ambiguous choice, and resolving it by configuration order
-            # would make the answer depend on something invisible.
-            if detector.name in seen:
-                continue
-            seen.add(detector.name)
-            found.append(detector)
+    known = dict(BUNDLED_DETECTORS)
+    for detector, _path in _configured_admissions(registry, roots, known):
+        # First root wins, matching the single-root rule inside
+        # `scan_detectors`: two files of the same name in two roots are
+        # one ambiguous choice, and resolving it by configuration order
+        # would make the answer depend on something invisible.
+        if detector.name in seen:
+            continue
+        seen.add(detector.name)
+        found.append(detector)
     return tuple(found)
+
+
+def _configured_admissions(registry: Any, roots, known: Mapping[str, str]):  # type: ignore[no-untyped-def]
+    """Every admitted detector, roots in order, then the library's detector
+    files (ON1b; `library_files` gives files, never a folder). Duplicates are
+    left for the caller's first-wins rule."""
+
+    for root in roots:
+        yield from _admitted(root, known)
+    try:
+        library = tuple(registry.library_files("adetailer"))
+    except Exception:  # noqa: BLE001 - a registry without a library has none
+        library = ()
+    if library:
+        yield from _admit([Path(f) for f in library if Path(f).suffix.lower() == DETECTOR_SUFFIX], known)
 
 
 def describe_catalogue(detectors: Iterable[Detector]) -> dict[str, Any]:

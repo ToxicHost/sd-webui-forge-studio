@@ -219,6 +219,16 @@ class ControlNetUnitOptions:
 #: RG1. Mirrors `forge_studio.contracts.REGION_METHODS`.
 REGION_METHODS = ("auto", "attention_couple", "masked", "per_region")
 
+#: LV1. The output purpose of a Live Painting frame (`forge_studio.live_session`).
+LIVE_PURPOSE = "live"
+
+
+def is_live_frame(request: Any) -> bool:
+    """A Live Painting frame: `output.purpose == "live"` -- raw img2img,
+    returned inline, never saved. The ONE test the coordinator, the dispatch
+    log and the port share, on either request type (both carry `output`)."""
+    return str(getattr(getattr(request, "output", None), "purpose", "") or "") == LIVE_PURPOSE
+
 
 @dataclass(frozen=True)
 class RegionOptions:

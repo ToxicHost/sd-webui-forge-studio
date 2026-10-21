@@ -100,8 +100,8 @@ const API = {
   updateStatus:  ()       => API.get("/studio/api/update-status"),
 
   // Live Painting
-  liveStart:     ()       => API.post("/studio/live/start", {}),
-  liveStop:      ()       => API.post("/studio/live/stop", {}),
+  liveStart:     (body)   => API.post("/studio/live/start", body || {}),
+  liveStop:      (body)   => API.post("/studio/live/stop", body || {}),
   liveSubmit:    (params) => API.post("/studio/live/submit", params),
   liveStatus:    ()       => API.get("/studio/live/status"),
 
@@ -710,6 +710,14 @@ const ControlNetPanel = {
       const select = this._el(`paramCN${n}Model`);
       this._fill(select, models, m => String(m.model_id || ""),
         m => (m.model_id ? m.name : _i18n("ui.controlnet.noModel", "None")));
+      // ON3: only "None" -- say why there is nothing to pick.
+      if (select && !models.some(m => m && m.model_id)) {
+        const note = document.createElement("option");
+        note.disabled = true;
+        note.value = "";
+        note.textContent = studioEmptyListText("controlnet", "empty.kind.controlnet", "ControlNet models");
+        select.appendChild(note);
+      }
       window.StudioSearchableSelect?.attach(select, {
         placeholder: _i18n("ui.controlnet.pickModel", "— Select ControlNet model —"),
         searchPlaceholder: _i18n("ui.controlnet.filterModels", "Filter models…"),
@@ -1099,6 +1107,9 @@ const Progress = {
       // Declare this client's preview demand up front so the backend can
       // skip decoding previews nobody is watching.
       this.sendPreviewConfig();
+      // A reconnect may be a restarted Studio whose Live is off while this
+      // page's is on (code review, 2026-10-21).
+      if (window.Live && Live.active) Live._reannounce();
     };
 
     this.ws.onmessage = (e) => {
@@ -1111,6 +1122,9 @@ const Progress = {
           StatusBar.setModelUnloaded();
           showToast(`Model auto-unloaded after ${data.minutes}min idle`, "info");
           _refreshVRAM();
+        } else if (String(data.type || "").startsWith("live_") && window.Live
+                   && data.client && data.client !== Live._clientId) {
+          // Another tab's Live: its frames, its errors, its start and stop.
         } else if (data.type === "live_result") {
           console.log("[Live] Result received, image length:", data.image?.length);
           if (window.Live) Live._onResult(data);
@@ -1125,7 +1139,10 @@ const Progress = {
           if (window.Live) Live._onBusy(data.pending);
         } else if (data.type === "live_error") {
           console.error("[Live] WS: error:", data.message);
-          if (window.Live) Live._onError(data.message);
+          // The server's Live is off under this page: start it again rather
+          // than count it as a failed frame.
+          if (window.Live && data.inactive) Live._reannounce();
+          else if (window.Live) Live._onError(data.message);
         }
       } catch (err) {
         if (e.data && !e.data.startsWith?.("{")) return; // binary frame, ignore
@@ -1736,6 +1753,9 @@ function _jobModelSelection() {
 
 const Live = {
   // State
+  // This page's id for itself. Live events reach every open tab; each tab
+  // shows only its own (`Progress` drops the rest).
+  _clientId: Math.random().toString(36).slice(2, 12) + Date.now().toString(36),
   active: false,
   generating: false,
   pending: false,
@@ -1765,7 +1785,8 @@ const Live = {
       // Customize mode exits cleanly before Live begins — no re-mount can
       // happen mid-session (WP-L3 generation lock).
       if (window.Customizer?.active) Customizer.exit();
-      await API.liveStart();
+      await API.liveStart({ client: this._clientId });
+      this._errors = 0;
       // Seed: generate one if not set
       if (this.seed < 0) this.seed = Math.floor(Math.random() * 2147483647);
       this.active = true;
@@ -1785,11 +1806,12 @@ const Live = {
 
   async stop() {
     try {
-      await API.liveStop();
+      await API.liveStop({ client: this._clientId });
     } catch (e) {
       console.error("[Live] Stop failed:", e);
     }
     this.active = false;
+    this._errors = 0;
     this.generating = false;
     this.pending = false;
     this._clearTimers();
@@ -1869,7 +1891,7 @@ const Live = {
     this._updateUI();
     console.log("[Live] Submitting, hash:", spec.input_hash, "image size:", spec.image?.length);
     this._startWatchdog();
-    API.liveSubmit(spec).catch(e => console.error("[Live] Submit error:", e));
+    API.liveSubmit(spec).catch(e => this._submitFailed(e));
   },
 
   _submitNow() {
@@ -1881,7 +1903,7 @@ const Live = {
     this.generating = true;
     this._updateUI();
     this._startWatchdog();
-    API.liveSubmit(spec).catch(e => console.error("[Live] Submit error:", e));
+    API.liveSubmit(spec).catch(e => this._submitFailed(e));
   },
 
   _buildSpec() {
@@ -1918,6 +1940,7 @@ const Live = {
       input_hash: inputHash,
       // LV1. The model on the Generate panel, as Generate names it.
       model_selection: _jobModelSelection(),
+      client: this._clientId,
     };
   },
 
@@ -2019,6 +2042,34 @@ const Live = {
     }
     showToast(`Live: ${message}`, "error");
     this._updateUI();
+  },
+
+  // A frame the server refused. It says why on the socket as well, so this
+  // only makes sure the button does not stay on "generating" when the socket
+  // is down; a refusal because the server's Live is off re-announces it.
+  _submitFailed(e) {
+    console.error("[Live] Submit error:", e);
+    if (!this.active) return;
+    if (/not active/i.test(String(e && e.message))) { this._reannounce(); return; }
+    this.generating = false;
+    clearTimeout(this._watchdog);
+    this._updateUI();
+  },
+
+  // The server's Live is off while this page's is on: Studio restarted under
+  // the page (crash recovery) or the socket reconnected. Start it again and
+  // send the canvas as it is now. At most once every few seconds.
+  async _reannounce() {
+    if (!this.active || (this._reannouncedAt && Date.now() - this._reannouncedAt < 5000)) return;
+    this._reannouncedAt = Date.now();
+    try {
+      await API.liveStart({ client: this._clientId });
+      this.generating = false;
+      this.lastHash = "";
+      this._scheduleCanvasCheck(0);
+    } catch (e) {
+      console.error("[Live] Re-start failed:", e);
+    }
   },
 
   // --- ADetailer management ---
@@ -2615,6 +2666,7 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   const teRow = document.getElementById("textEncoderRow");
   const teSelect = document.getElementById("paramTextEncoder");
   if (!modelTitle || !teSelect) {
+    State._currentModelCheck = null;
     KleinReferences.fromCheck(null);
     ControlNetPanel.fromCheck(null);
     RegionMethod.fromCheck(null);
@@ -2630,6 +2682,8 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   // went on asking for a text encoder, so Load was unreachable through the
   // UI. Fixing the probe removed the reason for the override.
   const check = await checkModelTE(modelTitle);
+  // ON3: what `_generateBlocker` asks before a job is submitted.
+  State._currentModelCheck = check;
   // KR1. Whether this checkpoint takes Klein reference images; shown or
   // hidden by `_applyArchRules`, which every caller runs next.
   KleinReferences.fromCheck(check);
@@ -2852,12 +2906,14 @@ function _applySelectorState(select, entries, role) {
   const count = Array.isArray(entries) ? entries.length : 0;
   let note = "";
   if (_MODEL_ROOT_STATE.configured && status) {
+    // ON3: model folders are one list now, so the wording is about the
+    // owner's folders rather than one folder per kind.
     if (status.status === "not_configured") {
-      note = _i18n("selector.unconfigured", "No folder set — choose one in Settings");
-    } else if (status.status === "refused") {
+      note = _i18n("selector.noFolders", "No model folders yet — add one in Settings");
+    } else if (status.status === "refused" || status.status === "unreachable") {
       note = _i18n("selector.unavailable", "Folder unavailable — check Settings");
     } else if (!count) {
-      note = _i18n("selector.empty", "No models found in that folder");
+      note = _i18n("selector.noneInFolders", "None found in your model folders");
     } else if (status.truncated) {
       note = _i18n("selector.truncated", "{n} shown — folder contains more", { n: count });
     }
@@ -2878,6 +2934,64 @@ function _applySelectorState(select, entries, role) {
     select.insertBefore(option, select.firstChild);
     select.value = "";
   }
+}
+
+// ON3. Why a list of one kind of model is empty, in words the owner can act
+// on: no model folders yet, folders Studio cannot read, or none of that kind
+// in them. Shared by the LoRA browser and the ControlNet and Auto Detail
+// lists, from the same per-role status the model selectors use.
+function studioEmptyListText(role, kindKey, kindFallback) {
+  const status = _MODEL_ROOT_STATE[role];
+  if (!status || status.status === "not_configured") {
+    return _i18n("empty.noFolders", "No model folders yet — add one in Settings → General → Model folders");
+  }
+  if (status.status === "refused" || status.status === "unreachable") {
+    return _i18n("empty.unavailable", "Your model folders can’t be read right now — check Settings → General → Model folders");
+  }
+  return _i18n("empty.noneFound", "No {kind} in your model folders", { kind: _i18n(kindKey, kindFallback) });
+}
+window.studioEmptyListText = studioEmptyListText;
+
+// ON3. What stops Generate, said before anything is submitted. The server
+// refused a job with no model as "No warm model session is ready for a
+// job"; a model that needs a text encoder or a VAE it was not given failed
+// later, inside the load. Never guesses a component (the Extension's rule,
+// `restoreVAEForModel`): it says which box to fill.
+function _generateBlocker() {
+  const model = (document.getElementById("paramModel")?.value || "").trim();
+  if (!model || model === "None") {
+    if (!(State.models || []).length) {
+      return { text: studioEmptyListText("checkpoint", "empty.kind.checkpoint", "checkpoints"), focus: null };
+    }
+    return { text: _i18n("generate.needModel", "Choose a model in the Model box first"), focus: "paramModel" };
+  }
+  const check = State._currentModelCheck;
+  if (check && check.needs_te) {
+    const te = document.getElementById("paramTextEncoder")?.value || "";
+    if (!te || te === "None") {
+      return {
+        text: (State._textEncoderList || []).length
+          ? _i18n("generate.needTe", "This model needs a text encoder — choose one in the Text encoder box")
+          : _i18n("generate.needTeNone", "This model needs a text encoder, and none was found in your model folders"),
+        focus: "paramTextEncoder",
+      };
+    }
+  }
+  if (check && check.needs_vae) {
+    const select = document.getElementById("paramVAE");
+    const vae = select?.value || "";
+    if (!vae || vae === "Automatic" || vae === "None") {
+      const available = [...(select?.options || [])].some(o => o.value && !o.disabled
+        && o.value !== "Automatic" && o.value !== "None");
+      return {
+        text: available
+          ? _i18n("generate.needVae", "This model needs a VAE — choose one in the VAE box")
+          : _i18n("generate.needVaeNone", "This model needs a VAE, and none was found in your model folders"),
+        focus: "paramVAE",
+      };
+    }
+  }
+  return null;
 }
 
 async function populateDropdowns() {
@@ -3209,6 +3323,14 @@ async function populateDropdowns() {
           sel.innerHTML = adModels.map(m =>
             `<option value="${m.name}">${m.name}</option>`
           ).join("") + `<option value="${AD_WORDS}">Words…</option>`;
+          // ON3: no detector files -- Words… still works -- says why.
+          if (!adModels.length) {
+            const note = document.createElement("option");
+            note.disabled = true;
+            note.value = "";
+            note.textContent = studioEmptyListText("adetailer", "empty.kind.adetailer", "detectors");
+            sel.insertBefore(note, sel.firstChild);
+          }
           // Restore saved value if it exists in the new options, otherwise
           // default slot 1 to face_yolo (slots 2/3 stay at first option)
           if (savedVal && [...sel.options].some(o => o.value === savedVal)) {
@@ -3855,6 +3977,17 @@ async function doGenerate(overrides = {}) {
   // LV2 (owner, 2026-10-20): pressing Generate turns Live off. A frame already
   // running finishes and is not followed by another; this job queues behind it.
   if (window.Live && Live.active) await Live.stop();
+  // ON3: the reason Generate cannot run, before anything is submitted.
+  const _blocked = _generateBlocker();
+  if (_blocked) {
+    showToast(_blocked.text, "error");
+    if (_blocked.focus) {
+      const target = document.getElementById(_blocked.focus);
+      target?.scrollIntoView?.({ block: "center" });
+      target?.focus?.();
+    }
+    return;
+  }
   // `overrides` exists for ONE caller: the standalone Upscale panel, which has
   // its own Steps and Denoise controls and must not silently inherit the
   // generation panel's. Everything else -- the model selection, the prompt,
@@ -4560,6 +4693,7 @@ async function doGenerate(overrides = {}) {
           source = "live";
           url = b64;
         }
+        if (savedPath) window.Education?.notifySaved?.(savedPath);
         const _srvId = srv.entry_id || "";
         const entryId = _srvId || `live-${_batchTs}-${_liveEntrySeq++}`;
         return {
@@ -7978,44 +8112,17 @@ function bindUI() {
 
   // ---- Model folders -------------------------------------------------
   //
-  // One transaction over every role that owns a status line. The browser
-  // validates nothing about the filesystem: it collects text, posts it to the
-  // protected settings route, and renders whatever status comes back. The
-  // backend stays authoritative, which is why a bad path produces a named role
-  // and an unchanged config rather than a JavaScript guess about whether a
-  // directory exists.
+  // ON1b (2026-10-21). One LIST of folders, any number, each walked through
+  // its subfolders with every file sorted by what it is. The rows -- path,
+  // what the folder holds, its Unrecognized panel, Remove -- are drawn by
+  // `studio-dir-picker.js`, which also owns Add and saves at once. This file
+  // keeps what other surfaces share: the owner wording for a folder's status,
+  // Browse (the system's folder dialog, FP1), and the network switch.
   //
-  // `lora` and `adetailer` were both missing from this table until AR8.3, and
-  // this table is the ONLY thing that writes `#modelRootStatus*` or fills
-  // `#modelRoot*` from the server. So both rows kept their static index.html
-  // default and told the owner "Not configured" no matter what was configured.
-  // For LoRA that was demonstrably a lie: the same server response reported
-  // `role: "lora", status: "ready", entry_count: 73`, the startup log said
-  // "Model directory for lora: 73 found", and the "+ LoRAs" picker rendered
-  // all 73. Measured in Evidence/ar8.3-browser-baseline/findings.md.
-  //
-  // `lora` was the FIFTH literal spelling of the role set and `adetailer` the
-  // sixth. `1f8d28f3` fixed the fourth -- `studio-dir-picker.js` ROLES, which
-  // owns Browse, Add and the roots list -- and this one was not updated with
-  // it, which is exactly why the save path worked and the display path did
-  // not. The adetailer row was found by the guard written for the LoRA one
-  // rather than by another owner report, which is the whole argument for
-  // guarding the structure instead of the instance.
-  //
-  // Any role that gains a `#modelRootStatus<Suffix>` element belongs here on
-  // the same day; `test_ar83_browser_defects.py` now fails if one does not.
-  const MODEL_ROOT_FIELDS = [
-    { role: "checkpoint",   input: "modelRootCheckpoint",  status: "modelRootStatusCheckpoint",  browse: "modelRootBrowseCheckpoint" },
-    { role: "text_encoder", input: "modelRootTextEncoder", status: "modelRootStatusTextEncoder", browse: "modelRootBrowseTextEncoder" },
-    { role: "vae",          input: "modelRootVae",         status: "modelRootStatusVae",         browse: "modelRootBrowseVae" },
-    { role: "lora",         input: "modelRootLora",        status: "modelRootStatusLora",        browse: "modelRootBrowseLora" },
-    { role: "adetailer",    input: "modelRootAdetailer",   status: "modelRootStatusAdetailer",   browse: "modelRootBrowseAdetailer" },
-    { role: "embedding",    input: "modelRootEmbedding",   status: "modelRootStatusEmbedding",   browse: "modelRootBrowseEmbedding" },
-    { role: "upscaler",     input: "modelRootUpscaler",    status: "modelRootStatusUpscaler",    browse: "modelRootBrowseUpscaler" },
-    { role: "controlnet",   input: "modelRootControlnet",  status: "modelRootStatusControlnet",  browse: "modelRootBrowseControlnet" },
-  ];
-  // Held per process by the server and never persisted; refreshed on each read.
-  let _modelRootToken = "";
+  // The browser validates nothing about the filesystem: it posts text to the
+  // protected settings route and renders what comes back, so a bad path
+  // produces a stable code and an unchanged config rather than a JavaScript
+  // guess about whether a directory exists.
 
   function _modelRootStatusText(entry) {
     if (!entry) return _i18n("settings.modelFolders.unconfigured", "Not configured");
@@ -8058,19 +8165,14 @@ function bindUI() {
     return base;
   }
 
-  // `_studioPickFolder` lives at the top level now (beside `_trustSaveFolder`):
-  // the first-run card calls it too, from outside this function.
+  // The picker renders folder rows with the same words.
+  window.studioModelFolderStatus = _modelRootStatusText;
+  window.loadRegistries = _loadRegistries;
 
-  function _renderModelRootStatuses(document_) {
-    const byRole = {};
-    (document_?.roles || []).forEach(entry => { byRole[entry.role] = entry; });
-    MODEL_ROOT_FIELDS.forEach(field => {
-      const el = document.getElementById(field.status);
-      if (!el) return;
-      const entry = byRole[field.role];
-      el.textContent = _modelRootStatusText(entry);
-      el.dataset.state = entry ? entry.status : "not_configured";
-    });
+  // Held per process by the server and never persisted; refreshed on each read.
+  let _modelRootToken = "";
+
+  function _renderNetworkToggle(document_) {
     // The server owns the switch; the knob only ever mirrors what it said.
     const networkToggle = document.getElementById("toggleNetworkModelFolders");
     if (networkToggle && document_ && typeof document_.allow_network_model_roots === "boolean") {
@@ -8084,19 +8186,7 @@ function bindUI() {
       if (!response.ok) return null;
       const document_ = await response.json();
       _modelRootToken = document_.token || "";
-      // The text box is an ENTRY field, not a display of what is configured.
-      //
-      // It used to be filled from the server, which was wrong twice over.
-      // `document_.roots[role]` is an ARRAY, so a role with two folders
-      // rendered as `C:/Models,D:/More` -- a string that is not a path, and
-      // which the save then posted as one. And filling it made "blank" look
-      // like a statement about the role rather than about the box, which is
-      // the reading that cost the owner their folders (see the save handler).
-      //
-      // What IS configured is shown by the roots list beneath each row --
-      // `studio-dir-picker` renders one row per root with its path, its status
-      // and its own Remove. That is the display; this is the entry.
-      _renderModelRootStatuses(document_);
+      _renderNetworkToggle(document_);
       return document_;
     } catch (_) {
       return null;
@@ -8104,146 +8194,34 @@ function bindUI() {
   }
   window.readModelRoots = _readModelRoots;
 
-  function _setModelFoldersState(state, message) {
-    const button = document.getElementById("modelFoldersSave");
-    const note = document.getElementById("modelFoldersMessage");
-    if (button) {
-      button.disabled = state === "saving";
-      button.textContent = state === "saving"
-        ? _i18n("settings.modelFolders.saving", "Saving…")
-        : _i18n("settings.modelFolders.save", "Save folders");
-    }
-    if (note && message) note.textContent = message;
-    if (note) note.dataset.state = state;
-  }
-
-  MODEL_ROOT_FIELDS.forEach(field => {
-    // Browse fills the field and nothing else. Nothing is applied until Save,
-    // which is what makes the three fields one transaction rather than three.
-    // FP1: the system's folder dialog, opened in the folder typed here or, if
-    // none, the role's first configured folder. This is the ONLY Browse
-    // handler for these buttons; `studio-dir-picker.js` no longer binds them.
-    document.getElementById(field.browse)?.addEventListener("click", async () => {
-      const input = document.getElementById(field.input);
-      const configured = (window.StudioDirPicker?.roots?.() || {})[field.role] || [];
-      const start = (input?.value || "").trim() || configured[0] || "";
-      const path = await _studioPickFolder({ purpose: field.role, start });
-      if (path && input) input.value = path;
-    });
-  });
-
-  document.getElementById("modelFoldersSave")?.addEventListener("click", async () => {
-    // THE COMPLETE MAPPING, every time. This is a data-loss fix.
-    //
-    // It used to post only the NON-EMPTY text boxes. The route it posts to is
-    // all-or-nothing by contract: `ModelRootSettings.apply` hands the payload
-    // straight to `ModelRootRegistry.configure`, whose docstring is "Replace
-    // every role at once. All-or-nothing", and `_storable_roots` then omits
-    // absent roles from studio-config.json. There is no merge anywhere on that
-    // path. So a role whose box happened to be empty was DELETED from the live
-    // registry and rewritten out of the config file.
-    //
-    // Not a corner case: `studio-dir-picker` CLEARS the box after "Add
-    // folder", so the ordinary sequence -- add a folder, then press Save --
-    // destroyed the folder that had just been added.
-    //
-    // Blank now means "nothing to add", which is what an entry box means.
-    // Unconfiguring a root stays possible and stays EXPLICIT, through the
-    // per-root Remove in the list beneath, rather than being something an
-    // empty box does silently on the owner's behalf.
-    //
-    // Typed values are captured BEFORE the read below, because
-    // `_readModelRoots` is what refreshes the CSRF token this POST needs and
-    // it also re-renders the row.
-    const typed = {};
-    MODEL_ROOT_FIELDS.forEach(field => {
-      const value = (document.getElementById(field.input)?.value || "").trim();
-      if (value) typed[field.role] = value;
-    });
-
-    _setModelFoldersState("saving", _i18n("settings.modelFolders.savingNote", "Checking folders…"));
-
-    // The SERVER is the authority on what is currently configured: the picker
-    // writes there on every Add, Remove and reorder, so its state is already
-    // durable and this cannot post a stale list.
-    const current = await _readModelRoots();
-    const roots = {};
-    const configured = (current && current.roots) || {};
-    Object.keys(configured).forEach(role => {
-      const value = configured[role];
-      const list = Array.isArray(value) ? value.slice() : (value ? [value] : []);
-      if (list.length) roots[role] = list;
-    });
-    Object.keys(typed).forEach(role => {
-      const list = roots[role] || [];
-      // Adding a folder that is already configured is a no-op rather than a
-      // duplicate row.
-      if (list.indexOf(typed[role]) < 0) list.push(typed[role]);
-      roots[role] = list;
-    });
-    try {
-      const response = await fetch(API.base + "/studio/settings/model_roots", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Studio-Settings-Token": _modelRootToken,
-        },
-        body: JSON.stringify({ model_roots: roots }),
-      });
-      const document_ = await response.json();
-      if (!response.ok) {
-        // Nothing changed server-side. Say which folder, without echoing a
-        // backend exception at the owner.
-        _setModelFoldersState("error", _modelRootSaveError(document_));
-        showToast(_i18n("settings.modelFolders.saveFailed", "Model folders not changed"), "error");
-        await _readModelRoots();
-        return;
-      }
-      _renderModelRootStatuses(document_);
-      // Accepted, so the entry box has done its job -- same idiom as the
-      // picker's "Add folder", and it stops a second Save re-adding the same
-      // path.
-      MODEL_ROOT_FIELDS.forEach(field => {
-        const input = document.getElementById(field.input);
-        if (input) input.value = "";
-      });
-      if (window.StudioDirPicker && typeof window.StudioDirPicker.refresh === "function") {
-        window.StudioDirPicker.refresh().catch(() => {});
-      }
-      const persisted = document_.persisted
-        ? _i18n("settings.modelFolders.saved", "Folders saved.")
-        : _i18n("settings.modelFolders.savedNotPersisted", "Folders applied for this session only.");
-      _setModelFoldersState("saved", persisted);
-      showToast(_i18n("settings.modelFolders.saveOk", "Model folders updated"), "success");
-      // A root change invalidates every id the selectors are holding.
-      if (typeof window.populateDropdowns === "function") {
-        await window.populateDropdowns();
-      }
-      // UP1. The server rescanned the upscaler folders; refill the Hires and
-      // Upscale menus, which `_refreshRegistries` no longer touches once live.
-      _loadRegistries().catch(() => {});
-    } catch (e) {
-      _setModelFoldersState("error", _i18n("settings.modelFolders.saveUnreachable", "Studio could not be reached. Folders were not changed."));
+  // FP1: the system's folder dialog, opened in the folder typed here or, if
+  // none, the first library folder. The chosen folder is ADDED -- Add saves
+  // at once, so a fill-the-box step would only be one more click.
+  document.getElementById("modelLibraryBrowse")?.addEventListener("click", async () => {
+    const input = document.getElementById("modelLibraryInput");
+    const configured = window.StudioDirPicker?.library?.() || [];
+    const start = (input?.value || "").trim() || (configured[0] && configured[0].path) || "";
+    const path = await _studioPickFolder({ purpose: "library", start });
+    if (!path) return;
+    if (window.StudioDirPicker && typeof window.StudioDirPicker.addFolder === "function") {
+      window.StudioDirPicker.addFolder(path);
+      if (input) input.value = "";
+    } else if (input) {
+      input.value = path;
     }
   });
 
   // "Allow network model folders" saves on its own click, as one transaction
-  // with the folders that are configured right now -- the same complete
-  // mapping the Save button posts. Turning it off while a network folder is
-  // configured is refused by the server, and the knob goes back.
+  // with the folders that are configured right now. Turning it off while a
+  // network folder is configured is refused by the server, and the knob goes
+  // back.
   document.getElementById("toggleNetworkModelFolders")?.addEventListener("click", async (event) => {
     const toggle = event.currentTarget;
     // The generic .toggle-track handler has already flipped the knob.
     const wanted = toggle.classList.contains("on");
     const current = await _readModelRoots();
     toggle.classList.toggle("on", wanted);
-    const roots = {};
-    const configured = (current && current.roots) || {};
-    Object.keys(configured).forEach(role => {
-      const value = configured[role];
-      const list = Array.isArray(value) ? value.slice() : (value ? [value] : []);
-      if (list.length) roots[role] = list;
-    });
+    const library = (current && current.model_library) || [];
     try {
       const response = await fetch(API.base + "/studio/settings/model_roots", {
         method: "POST",
@@ -8251,16 +8229,17 @@ function bindUI() {
           "Content-Type": "application/json",
           "X-Studio-Settings-Token": _modelRootToken,
         },
-        body: JSON.stringify({ model_roots: roots, allow_network_model_roots: wanted }),
+        body: JSON.stringify({ model_library: library, allow_network_model_roots: wanted }),
       });
       const document_ = await response.json();
       if (!response.ok) {
         toggle.classList.toggle("on", !wanted);
-        _setModelFoldersState("error", _modelRootSaveError(document_));
+        const note = document.getElementById("modelLibraryMessage");
+        if (note) note.textContent = _modelRootSaveError(document_);
         showToast(_i18n("settings.modelFolders.network.failed", "Network folder setting not changed"), "error");
         return;
       }
-      _renderModelRootStatuses(document_);
+      _renderNetworkToggle(document_);
       if (window.StudioDirPicker && typeof window.StudioDirPicker.refresh === "function") {
         window.StudioDirPicker.refresh().catch(() => {});
       }
@@ -8269,7 +8248,6 @@ function bindUI() {
         : _i18n("settings.modelFolders.network.off", "Network model folders turned off"), "success");
     } catch (_) {
       toggle.classList.toggle("on", !wanted);
-      _setModelFoldersState("error", _i18n("settings.modelFolders.saveUnreachable", "Studio could not be reached. Folders were not changed."));
     }
   });
 
@@ -11747,6 +11725,8 @@ async function init() {
   try {
     if (typeof window._studioLoadDefaults === "function") {
       _hadStoredConfig = await window._studioLoadDefaults();
+      // ON2: an install with saved defaults is not a first run.
+      window.__studioHadStoredConfig = !!_hadStoredConfig;
     } else {
       // No defaults — set initial status from input values
       const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
@@ -12151,221 +12131,12 @@ async function init() {
     }
   }
 
-  // First-run preferences — only for genuinely fresh installs (no server
-  // defaults, no saved session, and never onboarded/skipped before). Existing
-  // users are never interrupted.
-  _maybeShowFirstRun(_hadStoredConfig);
+  // The first run lives in education.js (ON2): one screen about the owner's
+  // models, then an optional look around. The preferences card it replaced
+  // is gone (owner decision 4): Studio's defaults apply, a one-time note
+  // says where the first picture was saved, and every choice is in Settings.
 
   console.log("[Studio] Ready");
-}
-
-// ═══════════════════════════════════════════
-// FIRST-RUN PREFERENCES (PR 4)
-// ═══════════════════════════════════════════
-// A lightweight onboarding card shown once on a fresh install. It only
-// configures settings that already exist and persists them through the
-// normal defaults system (no second preference store). Everything here is
-// changeable later under Settings.
-const _ONBOARD_KEY = "studio-onboarded";
-
-// Internal-alpha smoke mode: a launch URL carrying `?onboarding=off`
-// suppresses nonessential first-run overlays for THIS visit only. Nothing
-// is written anywhere -- no localStorage, no server state -- so normal
-// owner mode (overlays once, locally remembered) is untouched.
-function _onboardingSuppressedByUrl() {
-  try {
-    return new URLSearchParams(window.location.search)
-      .get("onboarding") === "off";
-  } catch (_) { return false; }
-}
-
-function _maybeShowFirstRun(hadStoredConfig) {
-  if (_onboardingSuppressedByUrl()) return;                   // smoke mode
-  try {
-    if (hadStoredConfig) return;                              // existing user
-    if (localStorage.getItem(_ONBOARD_KEY)) return;           // already chosen/skipped
-    // ED1. Also kept in Studio's preferences: localStorage is per port and
-    // per browser, so a launch on another port asked again.
-    if (window.Prefs?.get?.("education", null)?.onboarded) return;
-  } catch (_) { return; }
-  // Defer a tick so the rest of init settles (dropdowns, theme) first.
-  setTimeout(_showFirstRunModal, 200);
-}
-
-// Flip a Studio on/off toggle to a desired boolean by reusing its own click
-// handler — that keeps the associated State.* field in sync, unlike poking
-// the class directly.
-function _setToggleState(id, want) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  if (el.classList.contains("on") !== !!want) el.click();
-}
-
-function _showFirstRunModal() {
-  if (document.getElementById("firstRunOverlay")) return;
-  const _tt = (k, f) => (window.I18N && window.I18N.t) ? window.I18N.t(k, f) : f;
-  let _customPath = "";   // server-side folder picked for auto-save (empty = Studio’s results folder)
-
-  const ov = document.createElement("div");
-  ov.id = "firstRunOverlay";
-  ov.className = "first-run-overlay";
-  ov.innerHTML =
-    '<div class="first-run-card" role="dialog" aria-modal="true" aria-labelledby="firstRunTitle">' +
-      '<div class="first-run-head">' +
-        '<h2 id="firstRunTitle">' + _tt("firstRun.title", "Welcome to Forge Studio") + '</h2>' +
-        '<p>' + _tt("firstRun.subtitle", "A couple of quick preferences — you can change all of these later in Settings.") + '</p>' +
-      '</div>' +
-      '<div class="first-run-group">' +
-        '<div class="first-run-label">' + _tt("firstRun.format.label", "Default image format") + '</div>' +
-        '<div class="first-run-choices" data-fr="format">' +
-          '<button class="first-run-choice active" data-val="png">PNG</button>' +
-          '<button class="first-run-choice" data-val="jpeg">JPEG</button>' +
-          '<button class="first-run-choice" data-val="webp">WebP</button>' +
-        '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.format.hint", "PNG is lossless; JPEG/WebP are smaller.") + '</div>' +
-      '</div>' +
-      '<div class="first-run-group">' +
-        '<div class="first-run-label">' + _tt("firstRun.saveLoc.label", "Where should images save?") + '</div>' +
-        '<div class="first-run-choices" data-fr="saveloc">' +
-          '<button class="first-run-choice active" data-val="default">' + _tt("firstRun.saveLoc.default", "Studio’s results folder") + '</button>' +
-          '<button class="first-run-choice" data-val="custom">' + _tt("firstRun.saveLoc.custom", "Choose a folder…") + '</button>' +
-        '</div>' +
-        '<div class="first-run-browse" id="firstRunBrowseRow" style="display:none;">' +
-          '<input type="text" class="first-run-path-input" id="firstRunPath" autocomplete="off" spellcheck="false" ' +
-            'placeholder="' + _tt("firstRun.saveLoc.placeholder", "Type a folder path on the Forge server…") + '">' +
-          '<button class="first-run-browse-btn" id="firstRunBrowse">' + _tt("firstRun.saveLoc.browse", "Browse…") + '</button>' +
-        '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.saveLoc.hint", "This folder is on the machine running Studio. Type a path or press Browse… to pick one. Leave on the default to use Studio’s results folder.") + '</div>' +
-      '</div>' +
-      '<div class="first-run-group">' +
-        '<div class="first-run-label">' + _tt("firstRun.meta.label", "Embed metadata into image files") + '</div>' +
-        '<div class="first-run-choices" data-fr="meta">' +
-          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.meta.on", "Yes") + '</button>' +
-          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.meta.off", "No") + '</button>' +
-        '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.meta.hint", "Writes prompt/seed/settings into each saved image so they can be recalled later. (The Gallery indexes this either way.)") + '</div>' +
-      '</div>' +
-      '<div class="first-run-group">' +
-        '<div class="first-run-label">' + _tt("firstRun.monitor.label", "Monitor this folder in the Gallery") + '</div>' +
-        '<div class="first-run-choices" data-fr="monitor">' +
-          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.monitor.on", "Yes") + '</button>' +
-          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.monitor.off", "No") + '</button>' +
-        '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.monitor.hint", "Adds a chosen folder to the Gallery for live auto-sync. The default output folder is already watched.") + '</div>' +
-      '</div>' +
-      '<div class="first-run-foot">' +
-        '<button class="first-run-skip" id="firstRunSkip">' + _tt("firstRun.skip", "Skip") + '</button>' +
-        '<button class="first-run-go" id="firstRunGo">' + _tt("firstRun.go", "Get started") + '</button>' +
-      '</div>' +
-      '<div class="first-run-note">' + _tt("firstRun.note", "Tip: change any of this anytime in Settings.") + '</div>' +
-    '</div>';
-  document.body.appendChild(ov);
-
-  const _browseRow = ov.querySelector("#firstRunBrowseRow");
-  const _pathEl = ov.querySelector("#firstRunPath");
-
-  // Typing the path directly is the reliable route for remote/VM/headless
-  // setups, where the server-side Browse dialog opens on the Forge machine
-  // (not the user's browser). Keep _customPath in sync as they type.
-  _pathEl?.addEventListener("input", () => { _customPath = (_pathEl.value || "").trim(); });
-
-  // Single-select chip groups; the save-location group also toggles the
-  // Browse row so the path field only appears when "custom" is chosen.
-  ov.querySelectorAll(".first-run-choices").forEach(grp => {
-    grp.addEventListener("click", e => {
-      const btn = e.target.closest(".first-run-choice");
-      if (!btn) return;
-      grp.querySelectorAll(".first-run-choice").forEach(b => b.classList.toggle("active", b === btn));
-      if (grp.dataset.fr === "saveloc" && _browseRow) {
-        const custom = btn.dataset.val === "custom";
-        _browseRow.style.display = custom ? "" : "none";
-        if (custom && _pathEl) _pathEl.focus();
-      }
-    });
-  });
-
-  // Folder picker — the system's folder dialog (FP1). The text field above is
-  // the fallback for a host with no desktop.
-  ov.querySelector("#firstRunBrowse")?.addEventListener("click", async () => {
-    const path = await _studioPickFolder({ purpose: "save", start: _pathEl?.value });
-    if (path) { _customPath = path; if (_pathEl) _pathEl.value = _customPath; }
-  });
-
-  const _pick = (group) => ov.querySelector('[data-fr="' + group + '"] .first-run-choice.active')?.dataset.val;
-  const _close = () => {
-    ov.remove();
-    try { localStorage.setItem(_ONBOARD_KEY, "1"); } catch (_) {}
-    try {
-      const edu = window.Prefs?.get?.("education", null);
-      window.Prefs?.set?.("education", { ...(edu && typeof edu === "object" ? edu : {}), onboarded: true });
-    } catch (_) {}
-  };
-
-  document.getElementById("firstRunSkip")?.addEventListener("click", _close);
-
-  document.getElementById("firstRunGo")?.addEventListener("click", async () => {
-    // Apply through the real controls so State + Settings UI stay in sync.
-    const fmt = _pick("format") || "png";
-    const fmtSel = document.getElementById("settingSaveFormat");
-    if (fmtSel) { fmtSel.value = fmt; fmtSel.dispatchEvent(new Event("change")); }
-
-    // Save location → settingSaveDir (only when a custom folder was chosen).
-    // A custom folder must be explicitly trusted before Studio will write to
-    // it; if trust fails (bad/too-broad path), keep the card open so the user
-    // can fix it rather than silently falling back to the default.
-    const useCustom = _pick("saveloc") === "custom" && _customPath;
-    if (useCustom && !(await _trustSaveFolder(_customPath))) return;
-    const saveInput = document.getElementById("settingSaveDir");
-    if (saveInput) { saveInput.value = useCustom ? _customPath : ""; saveInput.dispatchEvent(new Event("change")); }
-    State.saveDir = useCustom ? _customPath : "";
-
-    _setToggleState("toggleMetadata", _pick("meta") === "on");
-
-    // Gallery monitoring — register the chosen folder with the watcher.
-    // Only actionable when a custom path exists (the default output folder is
-    // already watched, and its absolute path isn't known to the browser).
-    if (_pick("monitor") === "on" && useCustom) {
-      try {
-        const registration = await API.post(
-          "/studio/gallery/scan-folders", { path: _customPath }
-        );
-        if (!registration || registration.ok !== true) {
-          throw new Error(registration?.error || "Gallery folder registration was refused.");
-        }
-        const scan = await API.post("/studio/gallery/scan", {});
-        if (scan?.error) throw new Error(String(scan.error));
-      } catch (_) {
-        showToast(
-          _tt(
-            "firstRun.galleryUnavailable",
-            "Gallery monitoring could not be enabled. The setup card will stay open; other choices may already have been applied. Turn monitoring off or try again after Gallery is installed."
-          ),
-          "error"
-        );
-        return;
-      }
-    }
-
-    // Persist via the normal defaults system (also marks the install as
-    // configured, so this never reappears).
-    try {
-      if (typeof window._studioSaveDefaults !== "function") {
-        throw new Error("Defaults persistence is unavailable.");
-      }
-      await window._studioSaveDefaults();
-    } catch (_) {
-      showToast(
-        _tt(
-          "firstRun.saveFailed",
-          "Preferences could not be saved. The setup card will stay open; review your choices and try again."
-        ),
-        "error"
-      );
-      return;
-    }
-    _close();
-    if (typeof showToast === "function") showToast(_tt("firstRun.done", "Preferences saved — welcome aboard!"), "success");
-  });
 }
 
 // ═══════════════════════════════════════════

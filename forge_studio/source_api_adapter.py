@@ -421,9 +421,10 @@ class SourceFrontendAdapter:
         path."""
 
         from forge_headless.contracts import HeadlessError
-        from forge_headless.lora_catalogue import configured_roots
+        from forge_headless.lora_catalogue import lora_folders
 
-        roots = configured_roots(self._model_roots) if self._model_roots is not None else ()
+        # ON1b: a library folder holding LoRAs counts too.
+        roots = lora_folders(self._model_roots) if self._model_roots is not None else ()
         if not roots:
             raise SourceFrontendAdapterError("LoRA directory not found", http_status=404)
         actions = getattr(self, "_native_actions", None)
@@ -1799,9 +1800,13 @@ class SourceFrontendAdapter:
         if registry is None:
             return {"configured": False, "roles": []}
         statuses = registry.describe()
+        library = getattr(registry, "configured_library", None)
         return {
             "configured": True,
             "roles": [statuses[role].to_dict() for role in sorted(statuses)],
+            # ON2: how many model folders the owner has -- a count, no paths.
+            # The first run is for an install with none.
+            "library_folders": len(library()) if callable(library) else 0,
         }
 
     def _models(self) -> list[_Model]:

@@ -12,8 +12,9 @@ What differs from the Extension, each deliberately:
     through the model registry, which re-checks containment. `/models` carries
     no `path` field, and error text is scrubbed of the configured folders.
   * Results are written to the FIRST configured checkpoint folder (the
-    Extension used `models/Stable-diffusion`), which is rescanned when a job
-    finishes, so the new model appears in every model list.
+    Extension used `models/Stable-diffusion`) -- with only library folders
+    (ON1b), beside the owner's first checkpoint -- which is rescanned when a
+    job finishes, so the new model appears in every model list.
   * An output name is a bare file name; one that already exists is refused for
     every step, not only for a single merge -- the Extension's chain steps
     would overwrite.
@@ -169,6 +170,19 @@ class WorkshopService:
             catalogues = ()
         if not catalogues:
             raise WorkshopRefusal("No checkpoint folder is configured to save into.", 503)
+        # A role folder IS the checkpoint folder: save into it, as before.
+        for catalogue in catalogues:
+            if not getattr(catalogue, "sorted_by_content", False):
+                return Path(catalogue.root_key)
+        # ON1b. Every library folder lists checkpoints, even a folder of
+        # LoRAs, so "the first" could be anything. Save beside the owner's
+        # first checkpoint instead -- where they keep them -- or, with none
+        # yet, into the first library folder.
+        for catalogue in catalogues:
+            snapshot = catalogue.snapshot()
+            if snapshot is not None and snapshot.entries:
+                parts = snapshot.entries[0].relative_location.split("/")[:-1]
+                return Path(catalogue.root_key).joinpath(*parts)
         return Path(catalogues[0].root_key)
 
     def _output_path(self, requested: Any, default: str) -> Path:

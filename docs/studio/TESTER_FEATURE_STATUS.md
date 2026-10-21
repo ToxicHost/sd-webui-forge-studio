@@ -14,7 +14,7 @@ generation-model paths were accessed.
 | Area | Current status | Evidence / limits |
 |---|---|---|
 | Studio interface and local server | Available | A fresh Git installation with cached dependencies, source and private-runtime portable extractions passed startup and registry checks. Portable startup also passed with an empty PATH; Windows/NVIDIA is the initial target. |
-| Model folders and selection | Available | Select directories in Settings, then checkpoint/components; Generate owns loading. Lifecycle contract tests passed. |
+| Model folders and selection | Available (one list, 0.9.3) | Add any number of folders in Settings > Model folders (or on the welcome screen); every subfolder is scanned and each file sorted by what it is, with an Unrecognized list to correct. Earlier per-type folders are converted on first start. Then choose checkpoint/components; Generate owns loading. |
 | Basic image generation | Implemented; GPU retest required | Request/lifecycle tests passed. No new model-family, VRAM, quality or performance certification. |
 | Img2Img and Inpaint | Implemented; GPU/browser retest required | Source image, mask and translation contracts tested. These do not prove every Canvas interaction or final pixel result. |
 | Hires | Implemented; GPU retest required | Hires and Img2Img/Hires contracts passed. Requires a suitable upscaler/model and enough memory. |

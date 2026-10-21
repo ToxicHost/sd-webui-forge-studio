@@ -19,6 +19,12 @@ import -- a registry built in a test must not drag the engine in). `scan()`
   listed is not listed twice; the first folder wins, as the order on screen.
 
 No root configured: Neo's default folder, unchanged.
+
+ON1b. Upscalers from the owner's library folders arrive as FILES
+(`set_files`): `UpscalerESRGAN(folder)` would list every .pt/.pth/
+.safetensors in a mixed folder as an upscaler. Each file becomes Neo's own
+`UpscalerData(name, file, scaler, scale)` on an ESRGAN upscaler, named and
+scaled as `UpscalerESRGAN.__init__` names and scales them.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from __future__ import annotations
 from typing import Any
 
 _ROOTS: tuple[str, ...] = ()
+_FILES: tuple[str, ...] = ()
 #: Neo's own default, captured the first time a scan runs, before Studio
 #: changes it.
 _DEFAULT: list[str] = []
@@ -40,6 +47,17 @@ def set_roots(roots: Any) -> None:
 
 def roots() -> tuple[str, ...]:
     return _ROOTS
+
+
+def set_files(files: Any) -> None:
+    """The library's upscaler files, in order (from `model_roots`)."""
+
+    global _FILES
+    _FILES = tuple(str(f) for f in (files or ()) if str(f))
+
+
+def files() -> tuple[str, ...]:
+    return _FILES
 
 
 def _same(a: str, b: str) -> bool:
@@ -81,6 +99,8 @@ def scan() -> str:
         modelloader.load_upscalers()
         if extras:
             _add_folders(shared, extras)
+        if _FILES:
+            _add_files(shared, _FILES, primary or "")
     except BaseException:  # noqa: BLE001 - a list of upscalers is never fatal
         deleted = not hasattr(shared, "sd_upscalers")
         shared.sd_upscalers = previous
@@ -110,6 +130,45 @@ def _add_folders(shared: Any, folders: list[str]) -> None:
                 continue
             names.add(name.lower())
             added.append(scaler)
+    _merge(shared, listed, added)
+
+
+def _add_files(shared: Any, paths: tuple[str, ...], folder: str) -> None:
+    """Each library file as Neo's `UpscalerData`, on an ESRGAN upscaler
+    already listed (or one built for `folder`), merged by name."""
+
+    import os
+    import re
+
+    from modules import modelloader
+    from modules.esrgan_model import UpscalerESRGAN
+    from modules.upscaler import UpscalerData
+
+    listed = list(shared.sd_upscalers)
+    owner = next((s.scaler for s in listed if isinstance(getattr(s, "scaler", None), UpscalerESRGAN)), None)
+    if owner is None:
+        if not folder:
+            return
+        owner = UpscalerESRGAN(folder)
+    names = {str(getattr(s, "name", "")).lower() for s in listed}
+    added = []
+    for path in paths:
+        if not os.path.isfile(path):
+            continue
+        name = modelloader.friendly_name(path)
+        if name.lower() in names:
+            continue
+        # `UpscalerESRGAN.__init__`, exactly.
+        if match := re.search(r"(\d)[xX]|[xX](\d)", name):
+            scale = int(match.group(1) or match.group(2))
+        else:
+            scale = 4
+        names.add(name.lower())
+        added.append(UpscalerData(name, path, owner, scale))
+    _merge(shared, listed, added)
+
+
+def _merge(shared: Any, listed: list, added: list) -> None:
     if not added:
         return
     # Neo's order: None, Lanczos, Nearest, then the model upscalers by name.
@@ -119,4 +178,4 @@ def _add_folders(shared: Any, folders: list[str]) -> None:
     shared.sd_upscalers = [*fixed, *sorted([*models, *added], key=lambda s: s.name.lower())]
 
 
-__all__ = ("FINAL", "RETRY", "SCANNED", "roots", "scan", "set_roots")
+__all__ = ("FINAL", "RETRY", "SCANNED", "files", "roots", "scan", "set_files", "set_roots")

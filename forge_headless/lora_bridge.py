@@ -67,6 +67,65 @@ _EXTENSION = (Path(__file__).resolve().parents[1]
 #: list, so arming twice would apply every LoRA twice.
 _ARMED = False
 
+#: ON1b. LoRA FILES from the owner's library folders (`model_roots.
+#: library_files("lora")`). A library folder is never put on `lora_dirs`:
+#: Neo's scan registers every .safetensors it walks, checkpoints included.
+_LIBRARY_FILES: tuple[str, ...] = ()
+
+
+def set_library_files(files) -> None:  # type: ignore[no-untyped-def]
+    """The library's LoRA files, in order. No Neo import."""
+
+    global _LIBRARY_FILES
+    _LIBRARY_FILES = tuple(str(f) for f in (files or ()) if str(f))
+
+
+def library_files() -> tuple[str, ...]:
+    return _LIBRARY_FILES
+
+
+def _register_library_files(networks: Any, names=None) -> None:  # type: ignore[no-untyped-def]
+    """Neo's own registration (`networks.py:process_network_files`, the loop
+    body), for each library file. After Neo's folders, so a library file of
+    the same name wins, as a later folder does in Neo."""
+
+    import os
+
+    for filename in _LIBRARY_FILES:
+        name = os.path.splitext(os.path.basename(filename))[0]
+        if names and name not in names:
+            continue
+        try:
+            entry = networks.network.NetworkOnDisk(name, filename)
+        except OSError:
+            continue
+        networks.available_networks[name] = entry
+        if entry.alias in networks.available_network_aliases:
+            networks.forbidden_network_aliases.add(entry.alias.lower())
+        networks.available_network_aliases[name] = entry
+        networks.available_network_aliases[entry.alias] = entry
+
+
+def _include_library(networks: Any) -> None:
+    """Make every Neo listing include the library files.
+
+    `list_available_networks` and `update_available_networks_by_names` (the
+    one `load_networks` runs for a name it does not know) both call
+    `process_network_files` through the module's globals, so replacing that
+    one name covers both. Once per process.
+    """
+
+    original = getattr(networks, "process_network_files", None)
+    if original is None or getattr(original, "_studio_library", False):
+        return
+
+    def process_network_files(names=None):  # type: ignore[no-untyped-def]
+        original(names)
+        _register_library_files(networks, names)
+
+    process_network_files._studio_library = True  # type: ignore[attr-defined]
+    networks.process_network_files = process_network_files
+
 
 class LoraUnavailable(RuntimeError):
     """The engine's LoRA modules are missing or will not import.
@@ -178,6 +237,7 @@ def arm(roots: tuple[str, ...] = ()) -> bool:
 
     if roots:
         shared.cmd_opts.lora_dirs = list(roots)
+    _include_library(networks)
 
     # The two statements `before_ui` runs, minus its third -- the extra-networks
     # PAGE, which is a Gradio surface Studio has no place to put and does not
@@ -216,4 +276,5 @@ def _reset_for_tests() -> None:
     _ARMED = False
 
 
-__all__ = ("LoraUnavailable", "arm", "armed", "available_names")
+__all__ = ("LoraUnavailable", "arm", "armed", "available_names", "library_files",
+           "set_library_files")

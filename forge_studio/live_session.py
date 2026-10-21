@@ -43,6 +43,9 @@ EVENT_LIMIT = 16
 PICTURES_KEPT = 2
 #: How often a running frame's job is looked at.
 POLL_SECONDS = 0.05
+#: A frame's job that has not finished by then is given up on (the first
+#: frame after a model change includes the load, so this is generous).
+FRAME_DEADLINE = 600.0
 
 
 class LiveError(ValueError):
@@ -100,7 +103,13 @@ def frame_payload(spec: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class LiveSession:
-    """One running frame, one pending slot, newest wins, never interrupted."""
+    """One running frame, one pending slot, newest wins, never interrupted.
+
+    Every event names the page that caused it (`client`): the socket reaches
+    every open tab, and a tab that is not painting must not show another
+    tab's frames (code review, 2026-10-21). A page that sends no client id is
+    treated as the only one.
+    """
 
     def __init__(
         self,
@@ -119,33 +128,45 @@ class LiveSession:
         self._sleep = sleep
         self._lock = threading.Lock()
         self._active = False
+        #: Bumped by every Start and Stop. A frame shows only in the session
+        #: it was asked for: Stop then Start while a frame runs must not put
+        #: the old canvas's frame into the new session.
+        self._session = 0
         self._running: str | None = None       # the frame's job id while it runs
         self._worker: threading.Thread | None = None
-        self._pending: tuple[dict[str, Any], int] | None = None
+        self._pending: _Frame | None = None
         self._events: deque[tuple[int, dict[str, Any]]] = deque(maxlen=EVENT_LIMIT)
         self._sequence = 0
         self._times: deque[float] = deque(maxlen=10)
 
     # -- the page's four routes ----------------------------------------------
 
-    def start(self) -> dict[str, Any]:
+    def start(self, client: str = "") -> dict[str, Any]:
         with self._lock:
             self._active = True
+            self._session += 1
             self._times.clear()
-            self._emit({"type": "live_started"})
+            self._emit({"type": "live_started"}, client)
         return {"status": "started", "active": True}
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self, client: str = "") -> dict[str, Any]:
         """Stop scheduling. A frame already running finishes on its own and
         is not followed by another; it is never interrupted."""
         with self._lock:
             self._active = False
+            self._session += 1
             self._pending = None
-            self._emit({"type": "live_stopped"})
+            self._emit({"type": "live_stopped"}, client)
         return {"status": "stopped", "active": False}
 
     def submit(self, spec: Mapping[str, Any]) -> dict[str, Any]:
+        client = _client_of(spec)
         if not self._active:
+            # Said on the socket too: after Studio restarts under a page that
+            # still has Live on, this is the only thing the page hears.
+            with self._lock:
+                self._emit({"type": "live_error", "message": "Live painting is not active.",
+                            "inactive": True}, client)
             raise LiveError("Live painting is not active.")
         try:
             payload = frame_payload(spec)
@@ -153,13 +174,12 @@ class LiveSession:
             # The page only logs a failed submit; the socket is where it shows
             # a message (`Live._onError`).
             with self._lock:
-                self._emit({"type": "live_error", "message": str(refusal)})
+                self._emit({"type": "live_error", "message": str(refusal)}, client)
             raise
-        seed = int(payload["generation"]["seed"])
         with self._lock:
-            self._pending = (payload, seed)
+            self._pending = _Frame(payload, int(payload["generation"]["seed"]), client, self._session)
             if self._worker is not None and self._worker.is_alive():
-                self._emit({"type": "live_busy", "pending": True})
+                self._emit({"type": "live_busy", "pending": True}, client)
                 return {"status": "submitted", "queued": True}
             self._worker = threading.Thread(target=self._run, daemon=True, name="studio-live-frames")
             self._worker.start()
@@ -193,8 +213,10 @@ class LiveSession:
 
     # -- frames ----------------------------------------------------------------
 
-    def _emit(self, event: dict[str, Any]) -> None:
+    def _emit(self, event: dict[str, Any], client: str = "") -> None:
         """Called with the lock held."""
+        if client:
+            event["client"] = client
         self._sequence += 1
         self._events.append((self._sequence, event))
         if event.get("type") == "live_result":
@@ -209,21 +231,21 @@ class LiveSession:
         first = True
         while True:
             with self._lock:
-                job = self._pending
+                frame = self._pending
                 self._pending = None
-                if job is None or not self._active:
+                if frame is None or not self._active:
                     self._worker = None
                     return
                 if not first:
                     # The change that waited is running now (the Extension's
                     # `_on_generation_complete`).
-                    self._emit({"type": "live_busy", "pending": False})
+                    self._emit({"type": "live_busy", "pending": False}, frame.client)
             first = False
-            payload, seed = job
-            self._frame(payload, seed)
+            self._frame(frame)
 
-    def _frame(self, payload: dict[str, Any], seed: int) -> None:
+    def _frame(self, frame: "_Frame") -> None:
         began = self._clock()
+        payload, seed, client = frame.payload, frame.seed, frame.client
         job_id = ""
         outcome = "failed"
         try:
@@ -238,6 +260,10 @@ class LiveSession:
                 view = self._poll(job_id)
                 if str(view.get("state") or "") in TERMINAL:
                     break
+                # A job that never finishes would hold the one Live worker,
+                # and every later stroke would only replace the waiting one.
+                if self._clock() - began > FRAME_DEADLINE:
+                    raise LiveError("The frame did not finish in %d minutes." % (FRAME_DEADLINE // 60))
                 self._sleep(POLL_SECONDS)
             state = str(view.get("state") or "")
             if state != "completed":
@@ -247,17 +273,20 @@ class LiveSession:
             image, metadata = self._picture(job_id)
             with self._lock:
                 self._times.append(self._clock() - began)
-                # A frame that finishes after Stop is not shown: the page has
-                # already put its preview away.
-                if self._active:
+                # Shown only in the session that asked for it: not after
+                # Stop, and not after Stop and Start (the canvas moved on).
+                if self._active and self._session == frame.session:
                     self._emit({"type": "live_result", "image": image,
-                                "seed": int(metadata.get("seed", seed) if isinstance(metadata, Mapping) else seed)})
-            outcome = "shown"
+                                "seed": int(metadata.get("seed", seed) if isinstance(metadata, Mapping) else seed)},
+                               client)
+                    outcome = "shown"
+                else:
+                    outcome = "not shown (Live stopped)"
         except Exception as exc:  # noqa: BLE001 - a frame's failure is the page's message, never the loop's end
             message = str(exc) or type(exc).__name__
             outcome = "failed: " + message
             with self._lock:
-                self._emit({"type": "live_error", "message": message})
+                self._emit({"type": "live_error", "message": message}, client)
         finally:
             with self._lock:
                 self._running = None
@@ -274,4 +303,21 @@ class LiveSession:
                       generation.get("denoising_strength"), seed, self._clock() - began, outcome)
 
 
-__all__ = ("EVENT_LIMIT", "LiveError", "LiveSession", "PICTURES_KEPT", "frame_payload")
+class _Frame:
+    """One frame waiting or running: its job body, seed, page and session."""
+
+    __slots__ = ("payload", "seed", "client", "session")
+
+    def __init__(self, payload: dict[str, Any], seed: int, client: str, session: int) -> None:
+        self.payload, self.seed, self.client, self.session = payload, seed, client, session
+
+
+def _client_of(spec: Any) -> str:
+    """The page's id for itself (`Live._clientId`), short and printable, or ""."""
+    if not isinstance(spec, Mapping):
+        return ""
+    raw = str(spec.get("client") or "")
+    return raw[:64] if raw.isascii() and raw.isprintable() else ""
+
+
+__all__ = ("EVENT_LIMIT", "FRAME_DEADLINE", "LiveError", "LiveSession", "PICTURES_KEPT", "frame_payload")

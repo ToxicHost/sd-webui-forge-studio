@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,43 @@ def load_config(path: Path) -> dict[str, Any]:
         model_roots = {}
         model_roots_refusal = getattr(error, "code", None) or "unknown"
 
+    # ON1b. The model library: a LIST of folders, each sorted by content
+    # (`forge_headless.model_library`). Read here, served by `run`. Once the
+    # file has `model_library` it is the owner's folders and `model_roots` is
+    # kept only for an older build to read; without it, the role folders are
+    # converted ONCE into hinted entries, which `run` then saves -- this
+    # function stays without side effects.
+    from forge_headless.model_library import (
+        CORRECTIONS_KEY,
+        LIBRARY_KEY,
+        library_from_role_folders,
+        normalize_library,
+    )
+
+    library_converted = False
+    if LIBRARY_KEY in raw:
+        try:
+            model_library = normalize_library(raw.get(LIBRARY_KEY))
+        except HeadlessError as error:
+            # Tolerant for the reason `model_roots` is: the app is where the
+            # folders are fixed.
+            model_library = ()
+            model_roots_refusal = model_roots_refusal or getattr(error, "code", None) or "unknown"
+    else:
+        # Studio's own detector folder is not one of the owner's: it is
+        # seeded below on every launch, and a Settings save used to write
+        # the seed into `model_roots` with the owner's folders.
+        bundled = os.path.normcase(str((APP_ROOT / "models" / "adetailer").resolve()))
+        model_library = tuple(
+            folder for folder in library_from_role_folders(model_roots)
+            if os.path.normcase(os.path.abspath(folder.path)) != bundled
+        )
+        library_converted = bool(model_library)
+    corrections = raw.get(CORRECTIONS_KEY)
+    model_library_corrections = corrections if isinstance(corrections, dict) else {}
+    # The role folders are no longer served: they ARE the library now.
+    model_roots = {}
+
     # The detectors Studio SHIPS live in `app/models/adetailer`, and their
     # sha256s are recorded in `detector_catalogue.BUNDLED_DETECTORS`. With the
     # role left unconfigured, `scan_configured_detectors` yielded nothing, so
@@ -174,9 +212,8 @@ def load_config(path: Path) -> dict[str, Any]:
     # have made those two disagree about the same directory, which is the exact
     # failure `detector_catalogue` argues against having two enumerators for.
     #
-    # It fills an EMPTY role only. An owner who names their own detector
-    # directory replaces this outright, and can point at the bundled folder
-    # again by name if they want both.
+    # ON1b: always, now that `model_roots` is empty -- the owner's own
+    # detectors come from their library folders, beside the shipped ones.
     if not model_roots.get("adetailer"):
         _bundled_detectors = APP_ROOT / "models" / "adetailer"
         if _bundled_detectors.is_dir():
@@ -230,7 +267,6 @@ def load_config(path: Path) -> dict[str, Any]:
     # is. The whole point of a per-user application-data directory is that it
     # survives the install being replaced, and containing it here would put the
     # owner's settings back inside the directory an update deletes.
-    import os
     import platform as _platform
 
     try:
@@ -255,7 +291,7 @@ def load_config(path: Path) -> dict[str, Any]:
         # directory across every role is checked -- not just the first.
         model_roots=tuple(
             path for paths in model_roots.values() for path in paths
-        ),
+        ) + tuple(folder.path for folder in model_library),
         windows=state.platform == WINDOWS,
     )
 
@@ -269,6 +305,9 @@ def load_config(path: Path) -> dict[str, Any]:
         "result_root": result_root,
         "model_roots": model_roots,
         "model_roots_refusal": model_roots_refusal,
+        "model_library": model_library,
+        "model_library_converted": library_converted,
+        "model_library_corrections": model_library_corrections,
         "filesystem_browser_enabled": filesystem_browser_enabled,
         "allow_network_model_roots": allow_network_model_roots,
         "last_model_selection": last_model_selection,
@@ -506,10 +545,16 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
     from forge_headless.model_roots import ModelRootRegistry
     from forge_studio.model_root_settings import ModelRootSettings
 
+    from forge_headless.model_library import KindCache
+
     registry = ModelRootRegistry(
         workspace_root=WORKSPACE_ROOT,
         allow_network=config.get("allow_network_model_roots", False),
+        # ON1b. What each library file is, kept in Studio's state folder --
+        # never beside the models -- so a restart reads only what changed.
+        kind_cache=KindCache(Path(config["studio_state_root"]) / "model-kinds.json"),
     )
+    registry.set_corrections(config.get("model_library_corrections") or {})
     # Tolerant at startup only: a model directory renamed since last launch must
     # not stop Studio from starting, because the owner needs the app running in
     # order to correct it. The Settings write is all-or-nothing instead.
@@ -520,7 +565,9 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
             "is running so that you can.",
             config["model_roots_refusal"],
         )
-    root_status = registry.configure_tolerantly(config["model_roots"])
+    root_status = registry.configure_tolerantly(
+        config["model_roots"], library=tuple(config.get("model_library") or ())
+    )
     for role in sorted(root_status):
         entry = root_status[role]
         if entry.status == "refused":
@@ -557,7 +604,20 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
         # decided which remembered ids are well-formed, and two readers of one
         # key eventually disagree about what it means.
         last_model_selection=config["last_model_selection"],
+        # ON2: offered to an owner starting fresh.
+        studio_models_folder=APP_ROOT / "models",
     )
+    settings.load_corrections(config.get("model_library_corrections") or {})
+    if config.get("model_library_converted"):
+        # The one-time conversion, saved: from now on the file's
+        # `model_library` is the owner's folder list. `model_roots` stays in
+        # the file for an older build.
+        if settings.persist_library():
+            logger.info(
+                "Model folders: %d role folder(s) became library folders; "
+                "Settings > Model folders lists them.",
+                len(config["model_library"]),
+            )
 
     # Auto-load on Generate. This is the ONLY registry in the product, and the
     # resolver is bound to that instance rather than building its own: a second

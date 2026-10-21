@@ -3610,6 +3610,18 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
 .studio-root-btn { background: none; border: none; color: inherit; cursor: pointer;
   padding: 0 4px; opacity: .7; }
 .studio-root-btn:disabled { opacity: .25; cursor: default; }
+/* ON1b: library folder rows -- a folder, what it holds, its Unrecognized panel. */
+.settings-model-library { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.studio-library-folder { display: flex; flex-direction: column; gap: 4px; }
+/* The path keeps the first line; what the folder holds wraps beneath it. */
+.studio-library-folder > .studio-root-row { flex-wrap: wrap; row-gap: 2px; }
+.studio-library-folder > .studio-root-row > .studio-root-status { order: 3; flex: 1 1 100%; }
+.studio-library-toggle { font-size: 11px; text-decoration: underline; }
+.studio-library-toggle[aria-expanded="true"] { opacity: 1; }
+.studio-library-unrecognized { display: flex; flex-direction: column; gap: 4px; margin-left: 16px; }
+.studio-library-file { border-style: dashed; }
+.studio-library-kind { font-size: 11px; padding: 2px 4px; max-width: 170px; }
+.studio-library-empty { opacity: .7; }
 
 .studio-dir-picker { position: fixed; inset: 0; background: rgba(0,0,0,.55);
   display: flex; align-items: center; justify-content: center; z-index: 9000; }

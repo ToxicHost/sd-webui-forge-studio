@@ -118,8 +118,11 @@ _TERMINAL_STAGES: dict[str, str] = {
 
 
 def _is_live_frame(request: Any) -> bool:
-    """LV1. A Live Painting frame (`output.purpose == "live"`)."""
-    return str(getattr(getattr(request, "output", None), "purpose", "") or "") == "live"
+    """LV1. A Live Painting frame (`forge_headless.generation_request.is_live_frame`,
+    imported here rather than at module scope: `forge_studio` stays light)."""
+    from forge_headless.generation_request import is_live_frame
+
+    return is_live_frame(request)
 
 
 def owner_stage(state: str, backend_stage: str | None) -> str:
@@ -299,7 +302,7 @@ class JobCoordinator:
             if not snapshot.get("accepting_jobs") and not names_a_selection:
                 raise _error(
                     "MODEL_NOT_READY",
-                    "No warm model session is ready for a job.",
+                    "No model is chosen or loaded. Choose one in the Model box.",
                     "job_id",
                 )
             public_id = self._lifecycle.mint_job_token()

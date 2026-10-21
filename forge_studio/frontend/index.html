@@ -1459,16 +1459,16 @@
               <!-- Model folders. First card in General because it is the first
                    thing an owner has to configure: without it the Canvas Strip
                    model, text encoder and VAE selectors have nothing to show.
-                   The three fields are one transaction - see #modelFoldersSave. -->
+                   ON1b: one list of folders, sorted by content. -->
               <section class="settings-card" data-settings-section="model-folders">
                 <div class="settings-card-head settings-card-head-static">
                   <span class="settings-card-titles">
                     <span class="settings-card-title" data-i18n="settings.card.modelFolders.title">Model folders</span>
-                    <span class="settings-card-summary" data-i18n="settings.card.modelFolders.summary">Tell Studio where your checkpoints, text encoders and VAEs live.</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.modelFolders.summary">Tell Studio where your models are.</span>
                   </span>
                 </div>
                 <div class="settings-card-body">
-                  <p class="settings-item-description" data-i18n="settings.modelFolders.intro">These folders are read on the machine running Studio. Studio only lists model files directly inside each folder — it does not search subfolders, and it skips shortcuts, symlinks and cloud-placeholder files, so a folder of links will look empty.</p>
+                  <p class="settings-item-description" data-i18n="settings.modelFolders.intro">Add the folders where your models are. Studio looks through every subfolder and sorts each file by what it is: checkpoint, LoRA, VAE, text encoder, ControlNet, embedding, upscaler or Auto Detail detector. Nothing in these folders is moved or changed. Shortcuts, symlinks and cloud-placeholder files are skipped.</p>
 
                   <div class="settings-item" data-setting-key="toggleNetworkModelFolders" data-setting-search="network share nas unc mapped drive other machine computer smb nfs remote model folders">
                     <div class="settings-item-copy">
@@ -1478,169 +1478,28 @@
                     <div class="settings-item-control"><div class="toggle-track" id="toggleNetworkModelFolders"><div class="toggle-knob"></div></div></div>
                   </div>
 
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootCheckpoint" data-setting-search="model folder checkpoint models directory path safetensors ckpt gguf">
-                    <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.checkpoint">Checkpoint folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusCheckpoint" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
-                    </div>
-                    <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootCheckpoint" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
-                    </div>
-                  </div>
-                  <div class="settings-model-root-list" id="modelRootListCheckpoint"></div>
-                  <div class="settings-item settings-item-actions">
-                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddCheckpoint" data-role="Checkpoint" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseCheckpoint" data-role="checkpoint" data-i18n="settings.modelFolders.browse">Browse…</button>
-                    </div>
-                  </div>
+                  <!-- ON1b. One list of folders, any number. Studio walks every
+                       subfolder and files each model by what its header says it
+                       is, so the per-role rows are gone; rows are drawn by
+                       studio-dir-picker.js. Add and Remove save at once. -->
+                  <div class="settings-model-library" id="modelLibraryList"></div>
 
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootTextEncoder" data-setting-search="model folder text encoder clip t5 directory path">
+                  <div class="settings-item settings-item-stacked" data-setting-key="modelLibraryInput" data-setting-search="model folder add library checkpoint lora vae text encoder controlnet embedding upscaler detector models directory path safetensors gguf">
                     <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.textEncoder">Text encoder folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusTextEncoder" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
+                      <span class="settings-item-title" data-i18n="settings.modelFolders.addTitle">Add a model folder</span>
+                      <p class="settings-item-description" id="modelLibraryMessage" data-i18n="settings.modelFolders.addDesc">A folder of models, or of folders of models. Add as many as you like.</p>
                     </div>
                     <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootTextEncoder" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
+                      <input type="text" class="param-val settings-text-input" id="modelLibraryInput" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
                     </div>
                   </div>
-                  <div class="settings-model-root-list" id="modelRootListTextEncoder"></div>
                   <div class="settings-item settings-item-actions">
                     <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddTextEncoder" data-role="TextEncoder" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseTextEncoder" data-role="text_encoder" data-i18n="settings.modelFolders.browse">Browse…</button>
-                    </div>
-                  </div>
-
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootVae" data-setting-search="model folder vae autoencoder directory path">
-                    <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.vae">VAE folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusVae" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
-                    </div>
-                    <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootVae" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
-                    </div>
-                  </div>
-                  <div class="settings-model-root-list" id="modelRootListVae"></div>
-                  <div class="settings-item settings-item-actions">
-                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddVae" data-role="Vae" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseVae" data-role="vae" data-i18n="settings.modelFolders.browse">Browse…</button>
-                    </div>
-                  </div>
-
-                  <!-- Auto Detail detectors. A fourth ROOT, not a fourth part
-                       of the model: a detector is loaded per Auto Detail slot
-                       and released, so it never joins the resident session.
-                       That distinction is why `MODEL_ROLES` gained `adetailer`
-                       and `RESIDENT_MODEL_ROLES` did not. -->
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootAdetailer" data-setting-search="model folder adetailer auto detail detector yolo directory path">
-                    <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.adetailer">Auto Detail detector folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusAdetailer" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
-                    </div>
-                    <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootAdetailer" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
-                    </div>
-                  </div>
-                  <div class="settings-model-root-list" id="modelRootListAdetailer"></div>
-                  <div class="settings-item settings-item-actions">
-                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddAdetailer" data-role="Adetailer" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseAdetailer" data-role="adetailer" data-i18n="settings.modelFolders.browse">Browse…</button>
-                    </div>
-                  </div>
-
-                  <!-- LoRAs. A FIFTH root, and like the detector folder it is
-                       not part of the resident model: a LoRA is named in the
-                       prompt as <lora:name:weight> and applied per generation,
-                       so it joins `MODEL_ROLES` and not
-                       `RESIDENT_MODEL_ROLES`.
-                       Studio projects this into the engine's own scan, so the
-                       names offered are names the engine will resolve. -->
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootLora" data-setting-search="model folder lora loras network directory path">
-                    <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.lora">LoRA folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusLora" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
-                    </div>
-                    <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootLora" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
-                    </div>
-                  </div>
-                  <div class="settings-model-root-list" id="modelRootListLora"></div>
-                  <div class="settings-item settings-item-actions">
-                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddLora" data-role="Lora" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseLora" data-role="lora" data-i18n="settings.modelFolders.browse">Browse…</button>
-                    </div>
-                  </div>
-                  <!-- EMB. Embeddings (textual inversion). Named in the prompt
-                       and read by the engine's CLIP text encoders when a model
-                       loads; Studio hands the folder to the engine, which
-                       otherwise had none. -->
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootEmbedding" data-setting-search="model folder embedding embeddings textual inversion directory path">
-                    <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.embedding">Embeddings folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusEmbedding" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
-                    </div>
-                    <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootEmbedding" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
-                    </div>
-                  </div>
-                  <div class="settings-model-root-list" id="modelRootListEmbedding"></div>
-                  <div class="settings-item settings-item-actions">
-                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddEmbedding" data-role="Embedding" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseEmbedding" data-role="embedding" data-i18n="settings.modelFolders.browse">Browse…</button>
-                    </div>
-                  </div>
-                  <!-- UP1. Image upscalers (ESRGAN, DAT, SwinIR...) for Hires
-                       and the Upscale panel. Studio's own models/ESRGAN stays
-                       listed too, for the bundled upscaler. -->
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootUpscaler" data-setting-search="model folder upscaler upscalers esrgan dat swinir hires upscale directory path">
-                    <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.upscaler">Upscaler folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusUpscaler" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
-                    </div>
-                    <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootUpscaler" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
-                    </div>
-                  </div>
-                  <div class="settings-model-root-list" id="modelRootListUpscaler"></div>
-                  <div class="settings-item settings-item-actions">
-                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddUpscaler" data-role="Upscaler" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseUpscaler" data-role="upscaler" data-i18n="settings.modelFolders.browse">Browse…</button>
-                    </div>
-                  </div>
-                  <!-- CN1. ControlNet models (SDXL/SD1.5 ControlNets, Control-LoRA,
-                       T2I-Adapter, Control-LLLite incl. Anima). Studio's own
-                       models/ControlNet stays listed too. -->
-                  <div class="settings-item settings-item-stacked" data-setting-key="modelRootControlnet" data-setting-search="model folder controlnet control net lllite t2i adapter pose depth canny directory path">
-                    <div class="settings-item-copy">
-                      <span class="settings-item-title" data-i18n="settings.modelFolders.controlnet">ControlNet folder</span>
-                      <p class="settings-item-description settings-model-root-status" id="modelRootStatusControlnet" data-i18n="settings.modelFolders.unconfigured">Not configured</p>
-                    </div>
-                    <div class="settings-item-control settings-item-control-wide">
-                      <input type="text" class="param-val settings-text-input" id="modelRootControlnet" spellcheck="false" autocomplete="off" data-i18n-placeholder="settings.modelFolders.placeholder" placeholder="Type a folder path to add, or use Browse">
-                    </div>
-                  </div>
-                  <div class="settings-model-root-list" id="modelRootListControlnet"></div>
-                  <div class="settings-item settings-item-actions">
-                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
-                      <button class="defaults-btn" id="modelRootAddControlnet" data-role="Controlnet" data-i18n="settings.modelFolders.add">Add folder</button>
-                      <button class="defaults-btn" id="modelRootBrowseControlnet" data-role="controlnet" data-i18n="settings.modelFolders.browse">Browse…</button>
+                      <button class="defaults-btn" id="modelLibraryAdd" data-i18n="settings.modelFolders.add">Add folder</button>
+                      <button class="defaults-btn" id="modelLibraryBrowse" data-i18n="settings.modelFolders.browse">Browse…</button>
                     </div>
                   </div>
                   <div class="settings-item-description" id="modelRootDetectorSummary"></div>
-
-                  <div class="settings-action-row" data-setting-key="modelFoldersSave" data-setting-search="save model folders apply directories">
-                    <div class="settings-item-copy">
-                      <strong data-i18n="settings.modelFolders.saveTitle">Save model folders</strong>
-                      <p id="modelFoldersMessage" data-i18n="settings.modelFolders.saveDesc">Every folder is saved together. If one cannot be used, nothing changes and your current folders keep working.</p>
-                    </div>
-                    <button class="defaults-btn" id="modelFoldersSave" data-i18n="settings.modelFolders.save">Save folders</button>
-                  </div>
                 </div>
               </section>
 
