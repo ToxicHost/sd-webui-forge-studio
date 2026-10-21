@@ -82,6 +82,10 @@ class GenerationOutcome:
     #:
     #: Empty is legitimate: a backend that does not produce one embeds nothing.
     infotext: str = ""
+    #: LV1. A Live frame's picture, as a PNG data URL, INSTEAD of a file:
+    #: `result_relative_location` is then "" and nothing was written anywhere.
+    #: Never in `to_dict` -- it is pixels, and the dict is for logs.
+    image_data_url: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {

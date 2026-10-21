@@ -4,6 +4,39 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.2: Live Painting — 2026-10-21
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Live Painting.** Click **▶ Live** next to Generate and paint: every time
+  you lift the pen or mouse (or pause after changing the prompt), Studio
+  repaints the canvas as img2img and shows the frame in the preview pane,
+  without touching your layers. **Apply to Layer** puts the current frame on
+  the canvas as a `[Live]` layer and re-rolls the seed. **■ Live** stops it,
+  and so does pressing **Generate**, which then generates as usual.
+  - **Strength** (0.05–1, default 0.3) sets how much each frame repaints; the
+    seed stays the same between frames until you re-roll it.
+  - The model, sampler, scheduler, CFG, size and Steps come from the Generate
+    panel. At Strength 0.3 only about a third of the steps run.
+  - While a frame is being made, further strokes wait and only the newest
+    runs next; a frame is never cut short.
+  - **Frames are never saved** and never reach the Gallery. Auto Detail is off
+    while Live runs; Hires, regions and ControlNet are not used for frames.
+  - On FLUX.2 Klein, Live paints in plain img2img mode (Generate keeps Klein's
+    edit mode) and keeps the prompt encoded between frames.
+  - Checked on a real GPU at 1024 × 1024 through the same routes the page
+    uses: a frame about 3 s after a stroke on SDXL, 6 s on Anima, 2 s on
+    FLUX.2 Klein after the first; nothing written to disk; a Generate after a
+    Live session is byte-identical to the same Generate before it.
+- **"Develop on" in the canvas toolbar.** Develop's settings belong to the
+  document and change what you see, what Generate uses and what Live paints
+  from. While a Develop slider is changing the picture, an accent-coloured
+  **Develop on** chip sits next to the generation-mask status; click it to
+  open Develop. (A slider left on in Develop could look like a broken brush.)
+- **Help Center.** A Live Painting article; the first-use tips for Regions and
+  Live are back; "Not in Studio Yet" no longer lists Live.
+
 ## 0.9.1: Regional prompting, smooth Develop — 2026-10-21
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

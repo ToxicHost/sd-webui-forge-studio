@@ -346,6 +346,14 @@ class StudioApplication:
     def get_result(self, job_id: str) -> GeneratedResult:
         return self._backend.get_result(job_id)
 
+    def forget_job(self, job_id: str) -> bool:
+        """LV1. Drop a finished job the caller has read (a Live frame). A
+        backend without `forget_job` keeps it, as every backend did before."""
+
+        self._release_result(job_id)
+        forget = getattr(self._backend, "forget_job", None)
+        return bool(forget(job_id)) if callable(forget) else False
+
     def result_asset(self, job_id: str) -> ResultAsset | None:
         """Mint or return the opaque browser handle for a completed result.
 

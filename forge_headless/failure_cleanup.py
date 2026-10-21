@@ -194,12 +194,19 @@ def release_generation_references(
     exception: BaseException | None = None,
     processed: object | None = None,
     outcome: object | None = None,
+    keep_conditioning: bool = False,
 ) -> ReleaseReport:
     """Release every generation reference this path is known to create.
 
     Ordering matters: instance and class state first, then the bridge, then a
     single `gc.collect()` to break the `processing <-> sampler <-> CFGDenoiser`
     cycle. The collect follows explicit release; it does not stand in for it.
+
+    `keep_conditioning` (LV1, Live frames only) leaves Neo's prompt caches
+    (`_CLASS_LIST_CACHES`) in place, so the next frame of an unchanged prompt
+    does not encode it again -- on FLUX.2 Klein that encode moved a 4B text
+    encoder onto the card and back, 4.5 s of an 8.7 s frame (LV0). The next
+    job that is not a Live frame clears them first (`clear_conditioning_caches`).
     """
 
     report = ReleaseReport()
@@ -227,10 +234,11 @@ def release_generation_references(
             processing.close()
         except Exception:  # noqa: BLE001
             report.notes.append("processing.close() raised; continued")
-        try:
-            processing.clear_prompt_cache()
-        except Exception:  # noqa: BLE001
-            report.notes.append("clear_prompt_cache() raised; continued")
+        if not keep_conditioning:
+            try:
+                processing.clear_prompt_cache()
+            except Exception:  # noqa: BLE001
+                report.notes.append("clear_prompt_cache() raised; continued")
 
         for attribute in _INSTANCE_FIELDS:
             if hasattr(processing, attribute):
@@ -292,7 +300,8 @@ def release_generation_references(
 
     report.decode_intermediates_released = report.pil_images_released or processed is None
 
-    report.class_level_caches_cleared = _clear_class_level_state(report)
+    report.class_level_caches_cleared = _clear_class_level_state(
+        report, keep_conditioning=keep_conditioning)
 
     if state_bridge is not None:
         cleared = True
@@ -314,7 +323,34 @@ def release_generation_references(
     return report
 
 
-def _clear_class_level_state(report: ReleaseReport) -> list[str]:
+def clear_conditioning_caches() -> list[str]:
+    """Reset Neo's class-level prompt caches only. NEVER RAISES.
+
+    Run before a job that is not a Live frame when a Live frame kept them, so
+    that job starts exactly as it would have: with nothing cached.
+    """
+
+    cleared: list[str] = []
+    try:
+        from modules import processing as _processing
+    except BaseException:  # noqa: BLE001 - see `_clear_class_level_state`
+        return cleared
+    for class_name in ("StableDiffusionProcessing", "StableDiffusionProcessingTxt2Img",
+                       "StableDiffusionProcessingImg2Img"):
+        klass = getattr(_processing, class_name, None)
+        if klass is None:
+            continue
+        for name in _CLASS_LIST_CACHES:
+            if name in vars(klass):
+                try:
+                    setattr(klass, name, [None] * len(getattr(klass, name)))
+                    cleared.append(f"{class_name}.{name}")
+                except Exception:  # noqa: BLE001
+                    pass
+    return cleared
+
+
+def _clear_class_level_state(report: ReleaseReport, *, keep_conditioning: bool = False) -> list[str]:
     """Reset the class attributes that outlive every instance."""
 
     cleared: list[str] = []
@@ -331,7 +367,7 @@ def _clear_class_level_state(report: ReleaseReport) -> list[str]:
         klass = getattr(_processing, class_name, None)
         if klass is None:
             continue
-        for name in _CLASS_LIST_CACHES:
+        for name in () if keep_conditioning else _CLASS_LIST_CACHES:
             if name in vars(klass):
                 try:
                     setattr(klass, name, [None] * len(getattr(klass, name)))

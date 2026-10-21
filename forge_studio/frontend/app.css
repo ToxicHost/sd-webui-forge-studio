@@ -3645,3 +3645,5 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
 #contextBar [data-ctx="mask-operation"] { order: -2; white-space: nowrap; }
 #contextBar .ctx-drag-handle { order: -4; }
 #generationMaskStatus { color: var(--text-2); }
+/* DV2. Accent, so a picture changed by Develop is never mistaken for a brush. */
+#developOnBadge { color: var(--accent); border-color: var(--accent); margin-left: 6px; }

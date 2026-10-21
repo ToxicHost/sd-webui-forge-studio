@@ -877,6 +877,51 @@ def _ad_prompt(slot_prompt: str, main: str, region: int) -> str:
     return part.replace("[PROMPT]", main) if "[PROMPT]" in part else part
 
 
+def _is_live(request: Any) -> bool:
+    """LV1. A Live Painting frame: `output.purpose == "live"`. Raw img2img,
+    no file, no heatmap, no watermark (the Extension's `studio_live`)."""
+    return str(getattr(getattr(request, "output", None), "purpose", "") or "") == "live"
+
+
+def _reuse_live_conditioning(processing: Any) -> None:
+    """LV1. Let a Live frame reuse the previous frame's prompt encoding.
+
+    Neo's cache key (`StableDiffusionProcessing.cached_params`,
+    `modules/processing.py:424-442`) ends with a hash of the img2img source
+    latent, because an EDIT model (Klein's default, Kontext, Qwen-Edit) feeds
+    the source in as a reference through the positive prompt's conditioning.
+    A Live frame's source changes every frame, so the key never matched. The
+    hash is dropped here only when the engine is NOT holding the source as a
+    reference: `init()` encodes the source before `setup_conds`, and an edit
+    engine stores it as `ini_latent` (`flux2.py:65-71`) -- unset for SDXL,
+    Anima, and Klein with `klein_no_reference`, which Live sets.
+    """
+
+    import types
+
+    original = type(processing).cached_params
+
+    def cached_params(self: Any, *args: Any, **kwargs: Any) -> Any:
+        key = original(self, *args, **kwargs)
+        if getattr(getattr(self, "sd_model", None), "ini_latent", None) is not None:
+            return key
+        return tuple(key[:-1]) + (None,)
+
+    processing.cached_params = types.MethodType(cached_params, processing)
+
+
+def _png_data_url(image: Any) -> str:
+    """LV1. A Live frame for the page, encoded in memory. Compression 1:
+    a frame is shown and maybe applied, never stored, and level 1 is several
+    times faster than the default on a 1024 picture."""
+    import base64
+    import io
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", compress_level=1)
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 def _per_region(request: Any) -> bool:
     """RG3. Regions run as one inpaint pass each, instead of the main pass."""
 
@@ -1254,6 +1299,8 @@ class StudioLiveGenerationPort:
         processing: object | None,
         processed: object | None,
         exception: BaseException | None,
+        *,
+        keep_conditioning: bool = False,
     ) -> dict[str, Any]:
         """Call the shipped seam exactly once for this job. Never raises.
 
@@ -1277,6 +1324,7 @@ class StudioLiveGenerationPort:
                 state_bridge=self._bridge,
                 exception=exception,
                 outcome=None,
+                keep_conditioning=keep_conditioning,
             )
         except BaseException as exc:  # noqa: BLE001
             return {"called": False, "reason": type(exc).__name__}
@@ -1344,6 +1392,13 @@ class StudioLiveGenerationPort:
             from .anima_emphasis import STUDIO
 
             overrides["emphasis"] = STUDIO
+
+        # LV1 (owner, 2026-10-21). A Live frame on FLUX.2 Klein is plain
+        # img2img: Neo's own "[Klein] Disable Reference" (`flux2.py:65`).
+        # Klein's default img2img is its EDIT mode, which feeds the picture in
+        # a second time as a reference; Generate keeps that.
+        if _is_live(request):
+            overrides["klein_no_reference"] = True
 
         with job_scope(**overrides):
             outcome = self._generate_in_scope(request, progress)
@@ -1509,6 +1564,14 @@ class StudioLiveGenerationPort:
         from . import klein_references
 
         klein_references.forget_job_state(engine)
+        # LV1. A Live frame may have kept Neo's prompt caches; any other job
+        # starts from empty ones, exactly as it did before Live existed.
+        live = _is_live(request)
+        if not live and getattr(self, "_live_conditioning_kept", False):
+            from .failure_cleanup import clear_conditioning_caches
+
+            clear_conditioning_caches()
+            self._live_conditioning_kept = False
         moves.__enter__()
         try:
             # Construction is inside the `try` on purpose: a request that fails
@@ -1671,6 +1734,8 @@ class StudioLiveGenerationPort:
                     processing.scripts,
                     regional.runner_for(engine, regions,
                                         str(getattr(request, "region_method", "auto") or "auto")))
+            if live:
+                _reuse_live_conditioning(processing)
             # `<lora:name:weight>` in the prompt does nothing without this.
             #
             # `parse_extra_network_prompts` strips the tag a few frames below,
@@ -1697,7 +1762,8 @@ class StudioLiveGenerationPort:
             # attention capture. Neo's Hires pass is flagged `is_hr_pass` on
             # the same object and is skipped; Studio's img2img Hires and the
             # Auto Detail passes build their own objects and are never marked.
-            capture_wanted = self._sidecar_root is not None and bool(
+            # LV1: never for a Live frame, which leaves nothing behind.
+            capture_wanted = self._sidecar_root is not None and not live and bool(
                 getattr(request, "attention_capture_requested", True))
             self._job_capture = None     # Word Detail: never a previous job's
             if capture_wanted:
@@ -1843,7 +1909,11 @@ class StudioLiveGenerationPort:
             klein_references.forget_job_state(engine)
             # Exactly once per job, on every exit path, before the references
             # are dropped. The engine is deliberately untouched.
-            self.last_release = self._release_job(processing, processed, failure)
+            # LV1: a Live frame keeps the prompt caches for the next frame.
+            self.last_release = self._release_job(processing, processed, failure,
+                                                  keep_conditioning=live)
+            if live:
+                self._live_conditioning_kept = True
             processing = None
             processed = None
             self._forge_objects = None
@@ -2504,9 +2574,27 @@ class StudioLiveGenerationPort:
         # into the file AND the Gallery, which both take this string.
         infotext = with_prompt_templates(infotext, request)
         infotext = with_time_taken(infotext, getattr(progress, "elapsed_seconds", None))
+        seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))
+
+        if _is_live(request):
+            # LV1. A Live frame is shown and maybe applied to a layer, never
+            # saved: no file, no metadata, no watermark (the Extension's
+            # `studio_live` encodes the frame for its socket the same way).
+            frame = images[0]
+            width, height = frame.size
+            progress.mark_completed()  # type: ignore[attr-defined]
+            return GenerationOutcome(
+                job_id=request.request_id,  # type: ignore[attr-defined]
+                request_id=request.request_id,  # type: ignore[attr-defined]
+                result_relative_location="",
+                media_type="image/png",
+                width=int(width),
+                height=int(height),
+                seed=seed,
+                image_data_url=_png_data_url(frame),
+            )
 
         image = _stamped(images[0], request)
-        seed = int(getattr(processed, "seed", None) or getattr(request, "seed", 0))
 
         # OF1. The owner's Save folder and layout, or the Extension's default
         # `<result root>/studio/<mode>/<date>`. The folder arrived already

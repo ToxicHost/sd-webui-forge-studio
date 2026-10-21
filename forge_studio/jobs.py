@@ -117,6 +117,11 @@ _TERMINAL_STAGES: dict[str, str] = {
 }
 
 
+def _is_live_frame(request: Any) -> bool:
+    """LV1. A Live Painting frame (`output.purpose == "live"`)."""
+    return str(getattr(getattr(request, "output", None), "purpose", "") or "") == "live"
+
+
 def owner_stage(state: str, backend_stage: str | None) -> str:
     """One human stage word for one job.
 
@@ -260,6 +265,10 @@ class JobCoordinator:
         #: the layer that knows a job's public id, its queue position and its
         #: terminal outcome, so it is the layer that reports them.
         self._log = JobLog(names=getattr(application, "model_display_name", None))
+        #: LV1. Live Painting frames: kept out of the console's per-job lines
+        #: and out of the owner's queue history, and forgotten once delivered
+        #: (`forget`). A Live session logs one line per frame itself.
+        self._live: set[str] = set()
 
     # -- submission ----------------------------------------------------------
 
@@ -316,12 +325,16 @@ class JobCoordinator:
             self._pending.append(public_id)
             position = len(self._pending)
             depth = len(self._pending)
-        self._log.accepted(
-            public_id,
-            queue_position=position,
-            selection=dict(getattr(request, "model_selection", None) or {}),
-        )
-        self._log.queue("enqueued", job_id=public_id, depth=depth)
+            live = _is_live_frame(request)
+            if live:
+                self._live.add(public_id)
+        if not live:
+            self._log.accepted(
+                public_id,
+                queue_position=position,
+                selection=dict(getattr(request, "model_selection", None) or {}),
+            )
+            self._log.queue("enqueued", job_id=public_id, depth=depth)
 
         worker = threading.Thread(
             target=self._run, args=(public_id, request), daemon=True,
@@ -364,9 +377,10 @@ class JobCoordinator:
                     self._pending.pop(0)
                     self._admitted = public_id
                     record["state"] = RUNNING
-                    self._log.queue(
-                        "starting", job_id=public_id, depth=len(self._pending)
-                    )
+                    if public_id not in self._live:
+                        self._log.queue(
+                            "starting", job_id=public_id, depth=len(self._pending)
+                        )
                     return True
                 # Timed rather than indefinite: `close()` and `cancel()` both
                 # notify, but a lifecycle that finishes a job through a path
@@ -497,7 +511,7 @@ class JobCoordinator:
             )
         elif state == CANCELLED:
             self._log.queue("cancelled", job_id=public_id, depth=len(self._pending))
-        elif state == COMPLETED:
+        elif state == COMPLETED and public_id not in self._live:
             self._log.result(public_id)
 
     def _terminal_from_backend(
@@ -669,7 +683,7 @@ class JobCoordinator:
         recent = [
             self._describe_for_queue(job_id)
             for job_id in reversed(order)
-            if records[job_id]["state"] in TERMINAL_STATES
+            if records[job_id]["state"] in TERMINAL_STATES and job_id not in self._live
         ][:RECENT_TERMINAL_LIMIT]
 
         return {
@@ -711,6 +725,21 @@ class JobCoordinator:
             self._gate.notify_all()
         self._log.queue("reordered", depth=len(wanted))
         return self.queue_view()
+
+    def forget(self, public_id: str) -> bool:
+        """LV1. Drop a FINISHED job's record. Live Painting makes a job every
+        couple of seconds and reads each once; kept, the records would only
+        grow. A job that has not finished is never forgotten."""
+
+        with self._lock:
+            record = self._jobs.get(public_id)
+            if record is None or record.get("state") not in TERMINAL_STATES:
+                return False
+            del self._jobs[public_id]
+            if public_id in self._order:
+                self._order.remove(public_id)
+            self._live.discard(public_id)
+            return True
 
     def remove(self, public_id: str) -> dict[str, Any]:
         """Drop a job that has not started. Never loads or allocates anything.

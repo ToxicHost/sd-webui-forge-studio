@@ -1711,6 +1711,29 @@ async function _resolveOutputAsB64(idx) {
 // Frontend responsibilities: change detection, debounce, seed management,
 // preview layer updates. Backend (studio_live.py) handles queue and generation.
 
+// The model a job NAMES: Generate's selection (`doGenerate`), and since LV1
+// every Live frame's, so a frame runs on the model on the Generate panel
+// rather than whatever happens to be resident.
+function _jobModelSelection() {
+  const _selectionId = (id) => {
+    const value = (document.getElementById(id)?.value || "").trim();
+    // "None" and "Automatic" are UI sentinels, not catalogue ids.
+    return (!value || value === "None" || value === "Automatic") ? "" : value;
+  };
+  const _checkpoint = _selectionId("paramModel");
+  // The CHECKPOINT is the model; the other two are components it may carry
+  // itself. Requiring all three sent `null` for an SDXL checkpoint -- which
+  // bundles its own CLIP and VAE and has nothing to put in those fields --
+  // and the job then fell through to "No warm model session is ready".
+  // Empty strings are how the Extension says "nothing external"
+  // (studio_api.py:5747, 5760 collapse "None"/"Bundled"/"Automatic"/"").
+  return _checkpoint ? {
+    checkpoint_model_id: _checkpoint,
+    text_encoder_model_id: _selectionId("paramTextEncoder"),
+    vae_model_id: _selectionId("paramVAE"),
+  } : null;
+}
+
 const Live = {
   // State
   active: false,
@@ -1751,6 +1774,7 @@ const Live = {
       this._updateUI();
       window.Customizer?.updateToggleState();
       console.log("[Live] Active, seed:", this.seed);
+      window.Education?.maybeShowTip?.("live");
       // Trigger an initial submit with current canvas state
       this._scheduleCanvasCheck(0);
     } catch (e) {
@@ -1892,6 +1916,8 @@ const Live = {
       cfg_scale: _num("paramCFG", 7.0),
       steps: parseInt(document.getElementById("paramSteps")?.value) || 20,
       input_hash: inputHash,
+      // LV1. The model on the Generate panel, as Generate names it.
+      model_selection: _jobModelSelection(),
     };
   },
 
@@ -1910,6 +1936,7 @@ const Live = {
 
   _onResult(data) {
     this.generating = false;
+    this._errors = 0;
     clearTimeout(this._watchdog);
 
     // Track generation time for adaptive watchdog
@@ -1981,6 +2008,15 @@ const Live = {
     this.generating = false;
     clearTimeout(this._watchdog);
     console.error("[Live] Error:", message);
+    // LV2. Three failed frames in a row (out of memory, a missing model)
+    // would otherwise fail again on every stroke; Live stops and says why.
+    this._errors = (this._errors || 0) + 1;
+    if (this.active && this._errors >= 3) {
+      this._errors = 0;
+      showToast(_i18n("live.toast.stopped", "Live stopped after three failed frames in a row: {message}", { message }), "error");
+      this.stop();
+      return;
+    }
     showToast(`Live: ${message}`, "error");
     this._updateUI();
   },
@@ -3816,6 +3852,9 @@ function _collectCanvasSource(w, h) {
 }
 
 async function doGenerate(overrides = {}) {
+  // LV2 (owner, 2026-10-20): pressing Generate turns Live off. A frame already
+  // running finishes and is not followed by another; this job queues behind it.
+  if (window.Live && Live.active) await Live.stop();
   // `overrides` exists for ONE caller: the standalone Upscale panel, which has
   // its own Steps and Denoise controls and must not silently inherit the
   // generation panel's. Everything else -- the model selection, the prompt,
@@ -4104,25 +4143,7 @@ async function doGenerate(overrides = {}) {
     // resident. That is what makes Generate legal with nothing loaded: the
     // server reconciles this selection before the job leases a session, so
     // there is no Load step and still no way to run on a model nobody chose.
-    const _selectionId = (id) => {
-      const value = (document.getElementById(id)?.value || "").trim();
-      // "None" and "Automatic" are UI sentinels, not catalogue ids.
-      return (!value || value === "None" || value === "Automatic") ? "" : value;
-    };
-    const _checkpoint = _selectionId("paramModel");
-    const _textEncoder = _selectionId("paramTextEncoder");
-    const _vae = _selectionId("paramVAE");
-    // The CHECKPOINT is the model; the other two are components it may carry
-    // itself. Requiring all three sent `null` for an SDXL checkpoint -- which
-    // bundles its own CLIP and VAE and has nothing to put in those fields --
-    // and the job then fell through to "No warm model session is ready".
-    // Empty strings are how the Extension says "nothing external"
-    // (studio_api.py:5747, 5760 collapse "None"/"Bundled"/"Automatic"/"").
-    const modelSelection = _checkpoint ? {
-      checkpoint_model_id: _checkpoint,
-      text_encoder_model_id: _textEncoder,
-      vae_model_id: _vae,
-    } : null;
+    const modelSelection = _jobModelSelection();
 
     // The canonical body: model IDENTITY beside the request, never inside it.
     // `model_selection` is a SIBLING of `generation`, which is the shape the
@@ -6366,12 +6387,8 @@ function bindUI() {
     origLiveUpdateUI();
     const panel = document.getElementById("livePanel");
     if (panel) panel.style.display = this.active ? "block" : "none";
-    // Disable Generate button during Live
-    const genBtn = document.getElementById("genBtn");
-    if (genBtn) {
-      genBtn.disabled = this.active;
-      genBtn.style.opacity = this.active ? "0.4" : "";
-    }
+    // LV2. Generate is NOT disabled during Live (the Extension disabled it):
+    // the owner decided pressing it turns Live off (`doGenerate`).
   };
 
   // Wire prompt changes to Live

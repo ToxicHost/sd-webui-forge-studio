@@ -74,7 +74,7 @@ var ENTRIES = [
   { id: "core_workflow", title: "The Core Workflow", category: "getting_started", tags: ["workflow", "basics", "generate", "paint", "iterate", "loop"] },
   { id: "tutorials_and_tours", title: "Interactive Tutorials & Tours", category: "getting_started", tags: ["tutorial", "show me", "tour", "walkthrough", "learn", "first run", "beginner", "experienced", "restart", "education"] },
   { id: "first_image", title: "Making Your First Image", category: "getting_started", tags: ["first", "prompt", "generate", "beginner"] },
-  { id: "not_in_studio_yet", title: "Not in Studio Yet", category: "getting_started", tags: ["unavailable", "live", "float", "high precision", "batch", "test merge", "custom brush", "missing", "supported"] },
+  { id: "not_in_studio_yet", title: "Not in Studio Yet", category: "getting_started", tags: ["unavailable", "float", "high precision", "batch", "test merge", "custom brush", "missing", "supported"] },
   { id: "ui_layout", title: "UI Layout", category: "getting_started", tags: ["layout", "interface", "panels", "toolbar", "orientation"] },
   { id: "models_and_vae", title: "Models & VAE", category: "getting_started", tags: ["model", "checkpoint", "vae", "sdxl", "sd15", "load", "download", "install", "illustrious", "flux", "gguf", "fp8", "fp16", "architecture"] },
   { id: "output_workflow", title: "Saving & Using Results", category: "getting_started", tags: ["output", "save", "result", "canvas", "gallery", "format", "defaults", "persist", "server", "metadata", "filename", "fingerprint", "hash"] },
@@ -138,6 +138,7 @@ var ENTRIES = [
   // ── GENERATION ────────────────────────────────────────
 
   { id: "hires_fix", title: "HiRes Fix", category: "generation", tags: ["hires", "upscale", "upscaler", "detail", "resolution", "two-pass"] },
+  { id: "live_painting", title: "Live Painting", category: "generation", tags: ["live", "painting", "realtime", "real-time", "paint", "loop", "iterate", "img2img", "krita", "apply"] },
   { id: "adetailer", title: "ADetailer", category: "generation", tags: ["adetailer", "face", "detail", "yolo", "hand", "detect", "auto"] },
   // ── ADVANCED FEATURES ────────────────────────────────────────
 

@@ -773,9 +773,27 @@ function drawTransformHandles(c) {
 // ========================================================================
 // COMPOSITE + OVERLAY (wraps core composite with UI overlays)
 // ========================================================================
+// DV2. The canvas toolbar says when Develop is changing the picture. Its
+// settings belong to the document and reach the screen, Generate and Live,
+// and nothing outside the Develop tab said so: a slider left on read as a
+// broken brush (owner, 2026-10-21). Click opens Develop.
+function _updateDevelopBadge() {
+    const badge = document.getElementById("developOnBadge");
+    if (!badge) return;
+    if (!badge.dataset.bound) {
+        badge.dataset.bound = "1";
+        badge.addEventListener("click", () => document.querySelector('button[data-module="develop"]')?.click());
+    }
+    const p = S.developParams;
+    const SD = window.StudioDevelop;
+    const on = !!(p && p.enabled && !(SD && typeof SD._isIdentity === "function" && SD._isIdentity(p)));
+    if (badge.hidden === on) badge.hidden = !on;
+}
+
 function _redraw() {
     C.composite();
     _updateMaskToggleUI();
+    _updateDevelopBadge();
     const c = S.ctx;
     if (!c) return;
     _refreshCtxBarIfDocumentResized();
@@ -1408,6 +1426,7 @@ function bindCanvas() {
         // Region painting
         if (S.regionMode && C.activeRegion() && (S.tool === "brush" || S.tool === "eraser")) {
             if (!C.noteStrokeUndo("Region paint: " + C.activeRegion().name)) return;
+            window.Education?.maybeShowTip?.("regions");
             S.drawing = true; _capture(cv, e.pointerId);
             _beginWebGLLiveFallbackIfNeeded();
             if (S.tool === "eraser") C.regionEraseMove(p.x, p.y, p.x, p.y);

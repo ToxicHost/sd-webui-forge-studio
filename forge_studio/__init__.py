@@ -93,4 +93,4 @@ __all__ = (
 #: through /api/version. Raise the last number with every tester update. The
 #: page's `?v=4.17.0` (index.html) is only a cache token inherited from the
 #: Extension, pinned by the loader's CSP hash; it is not shown anywhere.
-__version__ = "0.9.1"
+__version__ = "0.9.2"

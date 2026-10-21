@@ -153,6 +153,8 @@
         <span class="ctx-item" data-ctx="mask-clear"><button class="ctx-mode-btn" id="maskClearBtn" disabled data-i18n="ui.mask.clear">Clear mask</button></span>
         <span class="ctx-item" data-ctx="mask-selection" id="maskSelectionStatus" data-i18n="ui.mask.brushStatus">Hard round · pressure off</span>
         <span id="generationMaskStatus" role="status" aria-live="polite" data-i18n="ui.mask.statusEmpty">Generation mask: empty</span>
+        <!-- Shown while Develop changes the picture (canvas-ui `_updateDevelopBadge`); opens Develop. -->
+        <button class="ctx-mode-btn" id="developOnBadge" hidden data-i18n="ui.develop.onBadge" data-i18n-title="ui.develop.onBadge.tooltip" title="Develop is changing how this picture looks, and what Generate and Live receive. Click to open Develop.">Develop on</button>
         <!-- Pen pressure toggle + Size/Opacity sub-options -->
         <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
           <button class="ctx-mode-btn" id="pressureBtn" data-i18n-title="ctxBar.penPressure.tooltip" title="Pen pressure" data-i18n="ui.brush.pen">Pen</button>

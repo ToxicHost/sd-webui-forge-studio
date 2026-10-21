@@ -935,6 +935,10 @@ def _log_dispatch(job_id: str, translation: RequestTranslation) -> None:
         from forge_studio.job_log import JobLog
 
         headless = translation.headless_request
+        # LV1. A Live frame logs one line of its own (`live_session`), not
+        # five per frame every couple of seconds.
+        if str(getattr(getattr(headless, "output", None), "purpose", "") or "") == "live":
+            return
         log = JobLog()
         log.dispatch(job_id, resolved={
             "sampler": headless.sampler,
@@ -1430,6 +1434,23 @@ class HeadlessGenerationSession:
                     message="That job has produced no result.",
                 )
             )
+        # LV1. A Live frame is never a file: its picture rides the outcome.
+        inline = str(getattr(outcome, "image_data_url", "") or "")
+        if inline:
+            return GeneratedResult(
+                job_id=job_id,
+                state=StudioJobState.COMPLETED,
+                mime_type=outcome.media_type,
+                image_data_url=inline,
+                metadata={
+                    "schema_version": "studio-headless-result/v1",
+                    "width": outcome.width,
+                    "height": outcome.height,
+                    "seed": outcome.seed,
+                    "request_id": outcome.request_id,
+                    "live": True,
+                },
+            )
         root = self._result_root
         if root is None:
             raise self._raise_studio(
@@ -1595,6 +1616,18 @@ class HeadlessGenerationSession:
                 )
             )
         return model
+
+    def forget(self, job_id: str) -> bool:
+        """LV1. Drop a FINISHED job's record -- its request (the canvas
+        picture) and its outcome (a Live frame's picture). Live Painting reads
+        each frame once; kept, a session would hold hundreds of megabytes."""
+
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is None or not record.progress_view.terminal:
+                return False
+            del self._jobs[job_id]
+            return True
 
     def _require_job(self, job_id: str) -> _JobRecord:
         with self._lock:

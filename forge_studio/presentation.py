@@ -1648,8 +1648,9 @@ def _validated_output(value: Any) -> Any:
     if save_tree not in ("studio", "neo"):
         raise PresentationError("output save_tree must be 'studio' or 'neo'.")
     purpose = value.get("purpose", "")
-    if purpose not in ("", "upscaled"):
-        raise PresentationError("output purpose must be '' or 'upscaled'.")
+    # LV1: "live" is a Live Painting frame -- returned inline, never saved.
+    if purpose not in ("", "upscaled", "live"):
+        raise PresentationError("output purpose must be '', 'upscaled' or 'live'.")
     # NM1. Refused with the reason (an unknown token, a path character), not
     # cleaned: the owner typed it and should see what is wrong with it.
     from forge_headless.name_pattern import validated_pattern
@@ -2194,6 +2195,51 @@ class StudioPresentation:
                 coordinator = JobCoordinator(self._application)
                 self._coordinator = coordinator
         return coordinator
+
+    def live_session(self):
+        """LV1. The ONE Live Painting session, or None without a lifecycle
+        (the mock keeps the adapter's refusal). Built once, under the same
+        lock as the coordinator and for the same reason."""
+
+        if not self.lifecycle_available:
+            return None
+        session = getattr(self, "_live", None)
+        if session is not None:
+            return session
+        # BEFORE the lock: `_coordinator_or_none` takes the same lock, which
+        # is not re-entrant. Asked inside it, the first WebSocket to connect
+        # deadlocked the server (LV1 GPU proof, 2026-10-21).
+        coordinator = self._coordinator_or_none()
+        with StudioPresentation._coordinator_construction:
+            session = getattr(self, "_live", None)
+            if session is None:
+                from .live_session import LiveSession
+
+                # By PUBLIC id, as `job_status` reads a coordinator job; the
+                # picture is the backend's, read in memory (the port returned
+                # it inline, `image_data_url`). Never through the HTTP job
+                # handler, which is where a Gallery row would be recorded.
+                def picture(job_id: str) -> tuple[str, Any]:
+                    backend_id = coordinator.describe(job_id).get("backend_job_id")
+                    result = self._application.get_result(str(backend_id or job_id))
+                    image = str(getattr(result, "image_data_url", "") or "")
+                    if not image:
+                        raise PresentationError("The Live frame has no picture.")
+                    return image, dict(getattr(result, "metadata", {}) or {})
+
+                def forget(job_id: str) -> None:
+                    backend_id = coordinator.describe(job_id).get("backend_job_id")
+                    if coordinator.forget(job_id) and backend_id:
+                        self._application.forget_job(str(backend_id))
+
+                session = LiveSession(
+                    submit=self.submit_async,
+                    poll=coordinator.describe,
+                    picture=picture,
+                    forget=forget,
+                )
+                self._live = session
+        return session
 
     def _require_lifecycle(self):
         lifecycle = self._lifecycle
@@ -4086,6 +4132,11 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         next_ping = time.monotonic() + 15.0
         next_progress = time.monotonic() + 0.1
         last_progress = b""
+        # LV1. Live Painting's events (`live_result` and the rest), which the
+        # page's `Live` object already handles. -1: only what happens from now.
+        live = self._presentation.live_session() if getattr(
+            self._presentation, "lifecycle_available", False) else None
+        live_cursor = -1
         try:
             while True:
                 now = time.monotonic()
@@ -4093,12 +4144,19 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                     0.0,
                     min(next_ping, next_progress) - now,
                 )
+                if live is not None and live.active:
+                    timeout = min(timeout, 0.05)
                 readable, _, _ = select.select(
                     [self.connection],
                     [],
                     [],
                     min(timeout, 1.0),
                 )
+                if live is not None:
+                    live_cursor, fresh = live.events_since(live_cursor)
+                    for event in fresh:
+                        self.connection.sendall(self._websocket_frame(
+                            0x1, json.dumps(event, separators=(",", ":")).encode("utf-8")))
                 if readable:
                     frame = self._read_websocket_frame()
                     if frame is None:
@@ -4169,6 +4227,12 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             if path.startswith("/studio/workshop/"):
                 self._workshop_route("GET", path)
                 return
+            # LV1. Live Painting's status, before the catch-all (see do_POST).
+            if path == "/studio/live/status":
+                session = self._presentation.live_session()
+                if session is not None:
+                    self._send_json(HTTPStatus.OK, session.status())
+                    return
             # G1. Settings > GPU: the cards, the saved choice, what is in use.
             if path == "/studio/gpus":
                 from forge_headless.gpu_select import describe
@@ -4479,6 +4543,27 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.NOT_FOUND, {"error": "Studio route not found."}
         )
 
+    def _live_route(self, session: Any, path: str) -> None:
+        """LV1. `/studio/live/start|stop|submit`, answered as the Extension's
+        handlers answer (`studio_live.py:390-426`): `{"status": ...}`. A
+        refused frame is a 400 with the reason, and also a `live_error` on
+        the socket, where the page shows it."""
+
+        from .live_session import LiveError
+
+        if path == "/studio/live/start":
+            self._send_json(HTTPStatus.OK, session.start())
+            return
+        if path == "/studio/live/stop":
+            self._send_json(HTTPStatus.OK, session.stop())
+            return
+        # The canvas picture rides this route, as it rides /api/generate.
+        payload = self._read_json_bounded(maximum_bytes=_MAX_SOURCE_REQUEST_BYTES)
+        try:
+            self._send_json(HTTPStatus.OK, session.submit(payload))
+        except LiveError as refusal:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(refusal)})
+
     def _remember_model_selection(self) -> None:
         """Store the dropdown choices for next launch. It loads nothing.
 
@@ -4519,6 +4604,14 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             if path == "/studio/settings/model_selection":
                 self._remember_model_selection()
                 return
+            # LV1. Live Painting, above the `/studio/` catch-all, which would
+            # answer from the adapter's "unavailable" literals. Without a
+            # lifecycle (the mock) it still does.
+            if path in ("/studio/live/start", "/studio/live/stop", "/studio/live/submit"):
+                session = self._presentation.live_session()
+                if session is not None:
+                    self._live_route(session, path)
+                    return
             # The picker. Registered HERE, above the `/studio/` catch-all
             # further down, because that catch-all hands anything beginning
             # `/studio/` to the source adapter -- a route added below it is

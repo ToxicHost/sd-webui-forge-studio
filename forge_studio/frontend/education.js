@@ -602,8 +602,8 @@ var Education = (function () {
   // ========================================================================
   // Static callouts (today only Layers), each shown once on the first
   // meaningful interaction and never again after dismissal. The Regions and
-  // Live tips were removed with their features (CX1): do not bring them back
-  // until those features can generate.
+  // `regions` and `live` were removed with their features (CX1) and came back
+  // when those features could generate (RG1-RG3, LV1; the Extension's tips).
   // Seen-state persists server-side via prefs key "education"
   // ({seen:{layers:true,...}}), so it survives reloads and Clear Storage.
   // Deliberately not a tour engine. Copy teaches workflow, not UI labels.
@@ -613,6 +613,16 @@ var Education = (function () {
       i18n: "education.tip.layers",
       fallback: "Generate, send to canvas, mask, and regenerate to composite elements — layers are for building images in passes, like a paint program.",
       codexId: "layers_basics"
+    },
+    regions: {
+      i18n: "education.tip.regions",
+      fallback: "Each region carries its own prompt inside a single generation — draw where something should go, describe it in that region's prompt, and generate once.",
+      codexId: "regional_prompting"
+    },
+    live: {
+      i18n: "education.tip.live",
+      fallback: "Live is img2img over your canvas, not a scribble-to-image guide — low strength follows your sketch closely, higher strength takes liberties. Apply puts the result on the canvas as a new layer.",
+      codexId: "live_painting"
     },
   };
   var _tipEl = null;

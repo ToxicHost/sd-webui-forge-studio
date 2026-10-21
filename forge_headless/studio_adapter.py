@@ -301,6 +301,12 @@ class HeadlessBackendAdapter(BackendAdapter):
             )
         )
 
+    def forget_job(self, job_id: str) -> bool:
+        """LV1. Drop a finished job's record (`HeadlessGenerationSession.forget`)."""
+        if self._generation is not None:
+            return bool(self._generation.forget(job_id))
+        return False
+
     def get_result(self, job_id: str) -> GeneratedResult:
         if self._generation is not None:
             return self._generation.result(job_id)
