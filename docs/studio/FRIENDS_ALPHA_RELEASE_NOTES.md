@@ -4,6 +4,23 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.7: Template line fix — 2026-10-22
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **A picture's Template line no longer ends up in your prompts.**
+  - When you generate with wildcards, Studio saves the prompt as you typed it
+    in the picture's settings, on a line starting `Template:`.
+  - Loading such a picture's settings put that line into the Negative prompt,
+    or onto the end of the prompt when there was no negative. This happened
+    when you dropped the picture on the canvas, or sent an unsaved picture to
+    the canvas from the Gallery. The next Generate then used it.
+  - Studio now reads the Template line as its own field, for pictures saved
+    before this update too.
+  - If a Negative prompt you loaded earlier still contains `Template: …`,
+    delete that text once.
+
 ## 0.9.6: Colour picker, New theme fix — 2026-10-22
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

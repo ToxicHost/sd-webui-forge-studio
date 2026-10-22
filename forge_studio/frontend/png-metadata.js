@@ -328,16 +328,36 @@ window.PngMetadata = (() => {
             return result;
         }
 
-        // Everything before the params line
-        const preParams = lines.slice(0, paramsLineIdx).join("\n");
-
-        // Split prompt and negative prompt
-        const negMatch = preParams.match(/^([\s\S]*?)\nNegative prompt:\s*([\s\S]*)$/);
-        if (negMatch) {
-            result.prompt = negMatch[1].trim();
-            result.negativePrompt = negMatch[2].trim();
-        } else {
-            result.prompt = preParams.trim();
+        // Everything before the params line, sorted line by line (PM1).
+        // Studio writes its own lines between the negative prompt and the
+        // params line -- "Template:" (the prompt as typed, before wildcards
+        // resolved) and "Studio dynamic prompts:" -- and Dynamic Prompts
+        // writes "Negative Template:". Splitting at "Negative prompt:" and
+        // calling the rest negative put the typed positive prompt into the
+        // negative box (or glued it onto the positive when there was no
+        // negative), and the next Generate used it. Each such line starts
+        // its own field, as gallery_metadata.py reads them on the server.
+        // "Negative Template:" is tested before "Template:".
+        const buckets = { prompt: [], negativePrompt: [], negativeTemplate: [], template: [], studioDynamicPrompts: [] };
+        const starts = [
+            ["Negative prompt:", "negativePrompt"],
+            ["Negative Template:", "negativeTemplate"],
+            ["Template:", "template"],
+            ["Studio dynamic prompts:", "studioDynamicPrompts"],
+        ];
+        let field = "prompt";
+        for (const line of lines.slice(0, paramsLineIdx)) {
+            const start = starts.find(([prefix]) => line.startsWith(prefix));
+            if (start) {
+                field = start[1];
+                buckets[field].push(line.slice(start[0].length).trimStart());
+            } else {
+                buckets[field].push(line);
+            }
+        }
+        result.prompt = buckets.prompt.join("\n").trim();
+        for (const key of ["negativePrompt", "template", "negativeTemplate", "studioDynamicPrompts"]) {
+            if (buckets[key].length) result[key] = buckets[key].join("\n").trim();
         }
 
         // Parse the key: value pairs from the params line
