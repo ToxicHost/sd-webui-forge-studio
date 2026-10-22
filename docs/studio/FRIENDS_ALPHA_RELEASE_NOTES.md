@@ -4,6 +4,15 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.9: Tensor.Art link in the Codex — 2026-10-22
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Codex > Models & VAE** says that the two starter models (Dominion and
+  Animatox, by ToxicHost) are free, and links Moritz's models on Tensor.Art,
+  which can be run there or bought for local use.
+
 ## 0.9.8: Starter model links — 2026-10-22
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
