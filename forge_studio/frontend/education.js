@@ -231,6 +231,45 @@ var Education = (function () {
     return node;
   }
 
+  // Where to get a first model (owner, 2026-10-22): two of ToxicHost's to
+  // start with, then the sites. Plain links that open in the browser --
+  // Studio itself downloads nothing (the onboarding rule stands).
+  var STARTER_MODELS = [
+    { name: "Dominion", url: "https://pixeldrain.com/u/3nZx3rjs", key: "education.welcome.freshGuide.dominion", desc: "An Illustrious model by ToxicHost" },
+    { name: "Animatox", url: "https://pixeldrain.com/u/6xW86mYg", key: "education.welcome.freshGuide.animatox", desc: "An Anima model by ToxicHost" },
+  ];
+  var MODEL_SITES = { civitai: ["Civitai", "https://civitai.com"], huggingface: ["Hugging Face", "https://huggingface.co"] };
+
+  function _link(cls, href) {
+    var a = _el("a", cls, "");
+    a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
+    return a;
+  }
+
+  function _modelLinks() {
+    var box = _el("div", "edu-model-links");
+    box.appendChild(_el("div", "edu-model-links-title", _t("education.welcome.freshGuide.startWith", "Two to start with")));
+    var cards = _el("div", "edu-model-cards");
+    STARTER_MODELS.forEach(function (m) {
+      var a = _link("edu-model-card", m.url);
+      a.appendChild(_el("span", "edu-model-name", m.name));
+      a.appendChild(_el("span", "edu-model-desc", _t(m.key, m.desc)));
+      cards.appendChild(a);
+    });
+    box.appendChild(cards);
+    // "Find more on {civitai} and {huggingface}." with the sites as links,
+    // wherever a translation puts them.
+    var more = _el("p", "edu-welcome-text edu-model-more", "");
+    _t("education.welcome.freshGuide.more", "Find more on {civitai} and {huggingface}.")
+      .split(/(\{civitai\}|\{huggingface\})/).forEach(function (part) {
+        var site = MODEL_SITES[part.replace(/[{}]/g, "")];
+        if (site && /^\{\w+\}$/.test(part)) { var a = _link("", site[1]); a.textContent = site[0]; more.appendChild(a); }
+        else if (part) more.appendChild(document.createTextNode(part));
+      });
+    box.appendChild(more);
+    return box;
+  }
+
   // Line icons for the choice cards (they were text glyphs).
   var _CARD_ICONS = {
     have: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
@@ -374,6 +413,7 @@ var Education = (function () {
         modal.appendChild(_el("div", "edu-modal-subtitle", _t("education.welcome.freshGuide.title", "Getting your first model")));
         _paragraphs(modal, _t("education.welcome.freshGuide.text",
           "Studio makes pictures with a model called a checkpoint. Many are free on sites such as Civitai and Hugging Face — pick one made for the kind of pictures you want.\n\nPrefer .safetensors files. Older .ckpt and .pt files can carry code, and Studio never opens them to look inside.\n\nSome checkpoints also need a text encoder and a VAE. Their page says so; put those in the same folder."));
+        modal.appendChild(_modelLinks());
         var note = _el("p", "edu-welcome-text edu-welcome-note", "");
         var useStudio = _el("button", "defaults-btn primary", _t("education.welcome.freshGuide.useStudio", "Use Studio’s models folder"));
         useStudio.type = "button";

@@ -4,6 +4,23 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.8: Starter model links — 2026-10-22
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **The first-run screen links to models.** If you pick "I'm starting
+  fresh", the "Getting your first model" page shows two models to start
+  with, plus links to Civitai and Hugging Face for more:
+  - **Dominion**, an Illustrious model by ToxicHost
+  - **Animatox**, an Anima model by ToxicHost
+
+  The links open in your browser; Studio itself downloads nothing.
+- **Codex > Models & VAE** links the same two models in its first step, in
+  place of the earlier starter-model link.
+- Generate no longer sends three ControlNet fields that nothing used. No job
+  changes.
+
 ## 0.9.7: Template line fix — 2026-10-22
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

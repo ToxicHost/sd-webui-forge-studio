@@ -4835,11 +4835,8 @@ async function doGenerate(overrides = {}) {
       loras:      window.ADLoRAStack?.payloadForSlot?.(n) || [],
     })),
 
-    // Regional / ControlNet
+    // Regional (ControlNet travels in the request group, requestField())
     regions_json:  _cleanRegionsJson(regionsJson),
-    cn_json:       buildCNJson(),
-    cn1_upload_b64: window._cnUploadData?.[1] || null,
-    cn2_upload_b64: window._cnUploadData?.[2] || null,
 
     // Settings
     session_id: SESSION_ID,
@@ -5460,30 +5457,6 @@ function handleProgress(data) {
       State._previewSuppressLogged = true;
     }
   }
-}
-
-
-// ═══════════════════════════════════════════
-// CONTROLNET DATA
-// ═══════════════════════════════════════════
-
-function buildCNJson() {
-  const units = [1, 2].map(n => {
-    const enabled = document.getElementById(`checkCN${n}`)?.classList.contains("checked") || false;
-    if (!enabled) return null;
-    return {
-      enabled: true,
-      module: document.getElementById(`paramCN${n}Module`)?.value || "None",
-      model: document.getElementById(`paramCN${n}Model`)?.value || "None",
-      source: document.getElementById(`paramCN${n}Source`)?.value || "Canvas",
-      weight: _num(`paramCN${n}Weight`, 1.0),
-      guidance_start: _num(`paramCN${n}Start`, 0.0),
-      guidance_end: _num(`paramCN${n}End`, 1.0),
-      control_mode: document.getElementById(`paramCN${n}Mode`)?.value || "Balanced",
-      pixel_perfect: true,
-    };
-  }).filter(Boolean);
-  return units.length ? JSON.stringify(units) : "";
 }
 
 
