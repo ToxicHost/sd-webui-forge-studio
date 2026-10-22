@@ -18,6 +18,9 @@
 <link rel="stylesheet" href="/studio/static/education.css?v=4.17.0">
 <link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.17.0">
 <link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.17.0">
+<!-- UI1. The saved theme on <html> before the page paints (a file, not an
+     inline script: the CSP allows inline scripts only by hash). -->
+<script src="/studio/static/studio-theme-boot.js?v=4.17.0"></script>
 </head>
 <body>
 
@@ -498,16 +501,6 @@
             <div class="prompt-box" data-block="negative">
               <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" data-i18n-placeholder="ui.negative.placeholder" placeholder="Negative prompt..."></textarea>
             </div>
-            <div data-block="generate">
-              <div class="gen-row">
-                <button class="gen-btn" id="genBtn"><span class="gen-shine"></span><span data-i18n="actions.generate">Generate</span></button>
-                <button class="live-btn" id="liveToggleBtn" data-i18n="live.toggle.start" data-i18n-title="live.toggle.start.tooltip" title="Start Live Painting">▶ Live</button>
-              </div>
-              <div class="gen-actions">
-                <button id="interruptBtn" data-i18n="actions.interrupt">Interrupt</button>
-                <button id="skipBtn" data-i18n="actions.skip">Skip</button>
-              </div>
-            </div>
 
             <div class="workflow-row" id="workflowRow"
                  data-i18n-title="workflows.row.title"
@@ -699,22 +692,22 @@
             </details>
             <div class="studio-session-note" id="studioSessionNote"></div>
             <div class="studio-session-error" id="studioSessionError"></div>
-            <div class="param-grid cols-1" style="margin-top:6px;">
-              <div class="param-cell"><button class="cn-upload-btn" type="button" id="studioUnloadBtn" disabled data-i18n="ui.jobs.unload">Unload model</button></div>
-            </div>
           </div>
 
           <!-- Model & VAE (FR-021: always visible at top) -->
           <div class="param-section" style="padding-bottom:6px;" data-block="model">
             <div class="param-grid cols-1">
               <div class="param-cell">
-                <label data-i18n="ui.model.checkpoint">Model</label>
+                <div class="model-label-row">
+                  <label data-i18n="ui.model.checkpoint">Model</label>
+                  <button class="cn-upload-btn model-unload-btn" type="button" id="studioUnloadBtn" disabled data-i18n="ui.jobs.unload">Unload model</button>
+                </div>
                 <div style="display:flex;gap:4px;">
                   <select class="param-select" id="paramModel" style="flex:1;">
                     <option data-i18n="ui.model.loading">Loading models...</option>
                   </select>
-                  <button class="cn-upload-btn" id="browseModelsBtn" data-i18n-title="ckpt.browse.tooltip" title="Browse checkpoints" style="padding:4px 6px;font-size:12px;">&#x25a6;</button>
-                  <button class="cn-upload-btn" id="refreshModelsBtn" data-i18n-title="ui.model.refreshModels" title="Refresh model list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                  <button class="cn-upload-btn icon-btn" id="browseModelsBtn" data-i18n-title="ckpt.browse.tooltip" title="Browse checkpoints" data-i18n-aria-label="ckpt.browse.tooltip" aria-label="Browse checkpoints"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button>
+                  <button class="cn-upload-btn icon-btn" id="refreshModelsBtn" data-i18n-title="ui.model.refreshModels" title="Refresh model list" data-i18n-aria-label="ui.model.refreshModels" aria-label="Refresh model list"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
                 </div>
               </div>
             </div>
@@ -725,7 +718,7 @@
                   <select class="param-select" id="paramVAE" style="flex:1;">
                     <option value="Automatic" data-i18n="ui.model.automatic">Automatic</option>
                   </select>
-                  <button class="cn-upload-btn" id="refreshVAEBtn" data-i18n-title="ui.model.refreshVae" title="Refresh VAE list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                  <button class="cn-upload-btn icon-btn" id="refreshVAEBtn" data-i18n-title="ui.model.refreshVae" title="Refresh VAE list" data-i18n-aria-label="ui.model.refreshVae" aria-label="Refresh VAE list"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
                 </div>
               </div>
             </div>
@@ -736,7 +729,7 @@
                   <select class="param-select" id="paramTextEncoder" style="flex:1;">
                     <option value="None" data-i18n="ui.model.bundled">None (bundled)</option>
                   </select>
-                  <button class="cn-upload-btn" id="refreshTEBtn" data-i18n-title="ui.model.refreshTextEncoders" title="Refresh text encoder list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                  <button class="cn-upload-btn icon-btn" id="refreshTEBtn" data-i18n-title="ui.model.refreshTextEncoders" title="Refresh text encoder list" data-i18n-aria-label="ui.model.refreshTextEncoders" aria-label="Refresh text encoder list"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
                 </div>
               </div>
             </div>
@@ -824,12 +817,12 @@
           </div>
 
           <!-- Seed (FR-022: collapsible, open by default).
-               Batch Count and Batch Size were REMOVED: the job queue does
-               what Batch Count did, with per-job cancel and reorder, and
-               Batch Size needs a multi-result contract Studio does not
-               have -- `FirstImageRequest` is singular by name and by
-               construction. Owner decision, 2026-08-20.
-               Evidence/source-review/AR5.1-batch-removal.md -->
+               Batch count and Batch size show here only in Batch mode
+               (Settings > Generation > Generate mode). Queue mode, the
+               default, makes one picture per job, as it has since the two
+               were removed on 2026-08-20 (AR5.1); the owner brought them back
+               as an optional mode on 2026-10-21.
+               Evidence/source-review/BM1-batch-mode.md -->
           <div class="collapse-section" data-block="seedbatch">
             <div class="collapse-header">
               <span class="collapse-title" data-i18n="ui.seed.title">Seed</span>
@@ -838,8 +831,8 @@
             <div class="collapse-body open" id="panelSeedBatch">
             <div class="seed-row field-group">
               <div class="param-cell"><label data-i18n="ui.seed.seed">Seed</label><input class="param-val" id="paramSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
-              <button class="seed-btn" id="seedRandom" data-i18n-title="ui.seed.random" title="Random">&#x1f3b2;</button>
-              <button class="seed-btn" id="seedRecycle" data-i18n-title="ui.seed.recycle" title="Recycle last">&#x1f501;</button>
+              <button class="seed-btn" id="seedRandom" data-i18n-title="ui.seed.random" title="Random" data-i18n-aria-label="ui.seed.random" aria-label="Random"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg></button>
+              <button class="seed-btn" id="seedRecycle" data-i18n-title="ui.seed.recycle" title="Recycle last" data-i18n-aria-label="ui.seed.recycle" aria-label="Recycle last"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
               <label class="extra-seed-toggle" data-help="help.seed.extra" style="margin:0;">
                 <input type="checkbox" id="checkExtra"> <span data-i18n="ui.seed.extra">Extra</span>
               </label>
@@ -847,8 +840,8 @@
             <div id="extraSeedSection" class="extra-seed-section" style="display:none;">
               <div class="seed-row" style="margin-top:4px;">
                 <div class="param-cell"><label data-i18n="ui.seed.variationSeed">Variation seed</label><input class="param-val" id="paramVarSeed" data-min="-1" data-step="1" value="-1" style="text-align:left;font-family:var(--mono);"></div>
-                <button class="seed-btn" id="varSeedRandom" data-i18n-title="ui.seed.random" title="Random">&#x1f3b2;</button>
-                <button class="seed-btn" id="varSeedRecycle" data-i18n-title="ui.seed.recycle" title="Recycle last">&#x1f501;</button>
+                <button class="seed-btn" id="varSeedRandom" data-i18n-title="ui.seed.random" title="Random" data-i18n-aria-label="ui.seed.random" aria-label="Random"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg></button>
+                <button class="seed-btn" id="varSeedRecycle" data-i18n-title="ui.seed.recycle" title="Recycle last" data-i18n-aria-label="ui.seed.recycle" aria-label="Recycle last"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
               </div>
               <div class="param-grid cols-2" style="margin-top:4px;">
                 <div class="param-cell">
@@ -864,7 +857,9 @@
                 <div class="param-cell"><label data-i18n="ui.seed.resizeHeight">Resize seed from height</label><input class="param-val" id="paramResizeSeedH" data-min="0" data-max="2048" data-step="8" value="0"></div>
               </div>
             </div>
-            <div class="param-grid cols-2 field-group">
+            <div class="param-grid cols-2 field-group" id="batchControls" hidden>
+              <div class="param-cell"><label data-i18n="ui.seed.batchCount">Batch count</label><input class="param-val" id="paramBatch" data-min="1" data-max="16" data-step="1" value="1"></div>
+              <div class="param-cell"><label data-i18n="ui.seed.batchSize">Batch size</label><input class="param-val" id="paramBatchSize" data-min="1" data-max="8" data-step="1" value="1"></div>
             </div>
             </div>
           </div>
@@ -1339,8 +1334,8 @@
             <span class="section-arrow">&#x25BC;</span>
             <span class="section-label" data-i18n="panels.history">History</span>
             <div class="section-actions">
-              <button id="historyUndo" data-i18n-title="history.undo.tooltip" title="Undo (Ctrl+Z)" style="font-size:12px;">&#x21b6;</button>
-              <button id="historyRedo" data-i18n-title="history.redo.tooltip" title="Redo (Ctrl+Shift+Z)" style="font-size:12px;">&#x21b7;</button>
+              <button id="historyUndo" data-i18n-title="history.undo.tooltip" title="Undo (Ctrl+Z)" data-i18n-aria-label="history.undo.tooltip" aria-label="Undo (Ctrl+Z)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
+              <button id="historyRedo" data-i18n-title="history.redo.tooltip" title="Redo (Ctrl+Shift+Z)" data-i18n-aria-label="history.redo.tooltip" aria-label="Redo (Ctrl+Shift+Z)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg></button>
             </div>
           </div>
           <div id="historyList" class="section-body"></div>
@@ -1351,6 +1346,23 @@
           <div class="hidden-tray" id="hiddenTray">
             <div class="hidden-tray-label" data-i18n="layout.hiddenTray.label">Hidden blocks — click to restore</div>
             <div class="hidden-tray-chips" id="hiddenTrayChips"></div>
+          </div>
+
+          <!-- UI1. Generate, Live, Interrupt and Skip, pinned to the bottom of
+               the panel so Generate never scrolls away (app.css: sticky).
+               Last in the page on purpose: a sticky footer only stays down
+               while its natural place is below the fold. The job status is
+               mirrored from the Jobs block's chip by app.js. -->
+          <div data-block="generate" class="gen-dock">
+            <div class="gen-row">
+              <button class="gen-btn" id="genBtn"><span class="gen-shine"></span><span data-i18n="actions.generate">Generate</span></button>
+              <button class="live-btn" id="liveToggleBtn" data-i18n="live.toggle.start" data-i18n-title="live.toggle.start.tooltip" title="Start Live Painting">▶ Live</button>
+            </div>
+            <div class="gen-actions">
+              <button id="interruptBtn" data-i18n="actions.interrupt">Interrupt</button>
+              <button id="skipBtn" data-i18n="actions.skip">Skip</button>
+              <span class="gen-status" id="genStatusMirror" aria-live="polite"><span class="gen-status-dot" aria-hidden="true"></span><span class="gen-status-text"></span></span>
+            </div>
           </div>
 
         </div>
@@ -1620,16 +1632,72 @@
                   <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.theme.title">Theme</span></span>
                 </div>
                 <div class="settings-card-body">
-                  <div class="settings-item settings-item-stacked" data-setting-key="themeSelector" data-setting-search="theme color scheme dark studio liam oliver toxichost neutral neon appearance">
-                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.theme.label">Color theme</span></div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="themeSelector" data-setting-search="theme color scheme dark light liam studio oliver terracotta toxichost neutral neon cream paper custom gradient appearance">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.theme.label">Color theme</span>
+                      <span class="settings-item-desc" data-i18n="settings.theme.desc">Liam is the default. Make your own from a few colors; Studio works out the rest and keeps it readable.</span>
+                    </div>
                     <div class="settings-item-control settings-item-control-wide">
+                      <!-- UI1. Built-in themes; studio-themes-ui.js adds each
+                           tile's swatch, the custom themes and "New theme". -->
                       <div class="theme-selector" id="themeSelector">
-                        <button class="theme-btn active" data-theme="">Studio</button>
-                        <button class="theme-btn" data-theme="liam">Liam</button>
-                        <button class="theme-btn" data-theme="oliver">Oliver</button>
-                        <button class="theme-btn" data-theme="toxic">ToxicHost</button>
-                        <button class="theme-btn" data-theme="neutral">Neutral</button>
-                        <button class="theme-btn" data-theme="neon">Neon</button>
+                        <button type="button" class="theme-btn active" data-theme="liam">Liam</button>
+                        <button type="button" class="theme-btn" data-theme="studio">Studio</button>
+                        <button type="button" class="theme-btn" data-theme="oliver">Oliver</button>
+                        <button type="button" class="theme-btn" data-theme="toxic">ToxicHost</button>
+                        <button type="button" class="theme-btn" data-theme="neutral">Neutral</button>
+                        <button type="button" class="theme-btn" data-theme="neon">Neon</button>
+                        <button type="button" class="theme-btn" data-theme="cream">Cream Paper</button>
+                      </div>
+                      <div class="theme-editor-actions">
+                        <button type="button" class="layout-btn" id="themeEditBtn" hidden data-i18n="settings.theme.custom.edit">Edit this theme</button>
+                        <button type="button" class="layout-btn" id="themeImportBtn" data-i18n="settings.theme.custom.import">Import a theme…</button>
+                        <input type="file" id="themeImportFile" accept=".json,application/json" hidden>
+                      </div>
+                      <p class="theme-editor-hint" data-i18n="settings.theme.cbNote">Colorblind modes still apply on top of any theme, custom ones included.</p>
+                      <div class="theme-editor" id="themeEditor" hidden>
+                        <div class="theme-editor-form">
+                          <span class="theme-editor-title" data-i18n="settings.theme.custom.title">Custom theme</span>
+                          <div class="theme-editor-row"><label for="themeEditorName" data-i18n="settings.theme.custom.name">Name</label><input class="theme-name" id="themeEditorName" type="text" maxlength="40" spellcheck="false"></div>
+                          <div class="theme-editor-row"><label for="themeEditor-background-hex" data-i18n="settings.theme.custom.background">Background</label><input type="color" id="themeEditor-background" aria-label="Background"><input class="theme-hex" id="themeEditor-background-hex" type="text" maxlength="7" spellcheck="false"></div>
+                          <div class="theme-editor-row"><label for="themeEditor-text-hex" data-i18n="settings.theme.custom.text">Text</label><input type="color" id="themeEditor-text" aria-label="Text"><input class="theme-hex" id="themeEditor-text-hex" type="text" maxlength="7" spellcheck="false"></div>
+                          <div class="theme-editor-row"><label for="themeEditor-accent-hex" data-i18n="settings.theme.custom.accent">Accent</label><input type="color" id="themeEditor-accent" aria-label="Accent"><input class="theme-hex" id="themeEditor-accent-hex" type="text" maxlength="7" spellcheck="false"></div>
+                          <div class="theme-editor-row"><label for="themeEditor-accent2-hex" data-i18n="settings.theme.custom.accent2">Second accent</label><input type="color" id="themeEditor-accent2" aria-label="Second accent"><input class="theme-hex" id="themeEditor-accent2-hex" type="text" maxlength="7" spellcheck="false"></div>
+                          <div class="theme-editor-row"><label for="themeEditorGradient" data-i18n="settings.theme.custom.gradient">Gradient on Generate, progress and tabs</label><input type="checkbox" id="themeEditorGradient"></div>
+                          <div class="theme-editor-row" id="themeEditorMotionRow" hidden><label for="themeEditorMotion" data-i18n="settings.theme.custom.motion">Gradient motion</label>
+                            <select id="themeEditorMotion">
+                              <option value="still" data-i18n="settings.theme.custom.motion.still">Still</option>
+                              <option value="drift" data-i18n="settings.theme.custom.motion.drift">Slow drift (like ToxicHost)</option>
+                              <option value="shift" data-i18n="settings.theme.custom.motion.shift">Quick shift (like Neon)</option>
+                            </select>
+                          </div>
+                          <p class="theme-editor-hint" id="themeEditorMotionHint" hidden data-i18n="settings.theme.custom.motionHint">Speeds up while Studio is generating. Stops when Reduced motion is on.</p>
+                          <div class="theme-editor-row"><label for="themeEditor-regions-hex" data-i18n="settings.theme.custom.regions">Regions and masks</label><input type="color" id="themeEditor-regions" aria-label="Regions and masks"><input class="theme-hex" id="themeEditor-regions-hex" type="text" maxlength="7" spellcheck="false"></div>
+                          <p class="theme-editor-hint" data-i18n="settings.theme.custom.derived">Studio works out the panels, fields, lines and hint grays from these colors, and keeps them readable.</p>
+                          <div class="theme-editor-actions">
+                            <button type="button" class="layout-btn active" id="themeEditorSave" data-i18n="settings.theme.custom.save">Save theme</button>
+                            <button type="button" class="layout-btn" id="themeEditorClose" data-i18n="settings.theme.custom.close">Close</button>
+                            <button type="button" class="layout-btn" id="themeEditorExport" hidden data-i18n="settings.theme.custom.export">Export…</button>
+                            <button type="button" class="layout-btn" id="themeEditorDelete" hidden data-i18n="settings.theme.custom.delete">Delete</button>
+                          </div>
+                        </div>
+                        <div class="theme-editor-side">
+                          <span class="theme-editor-title" data-i18n="settings.theme.custom.preview">Preview</span>
+                          <div class="theme-preview" id="themePreview">
+                            <div class="theme-preview-tabs"><span data-i18n="panels.generate">Generate</span><span data-i18n="panels.extensions">Extensions</span></div>
+                            <div class="theme-preview-field" data-i18n="settings.theme.preview.prompt">a lighthouse at dusk, oil painting</div>
+                            <div class="theme-preview-field faint" data-i18n="ui.negative.placeholder">Negative prompt...</div>
+                            <div class="theme-preview-card"><span data-i18n="ui.hires.title">Hires Fix</span><span data-i18n="settings.theme.preview.hint">2.0× · denoise 0.30</span></div>
+                            <div class="theme-preview-generate" id="themePreviewGenerate" data-i18n="actions.generate">Generate</div>
+                            <div class="theme-preview-status">
+                              <span style="background:var(--green-dim);color:var(--green);" data-i18n="settings.theme.preview.saved">Saved</span>
+                              <span style="background:var(--amber-dim);color:var(--amber);" data-i18n="settings.theme.preview.warning">Low memory</span>
+                              <span style="background:var(--red-dim);color:var(--red);" data-i18n="settings.theme.preview.error">Folder missing</span>
+                            </div>
+                          </div>
+                          <span class="theme-editor-title" data-i18n="settings.theme.custom.readability">Readability</span>
+                          <ul class="theme-report" id="themeEditorReport"></ul>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1797,6 +1865,15 @@
                   <div class="settings-item" data-setting-key="toggleArchShowAll" data-setting-search="always show all parameters architecture model" data-i18n-title="settings.archShowAll.tooltip" title="Show parameters even when the loaded model's architecture doesn't use them.">
                     <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.archShowAll">Always show all parameters</span></div>
                     <div class="settings-item-control"><div class="toggle-track" id="toggleArchShowAll"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="settingGenerationMode" data-setting-search="generate mode queue batch count size several many images pictures per job" data-i18n-title="settings.generation.mode.tooltip" title="Queue: each Generate adds one picture to the queue, and you can cancel or reorder any one of them. Batch: each Generate makes Batch count × Batch size pictures in one job: Batch size pictures are made together in one pass (more VRAM), and the Batch count passes run one after another. The two controls appear under Seed.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.generation.mode">Generate mode</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingGenerationMode">
+                        <option value="queue" data-i18n="settings.generation.mode.queue">Queue</option>
+                        <option value="batch" data-i18n="settings.generation.mode.batch">Batch</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -2403,7 +2480,7 @@
 // Auto cache-bust: load scripts in order with timestamp
 (async () => {
   const scripts = [
-    "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js", "shortcuts.js",
+    "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js", "studio-themes.js", "shortcuts.js",
     "searchable-select.js", "canvas-core.js",
     // canvas-input.js BEFORE canvas-ui.js: `bindCanvas` reads
     // `window.StudioInput` on the very first pointer event, and a seam loaded
@@ -2419,7 +2496,7 @@
     // no document system at all.
     "canvas-recovery.js",
     "app.js", "workflows.js",
-    "module-system.js", "settings-page.js", "studio-tour.js",
+    "module-system.js", "settings-page.js", "studio-themes-ui.js", "studio-tour.js",
     "studio-docs.js",
     "prompt-targets.js", "wildcard-preview.js", "tag-complete.js",
     "lora-browser.js", "checkpoint-browser.js", "lora-stack.js", "ad-lora-stack.js", "wildcard-browser.js"

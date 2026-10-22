@@ -132,16 +132,16 @@
     background: var(--bg-raised); color: var(--text-3);
     border: 1px solid var(--border);
   }
-  .studio-stage-chip[data-stage="completed"] { color: #bbf7d0; border-color: #14532d; }
+  .studio-stage-chip[data-stage="completed"] { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
   .studio-stage-chip[data-stage="generating"],
   .studio-stage-chip[data-stage="starting"],
   .studio-stage-chip[data-stage="hires"],
-  .studio-stage-chip[data-stage="publishing"] { color: #fde68a; border-color: #713f12; }
-  .studio-stage-chip[data-stage="failed"] { color: #fecaca; border-color: #7f1d1d; }
+  .studio-stage-chip[data-stage="publishing"] { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+  .studio-stage-chip[data-stage="failed"] { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
   .studio-session-note, .studio-session-error {
     font-size: 10px; margin-top: 4px; color: var(--text-3);
   }
-  .studio-session-error { color: var(--danger, #e06666); }
+  .studio-session-error { color: var(--red); }
   .studio-job-running { margin-top: 6px; }
   .studio-queue-section { margin-top: 8px; }
   .studio-queue-heading {
@@ -159,13 +159,13 @@
     border: 1px solid var(--border); border-radius: var(--radius);
     font-size: 10px;
   }
-  .studio-job-row[data-running="true"] { border-color: #713f12; }
+  .studio-job-row[data-running="true"] { border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
   .studio-job-stage { font-weight: 600; font-size: 9px; white-space: nowrap; }
   .studio-job-summary { flex: 1; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; opacity: .85; }
   .studio-job-position { opacity: .6; font-variant-numeric: tabular-nums; }
   .studio-job-progress { opacity: .75; font-variant-numeric: tabular-nums; }
-  .studio-job-code { opacity: .8; color: var(--danger, #e06666); }
+  .studio-job-code { opacity: .8; color: var(--red); }
   .studio-job-move {
     background: none; border: none; cursor: pointer; padding: 0 2px;
     color: var(--text-3); font-size: 10px; line-height: 1;
@@ -246,8 +246,11 @@
   };
 
   const progressText = (job) => {
+    // BM1. A batch says which picture first: "2/4 · 7/30".
+    const picture = job.pictures > 1 && job.picture
+      ? `${job.picture}/${job.pictures} · ` : "";
     if (typeof job.step === "number" && job.total_steps) {
-      return `${job.step}/${job.total_steps}`;
+      return `${picture}${job.step}/${job.total_steps}`;
     }
     if (typeof job.progress === "number") return `${job.progress}%`;
     return "";
@@ -504,47 +507,77 @@
     if (state.delivered.has(job.job_id)) return false;
     const detail = await jsonFetch(API.job(job.job_id));
     const result = (detail && detail.result) || {};
-    if (!result.image_handle) return false;
+    if (!result.image_handle) {
+      // BM1. A cancelled job has nothing to deliver -- unless it was a batch,
+      // whose finished pictures arrive as `result` once it stops; until then
+      // the server says `result_pending` and this asks again next tick.
+      // Settled either way, so a cancelled job is not fetched forever.
+      if (job.state === "cancelled" && !(detail && detail.result_pending)) {
+        state.delivered.set(job.job_id, true);
+      }
+      return false;
+    }
     state.delivered.set(job.job_id, true);
-    const url = API.file(result.image_handle);
-    const name = safeName(job.job_id);
-    const entry = {
-      sessionId: (window.SESSION_ID || ""),
-      entryId: job.job_id,          // the public job id IS the linkage
-      source: "studio-result",
-      canDeleteFile: false,
-      url,
-      thumbUrl: url,
-      b64: null,
-      // The engine's parameter string, and it now ARRIVES. This was hard-coded
-      // to "" -- the sole occurrence of the word in this file -- while the
-      // server had been sending the resolved seed in `result.metadata` all
-      // along and nothing in the frontend read it. Four surfaces depend on
-      // this one string: the output info bar, Copy Seed, and both Recycle
-      // buttons, all of which parse it and all of which were therefore dead.
-      infotext: (result.metadata && result.metadata.infotext) || "",
-      filename: name,
-      contentHash: "",
-      floatPath: "",
-      maskPath: "",
-      floatStats: null,
-      width: (detail.settings && detail.settings.width) || result.width || 0,
-      height: (detail.settings && detail.settings.height) || result.height || 0,
-      ts: Date.now(),
-    };
     const S = window.State;
     if (!S || !Array.isArray(S.sessionEntries)) return false;
-    // The RESOLVED seed, taken from the metadata rather than parsed back out
-    // of the infotext. Both would work today, but a regex over prose is the
-    // fragile one, and -1 ("random") is exactly the case that matters: Recycle
-    // exists to recover the number the engine actually picked.
+    // BM1. Every picture of a Batch-mode job, in order; the one result of any
+    // other job. Picture 1 is `result` itself, so the two shapes agree.
+    const pictures = (Array.isArray(result.images) && result.images.length)
+      ? result.images
+      : [{ image_handle: result.image_handle, metadata: result.metadata }];
+    const ts = Date.now();
+    const entries = pictures.map((picture, index) => {
+      const url = API.file(picture.image_handle);
+      const metadata = picture.metadata || {};
+      const entry = {
+        sessionId: (window.SESSION_ID || ""),
+        // the public job id IS the linkage; a batch's later pictures add
+        // their number to it.
+        entryId: index === 0 ? job.job_id : `${job.job_id}-${index + 1}`,
+        source: "studio-result",
+        canDeleteFile: false,
+        url,
+        thumbUrl: url,
+        b64: null,
+        // The engine's parameter string, and it now ARRIVES. This was
+        // hard-coded to "" -- the sole occurrence of the word in this file --
+        // while the server had been sending the resolved seed in
+        // `result.metadata` all along and nothing in the frontend read it.
+        // Four surfaces depend on this one string: the output info bar, Copy
+        // Seed, and both Recycle buttons, all of which parse it and all of
+        // which were therefore dead.
+        infotext: metadata.infotext || "",
+        filename: safeName(index === 0 ? job.job_id : `${job.job_id}-${index + 1}`),
+        contentHash: "",
+        floatPath: "",
+        maskPath: "",
+        floatStats: null,
+        width: metadata.width || (detail.settings && detail.settings.width) || result.width || 0,
+        height: metadata.height || (detail.settings && detail.settings.height) || result.height || 0,
+        ts,
+      };
+      // The RESOLVED seed, taken from the metadata rather than parsed back
+      // out of the infotext. Both would work today, but a regex over prose is
+      // the fragile one, and -1 ("random") is exactly the case that matters:
+      // Recycle exists to recover the number the engine actually picked.
+      if (Number.isFinite(metadata.seed)) entry.seed = metadata.seed;
+      return entry;
+    });
+    // Picture 1's seed is the one Recycle brings back, as the Extension's
+    // `result.seed` was the batch's first.
     const resolvedSeed = result.metadata && result.metadata.seed;
-    if (Number.isFinite(resolvedSeed)) {
-      entry.seed = resolvedSeed;
-      S.lastSeed = resolvedSeed;
-    }
-    S.sessionEntries.unshift(entry);
+    if (Number.isFinite(resolvedSeed)) S.lastSeed = resolvedSeed;
+    // In order, picture 1 first and selected -- the Extension's
+    // `[...newEntries, ...State.sessionEntries]`.
+    S.sessionEntries.unshift(...entries);
     S.selectedOutputIdx = 0;
+    if (entries.length > 1 && typeof window.showToast === "function") {
+      window.showToast(
+        (window.I18N && window.I18N.t)
+          ? window.I18N.t("toast.batch.delivered", "{count} pictures from one batch", { count: entries.length })
+          : `${entries.length} pictures from one batch`,
+        "success");
+    }
     // Anima's Studio weights fell back to Neo-compatible for this job (EM1):
     // the owner's decision says the page tells them, and why.
     if (window.AnimaEmphasis) window.AnimaEmphasis.noticeFrom(result.metadata);
@@ -712,9 +745,11 @@
         const jobs = await jsonFetch(API.jobs);
         state.jobs = jobs.jobs || [];
         for (const job of state.jobs) {
-          // Only completed jobs carry an image. Cancelled and failed jobs
-          // are queue rows and never become session entries.
-          if (job.state === "completed") {
+          // Only completed jobs carry an image -- and, since BM1, a cancelled
+          // BATCH, which keeps the pictures it finished. Failed jobs, and a
+          // cancelled job of one picture, are queue rows and never become
+          // session entries.
+          if (job.state === "completed" || job.state === "cancelled") {
             try { await deliverResult(job); } catch (_) { /* retry next tick */ }
           }
         }

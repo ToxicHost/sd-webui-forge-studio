@@ -4,6 +4,53 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.4: Batch mode, refreshed themes, your own themes — 2026-10-21
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Batch mode is back, as an option.** Settings > Generation > **Generate
+  mode**: **Queue** (the default, as before: each Generate is one job) or
+  **Batch**. In Batch mode, **Batch count** (1–16) and **Batch size** (1–8)
+  appear under Seed, and one Generate makes count × size pictures.
+  - **Batch size** works like Forge's: that many pictures in one sampling
+    pass, each with its own seed. **Batch count** is how many passes run, one
+    after another, with the seeds continuing.
+  - With Regions, ControlNet, Klein reference images, Word Detail, Hires on
+    an image edit, or outpaint refine, each pass makes one picture: batching
+    those is not yet safe.
+  - A bigger Batch size needs more video memory. If a pass runs out, Studio
+    says so and names the Batch size and the free memory, instead of failing
+    without a reason.
+- **Themes, refreshed.** Every theme's hints, faint text and error colour now
+  read clearly, and the label on Generate (and other accent buttons) is dark
+  or light as the theme needs. Before, it was white on every theme, which was
+  hard to read on Liam's orange and Neutral's blue.
+  - **Liam is the default.** If you picked Studio before, you stay on Studio.
+  - **Oliver has new colors**: warm charcoal with a clay accent, in place of
+    the brown. If you used Oliver, you keep it.
+  - **Cream Paper** is Studio's first light theme, with an olive accent. The
+    canvas around your picture stays dark, so the light panels do not change
+    how the picture looks.
+  - ToxicHost's and Neon's gradients now also show on the active tab's
+    underline and the selected layer.
+- **Make your own theme.** Settings > Appearance & Layout > Theme > **New
+  theme**: pick a background, text and accent colour, optionally a second
+  accent for a gradient on Generate (still, slow drift or quick shift), and a
+  colour for regions and masks. Studio works out the rest, keeps it readable,
+  and shows a preview and a readability check. Themes are saved in Studio's
+  settings, can be exported as a file to share, and imported. Colorblind modes
+  still apply on top.
+- **The Generate panel.**
+  - **Generate, Live, Interrupt and Skip stay at the bottom of the panel**, with
+    the job status beside them, so Generate never scrolls out of reach.
+  - **Unload model** is now beside the Model box.
+  - The seed buttons have drawn icons instead of emoji.
+- **The fonts Studio was designed with now ship**: DM Sans for the interface,
+  JetBrains Mono for numbers. Before, your system font was used.
+- Gallery's delete confirmations are red again, and its star ratings and
+  auto-sync dot follow the theme.
+
 ## 0.9.3: Model folders as one list, a new welcome — 2026-10-21
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

@@ -325,7 +325,7 @@
 .gal-topbar .gal-btn:hover { color: var(--text-1); border-color: var(--border-hover); }
 .gal-topbar .gal-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .gal-topbar .gal-btn.danger { color: var(--red); border-color: var(--red); }
-.gal-topbar .gal-btn.danger:hover { background: rgba(220, 80, 60, 0.1); }
+.gal-topbar .gal-btn.danger:hover { background: color-mix(in srgb, var(--red) 10%, transparent); }
 .gal-topbar .gal-btn.settings.active { color: var(--accent); border-color: var(--accent); }
 
 /* Gallery grid */
@@ -358,7 +358,7 @@
   top: 5px; right: 5px;
   width: 20px; height: 20px;
   background: var(--accent);
-  color: #000;
+  color: var(--on-accent);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -464,7 +464,7 @@
 }
 .gal-ctx-item:hover { background: var(--bg-raised); }
 .gal-ctx-item.danger { color: var(--red); }
-.gal-ctx-item.danger:hover { background: rgba(220, 80, 60, 0.08); }
+.gal-ctx-item.danger:hover { background: color-mix(in srgb, var(--red) 8%, transparent); }
 .gal-ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
 
 /* Detail overlay */
@@ -596,7 +596,7 @@
   transition: all 0.12s;
 }
 .gal-detail-chars .tag-pill:hover {
-  background: rgba(220, 80, 60, 0.12);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
   border-color: var(--red);
   color: var(--red);
 }
@@ -983,7 +983,7 @@
   background: var(--accent);
   border: none;
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 12px;
   font-weight: 600;
   font-family: var(--font);
@@ -1001,8 +1001,8 @@
   transition: background 0.3s; cursor: default;
 }
 .gal-watcher-dot.active {
-  background: #4caf50;
-  box-shadow: 0 0 6px #4caf50;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
 }
 
 /* Search suggest dropdown */
@@ -1020,7 +1020,7 @@
   color: var(--text-2); transition: background 0.08s;
 }
 .gal-suggest-item:hover, .gal-suggest-item.active {
-  background: var(--accent-dim, rgba(100,140,255,.12));
+  background: var(--accent-dim);
   color: var(--text-1);
 }
 .gal-suggest-item .gs-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1083,7 +1083,7 @@
   background: var(--bg-raised);
 }
 .gal-dup-status code {
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--text-1) 6%, transparent);
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 11px;
@@ -1165,7 +1165,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--text-1) 2%, transparent);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
 }
@@ -1459,7 +1459,7 @@
   color: var(--text-4);
   font-variant-numeric: tabular-nums;
   padding: 1px 6px;
-  background: rgba(255,255,255,0.04);
+  background: color-mix(in srgb, var(--text-1) 4%, transparent);
   border-radius: 3px;
 }
 .gal-tagedit-x {
@@ -1716,7 +1716,7 @@
   box-sizing: border-box;
   margin-top: 10px;
   padding: 7px 10px;
-  background: var(--bg-input, var(--bg-raised));
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 4px);
   color: var(--text-1);
@@ -1765,10 +1765,10 @@
   user-select: none;
 }
 .gal-star.filled {
-  color: #f5c518;
+  color: var(--amber);
 }
 .gal-star:hover {
-  color: #f5c518;
+  color: var(--amber);
   transform: scale(1.2);
 }
 .gal-detail-rating {

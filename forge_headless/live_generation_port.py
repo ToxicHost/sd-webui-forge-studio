@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -885,6 +886,138 @@ def _is_live(request: Any) -> bool:
     return is_live_frame(request)
 
 
+def _picture_count(request: Any) -> int:
+    """BM1. How many pictures this job makes. 1 for anything that does not
+    say -- every Queue-mode job, every Live frame, every duck-typed double."""
+
+    try:
+        return max(1, int(getattr(request, "output_count", 1) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _picture_id(job_id: str, number: int) -> str:
+    """BM1. Picture `number`'s request id: picture 1 keeps the job's own, so a
+    one-picture job and picture 1 of a batch read alike; the rest add theirs."""
+
+    return job_id if int(number) == 1 else f"{job_id}-{int(number)}"
+
+
+def _pass_size(request: Any) -> tuple[int, str]:
+    """BM1. Pictures per sampling pass, and why it is 1 when Batch size asked
+    for more.
+
+    Batch size is Neo's `p.batch_size`. A pass falls back to one picture
+    where a batched pass is not safe or not verified, as the Extension's native
+    path fell back to its per-image loop (`studio_generation.py:2851-2861`:
+    Regional, Attention Couple, AR randomization, img2img Hires):
+
+      * regions -- the regional runners build one picture's masks;
+      * pictures of one pass at different sizes -- a tensor has one size;
+      * an image operation's Hires and outpaint's refine -- Studio's own
+        second passes take one picture (`_img2img_hires`, `_inpaint_refine`);
+      * ControlNet units and Klein reference images -- not verified batched;
+      * Word Detail -- it reads its picture's own attention capture, and a
+        batched pass captures only its first picture.
+    """
+
+    size = max(1, int(getattr(request, "pass_size", 1) or 1))
+    if size == 1:
+        return 1, ""
+    count = _picture_count(request)
+    if count % size:
+        return 1, f"Batch size {size} does not divide {count} pictures"
+    if _is_live(request):
+        return 1, "a Live frame"
+    if tuple(getattr(request, "regions", ()) or ()):
+        return 1, "regions"
+    if tuple(getattr(request, "controlnet", ()) or ()):
+        return 1, "ControlNet"
+    if tuple(getattr(request, "reference_images", ()) or ()):
+        return 1, "reference images"
+    operation = getattr(request, "operation", "txt2img")
+    if str(getattr(operation, "value", operation) or "txt2img") != "txt2img" and getattr(
+            request, "enable_hr", False):
+        return 1, "Hires on a picture operation"
+    if getattr(getattr(request, "inpaint", None), "refine", None) is not None:
+        return 1, "outpaint's refine"
+    if getattr(request, "enable_adetailer", False) and any(
+            getattr(slot, "words", ()) for slot in tuple(getattr(request, "ad_slots", ()) or ())):
+        return 1, "Word Detail"
+    sizes = tuple(getattr(request, "picture_sizes", ()) or ())
+    for start in range(0, len(sizes), size):
+        if len(set(tuple(s) for s in sizes[start:start + size])) > 1:
+            return 1, "the aspect randomizer rolled different sizes within a pass"
+    return size, ""
+
+
+def _pass_prompts(request: Any, field: str) -> Any:
+    """BM1. The prompt Neo receives: one string, or -- for a batched pass whose
+    pictures drew their own wildcards -- one per picture, as the Extension's
+    native path set `p.prompt = prompts` (`studio_generation.py:2943`); Neo
+    takes a list as `all_prompts` (`setup_prompts`, `processing.py:391-397`),
+    and an empty Hires prompt becomes that list for the second pass
+    (`:1574-1580`). Comments stripped either way, as Neo's always-on script
+    does."""
+
+    drawn = tuple(getattr(request, "picture_prompts", ()) or ())
+    size = int(getattr(request, "batch_size", 1) or 1)
+    if size > 1 and len(drawn) == size:
+        return [_neo_prompt(str(getattr(picture, field, "") or "")) for picture in drawn]
+    return _neo_prompt(getattr(request, field))
+
+
+class _PictureOf:
+    """BM1. A batched pass's processing object as one of its pictures sees it.
+
+    `all_prompts`, `all_negative_prompts`, `all_seeds` and `all_subseeds` hold
+    only picture `index`'s entry -- `name_context` reads the first prompt for
+    the file name's prompt token -- and everything else is the pass's own.
+    """
+
+    _PER_PICTURE = ("all_prompts", "all_negative_prompts", "all_seeds", "all_subseeds")
+
+    def __init__(self, processing: Any, index: int) -> None:
+        object.__setattr__(self, "_processing", processing)
+        object.__setattr__(self, "_index", int(index))
+
+    def __getattr__(self, name: str) -> Any:
+        value = getattr(object.__getattribute__(self, "_processing"), name)
+        if name in _PictureOf._PER_PICTURE and isinstance(value, (list, tuple)):
+            index = object.__getattribute__(self, "_index")
+            return [value[index]] if index < len(value) else []
+        return value
+
+
+def _fixed_seed(seed: int) -> int:
+    """BM1. Neo's own `get_fixed_seed` (`processing.py:622`): -1 becomes one
+    random number. Imported from Neo; the fallback is its body, for a double
+    that stubs `modules.processing` without it."""
+
+    try:
+        from modules.processing import get_fixed_seed
+    except ImportError:
+        get_fixed_seed = None
+    if callable(get_fixed_seed):
+        return int(get_fixed_seed(seed))
+    import random
+
+    return int(random.randrange(4294967294)) if int(seed) == -1 else int(seed)
+
+
+def _with_fields(request: Any, fields: dict[str, Any]) -> Any:
+    """BM1. A copy of `request` with `fields` replaced: `dataclasses.replace`
+    for the frozen request, a fresh namespace for a duck-typed one."""
+
+    from dataclasses import is_dataclass, replace
+
+    if is_dataclass(request):
+        return replace(request, **fields)
+    from types import SimpleNamespace
+
+    return SimpleNamespace(**{**vars(request), **fields})
+
+
 def _reuse_live_conditioning(processing: Any) -> None:
     """LV1. Let a Live frame reuse the previous frame's prompt encoding.
 
@@ -1406,7 +1539,13 @@ class StudioLiveGenerationPort:
             overrides["persistent_cond_cache"] = True
 
         with job_scope(**overrides):
-            outcome = self._generate_in_scope(request, progress)
+            # BM1. A Batch-mode job makes its pictures one after another, each
+            # through the one-picture pipeline below. One picture -- every
+            # Queue-mode job -- takes that pipeline directly, as it always has.
+            if _picture_count(request) > 1:
+                outcome = self._generate_batch(request, progress)
+            else:
+                outcome = self._generate_in_scope(request, progress)
             decision = recorded()
 
         if not is_dataclass(outcome):
@@ -1427,7 +1566,122 @@ class StudioLiveGenerationPort:
                 anima_emphasis_effective=emphasis_effective,
                 anima_emphasis_reason=emphasis_reason,
             )
-        return replace(outcome, **updates) if updates else outcome
+        if not updates:
+            return outcome
+        # One scope covered every picture, so every picture reports it.
+        pictures = tuple(replace(picture, **updates)
+                         for picture in getattr(outcome, "pictures", ()) or ())
+        return replace(outcome, **updates, **({"pictures": pictures} if pictures else {}))
+
+    def _generate_batch(self, request: object, progress: object) -> object:
+        """BM1. Make a Batch-mode job's pictures: Batch count passes of Batch
+        size pictures each.
+
+        BATCH SIZE IS NEO'S `p.batch_size`. Each pass is ONE
+        `_generate_in_scope` call whose processing object samples `pass_size`
+        pictures in one tensor (`processing.py:948-993` at 97ff3a40): Neo gives
+        each its seed (`all_seeds`, `:906-914`), its prompt (a prompt list,
+        `all_prompts`, as the Extension's native path sets `p.prompt`,
+        `studio_generation.py:2943`) and its infotext (`:1036-1042`), and Auto
+        Detail seeds each from `all_seeds[image]`. `_publish` writes every
+        picture of the pass.
+
+        BATCH COUNT IS NEO'S `n_iter`: the passes run one after another and
+        the seeds continue across them (`:934-962`). The loop is here rather
+        than in Neo's, so Cancel, progress and the Hires states work per pass.
+
+        A pass falls back to ONE picture where a batched pass is not safe
+        (`_pass_size`), as the Extension's native path fell back to its
+        per-image loop (`studio_generation.py:2851-2861`).
+
+        THE SEEDS ARE NEO'S RULE: seed + i, or, when a variation strength is
+        set, the seed HELD and the subseed + i, its -1 resolved once by
+        `get_fixed_seed` (`:877-878`) -- the server fixes it at admission, so
+        that is a fallback. The Extension walks the seed even then; seeds are
+        engine semantics (`Evidence/source-review/BM1-batch-mode.md` §4).
+
+        CANCEL stops between passes and keeps the pictures that finished, as
+        the Extension does (`:3138-3142`); `_publish` drops the pass a cancel
+        landed in. A cancel before anything finished is an ordinary cancelled
+        job. Progress goes CANCELLED when the batch stopped short, so the page
+        can tell "stopped at 3 of 8" from "made all 8".
+        """
+
+        from dataclasses import is_dataclass, replace
+
+        from .contracts import HeadlessError
+
+        count = _picture_count(request)
+        size, reason = _pass_size(request)
+        if size == 1 and reason:
+            logging.getLogger("studio.generation").info(
+                "BATCH one picture per pass: %s", reason)
+        job_id = str(getattr(request, "request_id", "") or "")
+        seed = int(getattr(request, "seed", 0))
+        strength = float(getattr(request, "subseed_strength", 0.0) or 0.0)
+        subseed = int(getattr(request, "subseed", -1))
+        if strength != 0 and subseed < 0:
+            subseed = _fixed_seed(subseed)
+        prompts = tuple(getattr(request, "picture_prompts", ()) or ())
+        sizes = tuple(getattr(request, "picture_sizes", ()) or ())
+        begin = getattr(progress, "begin_picture", None)
+
+        finished: list[Any] = []
+        for start in range(0, count, size):
+            number = start + 1
+            if start and getattr(progress, "cancellation_requested", False):
+                break
+            if callable(begin):
+                begin(number, count)
+            self._picture_clock = time.monotonic()
+            fields: dict[str, Any] = {
+                "output_count": size, "pass_size": size, "batch_size": size,
+                "picture_prompts": prompts[start:start + size] if size > 1 else (),
+                "picture_sizes": (),
+                "picture": number, "pictures": count,
+                # Picture 1 keeps the job's id, so its capture, telemetry and
+                # log lines read exactly as a one-picture job's do.
+                "request_id": _picture_id(job_id, number),
+                "seed": seed + (start if strength == 0 else 0),
+            }
+            if strength != 0:
+                fields["subseed"] = subseed + start
+            if start < len(prompts):
+                drawn = prompts[start]
+                fields.update(
+                    positive_prompt=drawn.positive_prompt,
+                    negative_prompt=drawn.negative_prompt,
+                    prompt_template=drawn.prompt_template,
+                    negative_prompt_template=drawn.negative_prompt_template)
+            if start < len(sizes):
+                fields["width"], fields["height"] = (int(v) for v in sizes[start])
+            try:
+                outcome = self._generate_in_scope(_with_fields(request, fields), progress)
+            except HeadlessError as error:
+                if error.code == "GENERATION_CANCELLED" and finished:
+                    break
+                raise
+            except BaseException as exc:  # noqa: BLE001 - converted, then re-raised
+                if size > 1 and _looks_like_out_of_memory(exc):
+                    raise HeadlessError(
+                        "GENERATION_BATCH_OUT_OF_MEMORY",
+                        f"Batch size {size} ran out of GPU memory: {size} pictures "
+                        f"are sampled at once. Try a smaller Batch size. "
+                        f"{_device_memory_summary()}",
+                    ) from exc
+                raise
+            # A batched pass returns its first picture carrying the rest.
+            for picture in (outcome, *(getattr(outcome, "pictures", ()) or ())):
+                if is_dataclass(picture):
+                    picture = replace(picture, job_id=job_id, pictures=())
+                finished.append(picture)
+        self._picture_clock = None
+        if len(finished) < count:
+            progress.mark_cancelled()  # type: ignore[attr-defined]
+        first = finished[0]
+        if not is_dataclass(first):
+            return first
+        return replace(first, pictures=tuple(finished[1:]))
 
     def _leave_attention_capture(self, request: object) -> None:
         """HM1. The main pass's attention capture, written where presentation
@@ -1668,9 +1922,11 @@ class StudioLiveGenerationPort:
                 sd_model=engine,
                 outpath_samples=str(self._result_root),
                 outpath_grids=str(self._result_root),
-                # Comments stripped, as Neo's always-on script does.
-                prompt=_neo_prompt(request.positive_prompt),  # type: ignore[attr-defined]
-                negative_prompt=_neo_prompt(request.negative_prompt),  # type: ignore[attr-defined]
+                # Comments stripped, as Neo's always-on script does. BM1: one
+                # per picture for a batched pass whose pictures drew their own
+                # wildcards; the one string for every other pass.
+                prompt=_pass_prompts(request, "positive_prompt"),
+                negative_prompt=_pass_prompts(request, "negative_prompt"),
                 seed=int(request.seed),  # type: ignore[attr-defined]
                 # The owner's variation, not a pin. This was `-1` while the
                 # page shipped an Extra panel with a variation seed, a strength
@@ -1684,6 +1940,9 @@ class StudioLiveGenerationPort:
                 seed_resize_from_h=int(getattr(request, "seed_resize_from_h", -1)),
                 sampler_name=request.sampler,  # type: ignore[attr-defined]
                 scheduler=request.scheduler,  # type: ignore[attr-defined]
+                # BM1. Batch size: 1 for every job but a Batch-mode pass,
+                # whose pictures share this one pass (`_generate_batch`).
+                # `n_iter` stays 1: Batch count is the port's loop of passes.
                 batch_size=int(request.batch_size),  # type: ignore[attr-defined]
                 n_iter=1,
                 steps=int(request.steps),  # type: ignore[attr-defined]
@@ -2355,10 +2614,20 @@ class StudioLiveGenerationPort:
         # prompt as typed -- "[PROMPT]" reached the model as text, and a slot
         # whose only text was its LoRA lost the main prompt altogether.
         region = int(getattr(slot, "region_index", 0) or 0)
-        prompt = _ad_prompt(str(getattr(slot, "prompt", "") or ""),
-                            str(getattr(request, "positive_prompt", "")), region)
+        # BM1. In a batched pass the main prompt is the picture's own, as
+        # ADetailer reads `p.all_prompts[i]`: each picture may have drawn
+        # different wildcards (`_pass_prompts`). One picture per pass keeps
+        # the request's prompt, as it always has.
+        main, main_negative = (str(getattr(request, "positive_prompt", "")),
+                               str(getattr(request, "negative_prompt", "")))
+        drawn = tuple(getattr(request, "picture_prompts", ()) or ())
+        index = int(getattr(slot, "image_index", 0) or 0)
+        if int(getattr(request, "batch_size", 1) or 1) > 1 and index < len(drawn):
+            main = drawn[index].positive_prompt
+            main_negative = drawn[index].negative_prompt
+        prompt = _ad_prompt(str(getattr(slot, "prompt", "") or ""), main, region)
         negative = _ad_prompt(str(getattr(slot, "negative_prompt", "") or ""),
-                              str(getattr(request, "negative_prompt", "")), region)
+                              main_negative, region)
         # RG2. A slot with no prompt of its own details a face inside a
         # painted region with THAT region's prompt (the Extension's
         # region matching), and its negative when it has one.
@@ -2526,6 +2795,74 @@ class StudioLiveGenerationPort:
 
     # -- publication -------------------------------------------------------
 
+    def _publish_pass(
+        self,
+        request: object,
+        processing: object,
+        processed: object,
+        progress: object,
+    ) -> object:
+        """BM1. Publish every picture of a batched pass (Batch size > 1).
+
+        Each picture goes through `_publish` as a one-picture request, so its
+        file, embedded parameters, name and outcome are made exactly as any
+        picture's are: Neo's own seed (`all_seeds[i]`), infotext
+        (`infotexts[i]`) and prompt (`all_prompts[i]`) for picture i, its own
+        request id and wildcard templates. Returns the first picture's outcome
+        carrying the rest.
+
+        A cancel that landed while the pass sampled drops the whole pass (the
+        first picture refuses); one that lands between two of its pictures
+        keeps those already written.
+        """
+
+        from dataclasses import is_dataclass, replace
+        from types import SimpleNamespace
+
+        from .contracts import HeadlessError
+
+        size = int(getattr(request, "batch_size", 1) or 1)
+        images = list(getattr(processed, "images", []) or [])[:size]
+        if not images:
+            # Nothing came back: the one-picture path says why (a cancel, or
+            # GENERATION_NO_RESULT), exactly as for any job.
+            return self._publish(_with_fields(request, {"batch_size": 1}),
+                                 processing, processed, progress)
+        infotexts = list(getattr(processed, "infotexts", []) or [])
+        seeds = list(getattr(processing, "all_seeds", None) or [])
+        drawn = tuple(getattr(request, "picture_prompts", ()) or ())
+        first = int(getattr(request, "picture", 1) or 1)
+        request_id = str(getattr(request, "request_id", "") or "")
+        job_id = request_id[:-len(f"-{first}")] if first > 1 and request_id.endswith(f"-{first}") else request_id
+        held = float(getattr(request, "subseed_strength", 0.0) or 0.0) != 0
+        outcomes: list[Any] = []
+        for index, image in enumerate(images):
+            fields: dict[str, Any] = {
+                "batch_size": 1, "output_count": 1, "pass_size": 1, "picture_prompts": (),
+                "picture": first + index,
+                "request_id": _picture_id(job_id, first + index),
+                "seed": int(seeds[index]) if index < len(seeds)
+                else int(getattr(request, "seed", 0)) + (0 if held else index),
+            }
+            if index < len(drawn):
+                fields.update(
+                    positive_prompt=drawn[index].positive_prompt,
+                    negative_prompt=drawn[index].negative_prompt,
+                    prompt_template=drawn[index].prompt_template,
+                    negative_prompt_template=drawn[index].negative_prompt_template)
+            one = SimpleNamespace(images=[image], seed=fields["seed"],
+                                  infotexts=[infotexts[index]] if index < len(infotexts) else [])
+            try:
+                outcomes.append(self._publish(_with_fields(request, fields),
+                                              _PictureOf(processing, index), one, progress))
+            except HeadlessError as error:
+                if error.code == "GENERATION_CANCELLED" and outcomes:
+                    break
+                raise
+        if not is_dataclass(outcomes[0]):
+            return outcomes[0]
+        return replace(outcomes[0], pictures=tuple(outcomes[1:]))
+
     def _publish(
         self,
         request: object,
@@ -2536,6 +2873,10 @@ class StudioLiveGenerationPort:
         from .contracts import HeadlessError
         from .generation_port import GenerationOutcome
         from .headless_progress import JobState
+
+        # BM1. A batched pass publishes each of its pictures through here.
+        if int(getattr(request, "batch_size", 1) or 1) > 1:
+            return self._publish_pass(request, processing, processed, progress)
 
         sampler_object = getattr(processing, "sampler", None)
         self.resolved_sampler = str(
@@ -2553,13 +2894,35 @@ class StudioLiveGenerationPort:
         )
 
         images = list(getattr(processed, "images", []) or [])
+
+        # BM1. Which picture of a Batch-mode job this is; 0 of 0 for a job of
+        # one picture, which is the last and only one.
+        picture = int(getattr(request, "picture", 0) or 0)
+        pictures = int(getattr(request, "pictures", 0) or 0)
+        # A cancel that landed while a batch picture was being made: the
+        # sampler stopped early -- or, cancelled before its loop began, Neo
+        # made nothing at all (`processing.py:940-941`) -- so the picture is
+        # unfinished and is not kept. The Extension appends nothing after an
+        # interrupt (`studio_generation.py:3324-3332`). Checked BEFORE the
+        # empty-result failure below, which would otherwise fail the job and
+        # lose the pictures that did finish (`_generate_batch` keeps them). A
+        # job of ONE picture is not touched here: Queue mode behaves as it
+        # always has.
+        if pictures and getattr(progress, "cancellation_requested", False):
+            raise HeadlessError(
+                "GENERATION_CANCELLED",
+                f"The batch was cancelled during picture {picture} of {pictures}.")
+
         if not images:
             progress.mark_failed("generation produced no image")  # type: ignore[attr-defined]
             raise HeadlessError(
                 "GENERATION_NO_RESULT", "The generation produced no image."
             )
 
-        if not progress.terminal:  # type: ignore[attr-defined]
+        # BM1. The second picture of a batched pass arrives already PUBLISHING,
+        # and the table rightly has no way back to DECODING.
+        if not progress.terminal and getattr(  # type: ignore[attr-defined]
+                progress, "state", None) is not JobState.PUBLISHING:
             progress.advance_to(JobState.DECODING)  # type: ignore[attr-defined]
         if not progress.terminal:  # type: ignore[attr-defined]
             progress.advance_to(JobState.PUBLISHING)  # type: ignore[attr-defined]
@@ -2598,7 +2961,13 @@ class StudioLiveGenerationPort:
         # RP1. The raw prompts the owner typed, when wildcards changed them --
         # into the file AND the Gallery, which both take this string.
         infotext = with_prompt_templates(infotext, request)
-        infotext = with_time_taken(infotext, getattr(progress, "elapsed_seconds", None))
+        # BM1. A later batch picture's time is its own, not the whole job's so
+        # far; picture 1 counts from dispatch, as a one-picture job does.
+        seconds = getattr(progress, "elapsed_seconds", None)
+        clock = getattr(self, "_picture_clock", None)
+        if picture > 1 and clock is not None:
+            seconds = round(time.monotonic() - clock, 3)
+        infotext = with_time_taken(infotext, seconds)
 
         image = _stamped(images[0], request)
 
@@ -2626,7 +2995,10 @@ class StudioLiveGenerationPort:
         )
         width, height = image.size
 
-        progress.mark_completed()  # type: ignore[attr-defined]
+        # BM1. The job is complete after its LAST picture; an earlier one
+        # hands the progress to the next picture instead.
+        if picture >= pictures:
+            progress.mark_completed()  # type: ignore[attr-defined]
 
         return GenerationOutcome(
             job_id=request.request_id,  # type: ignore[attr-defined]

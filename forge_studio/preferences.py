@@ -102,6 +102,9 @@ PREFERENCE_KEYS = frozenset({
     "education",
     "gal_send_prompt_version",
     "gallery_folder",
+    # BM1. Settings > Generation > Generate mode: "queue" (one picture per
+    # job, the default) or "batch" (Batch count x Batch size per job).
+    "generation_mode",
     "gpu_device",
     "gpu_tile_compositing",
     "layout_preset",
@@ -115,6 +118,11 @@ PREFERENCE_KEYS = frozenset({
     "save_tree",
     "session_limit",
     "shortcuts",
+    # UI1. The chosen theme (a built-in id or a custom one's "custom-..."),
+    # and the owner's custom themes: their picked colours, not the derived
+    # palette, so a later improvement to the derivation reaches them.
+    "theme",
+    "custom_themes",
     "vram_weights",
 })
 
@@ -147,6 +155,7 @@ PREFERENCE_SHAPES: dict[str, Any] = {
     "education": dict,
     "gal_send_prompt_version": ("resolved", "raw"),
     "gallery_folder": str,
+    "generation_mode": ("queue", "batch"),
     # G1. "auto" or a card index, applied at the next start.
     "gpu_device": str,
     "gpu_tile_compositing": bool,
@@ -161,6 +170,8 @@ PREFERENCE_SHAPES: dict[str, Any] = {
     "save_tree": ("neo", "studio"),
     "session_limit": (int, float),
     "shortcuts": dict,
+    "theme": str,
+    "custom_themes": list,
     "vram_weights": (int, float),
 }
 

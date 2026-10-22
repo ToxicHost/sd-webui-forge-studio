@@ -333,14 +333,19 @@ STUDIO_REQUEST_FIELDS = (
     # HM2. The attention-capture setting: it reaches the port, which keeps or
     # skips the main pass's capture.
     "attention_capture_requested",
+    # BM1. Batch mode's count and size, carried as ONE group: they become the
+    # job's `output_count` and its per-picture prompts and sizes.
+    "batch",
 )
 
 #: Headless fields Studio's request cannot express. They take the headless
 #: default and are reported as such -- never presented as a Studio choice.
+#: `output_count` LEFT this tuple in BM1: Batch mode expresses it.
+#: `batch_size` stays: it is Neo's per-pass batch, and Batch mode's pictures
+#: never share one (`Evidence/source-review/BM1-batch-mode.md` §4).
 BACKEND_DEFAULTED_FIELDS = (
     "distilled_cfg_scale",
     "batch_size",
-    "output_count",
 )
 
 #: Feature flags the Tier-0 profile does not permit. Studio has no field for any
@@ -397,6 +402,43 @@ def _template_fields(expansion: Any) -> dict[str, Any]:
     original_negative = str(getattr(expansion, "original_negative_prompt", "") or "")
     if original_negative != str(getattr(expansion, "resolved_negative_prompt", "") or ""):
         fields["negative_prompt_template"] = original_negative
+    return fields
+
+
+def _batch_fields(request: Any, *, operation: Any, regions: tuple) -> dict[str, Any]:
+    """BM1. Batch mode's group as the job's picture count, prompts and sizes.
+
+    Nothing at all without a group, so a Queue-mode job is the request it was
+    before Batch mode existed. With one: `output_count` is count x size, the
+    Extension's `total_images` (`studio_generation.py:2756`), made in passes
+    of `pass_size` = size, Neo's `p.batch_size`; each picture's
+    prompts come from the server's per-picture wildcard draw, and each size
+    from the aspect randomizer's per-image roll -- txt2img only, and not with
+    regions, whose masks were decoded at the job's one size.
+    """
+
+    batch = getattr(request, "batch", None)
+    if batch is None:
+        return {}
+    from .generation_request import Operation, PicturePrompts
+
+    count = max(1, int(getattr(batch, "count", 1) or 1))
+    size = max(1, int(getattr(batch, "size", 1) or 1))
+    pictures = count * size
+    # Batch size is Neo's per-pass batch; Batch count is how many passes.
+    fields: dict[str, Any] = {"output_count": pictures, "pass_size": size}
+    expansions = tuple(getattr(batch, "expansions", ()) or ())
+    if len(expansions) == pictures:
+        fields["picture_prompts"] = tuple(
+            PicturePrompts(
+                positive_prompt=str(getattr(drawn, "resolved_prompt", "") or ""),
+                negative_prompt=str(getattr(drawn, "resolved_negative_prompt", "") or ""),
+                **_template_fields(drawn))
+            for drawn in expansions)
+    rolls = tuple(getattr(getattr(request, "aspect", None), "rolls", ()) or ())
+    if operation is Operation.TXT2IMG and not regions and len(rolls) == pictures:
+        fields["picture_sizes"] = tuple(
+            (int(roll.width), int(roll.height)) for roll in rolls)
     return fields
 
 
@@ -844,7 +886,8 @@ def translate_request(
         sampler=str(getattr(request, "sampler", "") or "") or DEFAULT_SAMPLER,
         scheduler=str(getattr(request, "scheduler", "") or "") or DEFAULT_SCHEDULER,
         batch_size=1,
-        output_count=1,
+        # BM1. One picture unless the job carries Batch mode's group.
+        **_batch_fields(request, operation=operation, regions=regions),
         **_hires_fields(
             getattr(request, "hires", None),
             base_cfg=float(request.cfg_scale),
@@ -950,6 +993,9 @@ def _log_dispatch(job_id: str, translation: RequestTranslation) -> None:
             "height": headless.height,
             "seed": headless.seed,
             "preview_enabled": headless.preview_enabled,
+            # BM1. Only a batch says how many pictures; one is every other job.
+            **({"pictures": headless.output_count, "batch_size": headless.pass_size}
+               if int(getattr(headless, "output_count", 1) or 1) > 1 else {}),
         })
         if getattr(headless, "enable_hr", False):
             log.hires(job_id, recipe={
@@ -1052,6 +1098,9 @@ def project_progress(
         error=error,
         step=snapshot.step or None,
         total_steps=snapshot.total_steps,
+        # BM1. Only a Batch-mode job names its picture; None otherwise.
+        picture=getattr(snapshot, "picture", 0) or None,
+        pictures=getattr(snapshot, "pictures", 0) or None,
     )
 
 
@@ -1088,6 +1137,84 @@ class _JobRecord:
     @property
     def progress_view(self) -> HeadlessProgress:
         return self.gateway_progress or self.local_progress
+
+
+def _result_metadata(outcome: Any, translation: Any, *, picture: int = 0,
+                     pictures: int = 0) -> dict[str, Any]:
+    """One result's metadata: scalars only, never a path.
+
+    A function rather than a literal inside `result()` since BM1, because a
+    Batch-mode job builds one per picture. `picture`/`pictures` are added only
+    for a batch, so a one-picture result is the dict it always was.
+    """
+
+    return {
+        "schema_version": "studio-headless-result/v1",
+        "width": outcome.width,
+        "height": outcome.height,
+        "seed": outcome.seed,
+        "request_id": outcome.request_id,
+        # The engine's parameter string, carried back so the page can
+        # say what it made. Four owner surfaces read this and every one
+        # of them was permanently blank without it: the output info
+        # bar, Copy Seed, and both Recycle buttons.
+        #
+        # The OUTBOUND half of the same seam the field above guards.
+        # This is the return leg, and it is dropped just as silently.
+        "infotext": str(getattr(outcome, "infotext", "") or ""),
+        # Section 9: requested and effective are different facts, and
+        # a re-run on another card may legitimately answer
+        # differently. Recording only the preference would make the
+        # result claim something it did not do. Flat scalars, because
+        # every metadata value is asserted to be one.
+        "gpu_tile_composite_requested": bool(
+            outcome.gpu_tile_composite_requested),
+        "upscale_composite_effective": str(
+            outcome.upscale_composite_effective),
+        "upscale_composite_reason": str(
+            outcome.upscale_composite_reason),
+        # Anima's emphasis mode (EM1), the same requested/effective
+        # pair. All "" when the model is not Anima. A requested
+        # "studio" with an effective "neo" is a fallback the page owes
+        # the owner a notice about, and `anima_emphasis_reason` says
+        # which one.
+        "anima_emphasis_requested": str(
+            getattr(outcome, "anima_emphasis_requested", "")),
+        "anima_emphasis_effective": str(
+            getattr(outcome, "anima_emphasis_effective", "")),
+        "anima_emphasis_reason": str(
+            getattr(outcome, "anima_emphasis_reason", "")),
+        # The RESOLVED Hires recipe, present only when a second pass
+        # actually ran. Absent means the result is a single-pass image,
+        # which is a different claim from "Hires ran with defaults" and
+        # has to stay distinguishable -- `width`/`height` alone cannot
+        # tell a 768 base from a 512 base doubled to... no, from a 512
+        # base at 1.5. The recipe is how a result explains itself.
+        #
+        # Scalars only. No upscaler PATH, no checkpoint path, no model
+        # filename: the book requires the recipe "without private
+        # paths", and an upscaler is identified by the name the
+        # registry offers, which is already what the owner chose from.
+        **_hires_metadata(translation),
+        # The RESOLVED Auto Detail outcome, present only when a slot
+        # actually ran -- and reporting what the detectors FOUND, not
+        # what the request asked for. The request is already in the
+        # job; "four faces detected, one kept" is the fact a reader
+        # cannot reconstruct.
+        **_auto_detail_metadata(
+            getattr(outcome, "auto_detail", ()),
+        ),
+        **({"picture": int(picture), "pictures": int(pictures)} if pictures else {}),
+    }
+
+
+def _picture_number(outcome: Any, job_id: str) -> int:
+    """BM1. Which picture of its batch an outcome is, from the request id the
+    port gave it (`<job id>-<n>`; picture 1 keeps the job's own id)."""
+
+    request_id = str(getattr(outcome, "request_id", "") or "")
+    suffix = request_id[len(job_id) + 1:] if request_id.startswith(f"{job_id}-") else ""
+    return int(suffix) if suffix.isdigit() else 1
 
 
 def _attach_detector_resolver(session: Any, resolver: Any) -> None:
@@ -1461,21 +1588,36 @@ class HeadlessGenerationSession:
                     message="No result root is configured.",
                 )
             )
-        # Root-relative, or absolute for a file in the owner's trusted save
-        # folder outside the root (OF1, `live_generation_port.result_location`).
-        # Either way it stays here: the browser is given a handle.
-        location = Path(outcome.result_relative_location)
-        path = location if location.is_absolute() else root / location
-        if self._result_writer is not None and not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self._result_writer(outcome, path)
-        if not path.is_file():
+        path = self._result_path(root, outcome)
+        if path is None:
             raise self._raise_studio(
                 StructuredError(
                     code=RESULT_PUBLICATION_FAILED,
                     message="The result is not available.",
                 )
             )
+        translation = self._require_job(job_id).translation
+        # BM1. How many pictures the job ASKED for. A batch the owner stopped
+        # at 3 of 8 says so: each picture's metadata names its number and the
+        # 8, and `pictures` below holds the 2 after the first.
+        requested = int(getattr(translation.headless_request, "output_count", 1) or 1)
+        counted = {"pictures": requested} if requested > 1 else {}
+        # A Batch-mode job's pictures after the first, each its own result.
+        # One whose file has gone since is left out rather than costing the
+        # owner every other picture of the batch.
+        pictures = []
+        for picture in tuple(getattr(outcome, "pictures", ()) or ()):
+            picture_path = self._result_path(root, picture)
+            if picture_path is not None:
+                pictures.append(GeneratedResult(
+                    job_id=job_id,
+                    state=StudioJobState.COMPLETED,
+                    mime_type=picture.media_type,
+                    output_path=str(picture_path),
+                    metadata=_result_metadata(
+                        picture, translation, **counted,
+                        picture=_picture_number(picture, job_id)),
+                ))
         return GeneratedResult(
             job_id=job_id,
             state=StudioJobState.COMPLETED,
@@ -1483,64 +1625,25 @@ class HeadlessGenerationSession:
             # Studio mints the opaque handle from this; the path never reaches
             # a response, and the presentation layer strips it regardless.
             output_path=str(path),
-            metadata={
-                "schema_version": "studio-headless-result/v1",
-                "width": outcome.width,
-                "height": outcome.height,
-                "seed": outcome.seed,
-                "request_id": outcome.request_id,
-                # The engine's parameter string, carried back so the page can
-                # say what it made. Four owner surfaces read this and every one
-                # of them was permanently blank without it: the output info
-                # bar, Copy Seed, and both Recycle buttons.
-                #
-                # The OUTBOUND half of the same seam the field above guards.
-                # This is the return leg, and it is dropped just as silently.
-                "infotext": str(getattr(outcome, "infotext", "") or ""),
-                # Section 9: requested and effective are different facts, and
-                # a re-run on another card may legitimately answer
-                # differently. Recording only the preference would make the
-                # result claim something it did not do. Flat scalars, because
-                # every metadata value is asserted to be one.
-                "gpu_tile_composite_requested": bool(
-                    outcome.gpu_tile_composite_requested),
-                "upscale_composite_effective": str(
-                    outcome.upscale_composite_effective),
-                "upscale_composite_reason": str(
-                    outcome.upscale_composite_reason),
-                # Anima's emphasis mode (EM1), the same requested/effective
-                # pair. All "" when the model is not Anima. A requested
-                # "studio" with an effective "neo" is a fallback the page owes
-                # the owner a notice about, and `anima_emphasis_reason` says
-                # which one.
-                "anima_emphasis_requested": str(
-                    getattr(outcome, "anima_emphasis_requested", "")),
-                "anima_emphasis_effective": str(
-                    getattr(outcome, "anima_emphasis_effective", "")),
-                "anima_emphasis_reason": str(
-                    getattr(outcome, "anima_emphasis_reason", "")),
-                # The RESOLVED Hires recipe, present only when a second pass
-                # actually ran. Absent means the result is a single-pass image,
-                # which is a different claim from "Hires ran with defaults" and
-                # has to stay distinguishable -- `width`/`height` alone cannot
-                # tell a 768 base from a 512 base doubled to... no, from a 512
-                # base at 1.5. The recipe is how a result explains itself.
-                #
-                # Scalars only. No upscaler PATH, no checkpoint path, no model
-                # filename: the book requires the recipe "without private
-                # paths", and an upscaler is identified by the name the
-                # registry offers, which is already what the owner chose from.
-                **_hires_metadata(self._require_job(job_id).translation),
-                # The RESOLVED Auto Detail outcome, present only when a slot
-                # actually ran -- and reporting what the detectors FOUND, not
-                # what the request asked for. The request is already in the
-                # job; "four faces detected, one kept" is the fact a reader
-                # cannot reconstruct.
-                **_auto_detail_metadata(
-                    getattr(outcome, "auto_detail", ()),
-                ),
-            },
+            metadata=_result_metadata(outcome, translation, **counted, picture=1),
+            pictures=tuple(pictures),
         )
+
+    def _result_path(self, root: Path, outcome: Any) -> Path | None:
+        """Where one outcome's file is, or None when it is not there.
+
+        Root-relative, or absolute for a file in the owner's trusted save
+        folder outside the root (OF1, `live_generation_port.result_location`).
+        Either way it stays here: the browser is given a handle.
+        """
+
+        location = Path(outcome.result_relative_location)
+        path = location if location.is_absolute() else root / location
+        if self._result_writer is not None and not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._result_writer(outcome, path)
+        return path if path.is_file() else None
+
 
     def translation_for(self, job_id: str) -> RequestTranslation:
         return self._require_job(job_id).translation

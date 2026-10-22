@@ -112,7 +112,7 @@ body.develop-active #canvasArea canvas {
   font-family: var(--font);
 }
 .develop-header-btn:hover { color: var(--accent); border-color: var(--accent); }
-.develop-header-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim, rgba(124,58,237,0.18)); }
+.develop-header-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
 
 .develop-hp-badge {
   font-size: 9px;
@@ -120,9 +120,9 @@ body.develop-active #canvasArea canvas {
   letter-spacing: 0.5px;
   padding: 2px 5px;
   margin: 0 4px;
-  color: var(--accent, #7c3aed);
-  background: var(--accent-dim, rgba(124,58,237,0.18));
-  border: 1px solid var(--accent, #7c3aed);
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
   border-radius: 3px;
   font-family: var(--mono, monospace);
   user-select: none;
@@ -330,7 +330,7 @@ body.develop-active #canvasArea canvas {
 .develop-eyedrop.armed {
   color: var(--accent);
   border-color: var(--accent);
-  background: var(--accent-dim, rgba(124,58,237,0.18));
+  background: var(--accent-dim);
 }
 .develop-eyedrop.calibrated {
   color: var(--accent);
@@ -530,7 +530,7 @@ body.develop-active #canvasArea canvas {
 .develop-tc-mode-tabs button.active {
   color: var(--accent);
   border-color: var(--accent);
-  background: var(--accent-dim, rgba(124,58,237,0.18));
+  background: var(--accent-dim);
 }
 
 .develop-tc-param-wrap, .develop-tc-point-wrap {
@@ -575,7 +575,7 @@ body.develop-active #canvasArea canvas {
   cursor: pointer;
   font-family: var(--mono);
 }
-.develop-tc-channel-btn.active { background: var(--accent-dim, rgba(124,58,237,0.18)); }
+.develop-tc-channel-btn.active { background: var(--accent-dim); }
 .develop-tc-channel-r.active { color: #e24b4a; border-color: #e24b4a; }
 .develop-tc-channel-g.active { color: #5dca85; border-color: #5dca85; }
 .develop-tc-channel-b.active { color: #5da3e2; border-color: #5da3e2; }
@@ -601,7 +601,7 @@ body.develop-active #canvasArea canvas {
 }
 .develop-hsl-tabs button.active {
   color: var(--accent); border-color: var(--accent);
-  background: var(--accent-dim, rgba(124,58,237,0.18));
+  background: var(--accent-dim);
 }
 
 /* Only one HSL tab body is visible at a time (controlled by inline display) */
@@ -695,8 +695,8 @@ body.develop-active #canvasArea canvas {
    and removed post-redraw by _markHeavyRowsProcessing.
    ═══════════════════════════════════════════ */
 @keyframes develop-row-processing {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(124,58,237,0.0); }
-  50%      { box-shadow: inset 0 0 0 1px rgba(124,58,237,0.55); }
+  0%, 100% { box-shadow: inset 0 0 0 1px transparent; }
+  50%      { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
 }
 .develop-row.processing {
   animation: develop-row-processing 0.7s ease-in-out infinite;
@@ -746,7 +746,7 @@ body.develop-active #canvasArea canvas {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: var(--accent, #fff);
+  background: var(--accent);
   cursor: ew-resize;
   z-index: 49;
   display: none;
@@ -762,7 +762,7 @@ body.develop-active #canvasArea canvas {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--accent, #fff);
+  background: var(--accent);
   transform: translate(-50%, -50%);
   border: 2px solid var(--bg-surface);
 }
@@ -788,12 +788,12 @@ body.develop-active #canvasArea canvas {
 
 /* M4: local adjustments -- one card per adjustment, its mask chosen here. */
 .develop-local-list { display: flex; flex-direction: column; gap: 8px; }
-.develop-local-card { border: 1px solid var(--border-subtle, #333); border-radius: 6px; padding: 6px 6px 2px; }
+.develop-local-card { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px 6px 2px; }
 .develop-local-card.off { opacity: 0.55; }
 .develop-local-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.develop-local-mask { flex: 1 1 auto; min-width: 0; background: var(--bg-input, #222); color: inherit;
-  border: 1px solid var(--border-subtle, #333); border-radius: 4px; padding: 3px 4px; font: inherit; font-size: 12px; }
+.develop-local-mask { flex: 1 1 auto; min-width: 0; background: var(--bg-input); color: inherit;
+  border: 1px solid var(--border-subtle); border-radius: 4px; padding: 3px 4px; font: inherit; font-size: 12px; }
 .develop-local-remove { padding: 0 8px; }
-.develop-local-missing, .develop-local-empty { font-size: 11px; color: var(--text-3, #999); margin: 2px 0 6px; }
-.develop-local-missing { color: var(--yellow, #e0b050); }
+.develop-local-missing, .develop-local-empty { font-size: 11px; color: var(--text-3); margin: 2px 0 6px; }
+.develop-local-missing { color: var(--yellow); }
 .develop-local-add { margin-top: 8px; width: 100%; }

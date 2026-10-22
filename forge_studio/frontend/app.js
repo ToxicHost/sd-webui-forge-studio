@@ -3668,6 +3668,42 @@ function _clipSkipValue() {
   return clamped === 2 ? null : clamped;
 }
 
+// BM1. Settings > Generation > Generate mode. "queue" -- one picture per job,
+// the default and what Studio has done since AR5.1 -- or "batch": Batch count
+// x Batch size pictures in one job (Evidence/source-review/BM1-batch-mode.md).
+function _generationMode() {
+  return window.Prefs?.get("generation_mode", "queue") === "batch" ? "batch" : "queue";
+}
+
+// One control's whole number inside its own data-min/data-max, or 1.
+function _batchControlValue(id) {
+  const el = document.getElementById(id);
+  const raw = parseInt(el?.value, 10);
+  const max = parseInt(el?.dataset?.max, 10) || 1;
+  return Number.isFinite(raw) ? Math.max(1, Math.min(max, raw)) : 1;
+}
+
+// How many pictures Generate will make: 1 in Queue mode, whatever the two
+// controls say.
+function _batchPictures() {
+  if (_generationMode() !== "batch") return 1;
+  return _batchControlValue("paramBatch") * _batchControlValue("paramBatchSize");
+}
+
+// The request's `batch` group, or null. Null in Queue mode and for a batch of
+// one, so either sends exactly what Studio sent before Batch mode existed.
+function _batchGroup() {
+  if (_batchPictures() < 2) return null;
+  return { count: _batchControlValue("paramBatch"), size: _batchControlValue("paramBatchSize") };
+}
+
+// Show the two controls only in Batch mode; Queue mode has no use for them.
+function _applyGenerationMode() {
+  const controls = document.getElementById("batchControls");
+  if (controls) controls.hidden = _generationMode() !== "batch";
+  if (typeof _schedulePanelBadgeRefresh === "function") _schedulePanelBadgeRefresh();
+}
+
 function _resolveSubmittedSeed() {
   const raw = parseInt(document.getElementById("paramSeed")?.value, 10);
   if (Number.isFinite(raw) && raw >= 0) return raw;
@@ -3974,6 +4010,9 @@ function _collectCanvasSource(w, h) {
 }
 
 async function doGenerate(overrides = {}) {
+  // BM1. A click passes its MouseEvent here (`genBtn` binds doGenerate
+  // directly); it is not overrides, which only the Upscale panel sends.
+  if (!overrides || typeof Event !== "undefined" && overrides instanceof Event) overrides = {};
   // LV2 (owner, 2026-10-20): pressing Generate turns Live off. A frame already
   // running finishes and is not followed by another; this job queues behind it.
   if (window.Live && Live.active) await Live.stop();
@@ -4362,6 +4401,11 @@ async function doGenerate(overrides = {}) {
         // RG2. The painted regions with a prompt, and the method. Absent
         // otherwise, so a job without regions is unchanged.
         ...RegionMethod.requestField(_source.regionsJson),
+        // BM1. Batch mode's count and size, only from the main Generate in
+        // Batch mode and only for more than one picture. Queue mode, and the
+        // Upscale panel's call (which passes overrides), send nothing.
+        ...(Object.keys(overrides).length === 0 && _batchGroup()
+            ? { batch: _batchGroup() } : {}),
         // An outpaint job's size is its strip-plus-context crop's at the
         // model's own area (CT9); Neo pastes it back at the canvas's size.
         width: _outpaint ? _outpaint.width
@@ -5153,6 +5197,12 @@ function handleProgress(data) {
       State._lastTotalSteps = data.total_steps;
       State._peakProgress = 0;
     }
+    // BM1. The next picture of a batch is a new pass too, with the same
+    // step budget, so the change of picture is what allows the reset.
+    if (data.job_count > 1 && data.job !== State._lastProgressPicture) {
+      State._lastProgressPicture = data.job;
+      State._peakProgress = 0;
+    }
     if (pct >= (State._peakProgress || 0)) {
       State._peakProgress = pct;
       fill.style.width = pct + "%";
@@ -5167,7 +5217,9 @@ function handleProgress(data) {
   if (btn && downloading) {
     btn.textContent = _i18n("ui.controlnet.downloading", "Downloading {file}…", { file: downloading });
   } else if (btn && data.total_steps > 0) {
-    btn.textContent = data.step + " / " + data.total_steps;
+    // BM1. A batch says which picture first: "2/4 · 7 / 30".
+    const picture = data.job_count > 1 ? `${(data.job || 0) + 1}/${data.job_count} · ` : "";
+    btn.textContent = picture + data.step + " / " + data.total_steps;
   }
 
   // Live preview — show on overlay during generation.
@@ -5964,10 +6016,12 @@ const BADGE_FORMATTERS = {
   seedbatch() {
     // Key kept as `seedbatch` deliberately: it is the panel's stored id, so
     // renaming it would silently orphan every saved panel-collapse state.
-    // The BADGE no longer reports a batch multiplier, because there is no
-    // longer a batch.
+    // BM1. The batch multiplier, the Extension's own badge, only in Batch
+    // mode: Queue mode has no batch to report.
     const seed = (document.getElementById("paramSeed")?.value || "-1").trim();
-    return seed === "-1" ? "random" : seed;
+    const seedPart = seed === "-1" ? "random" : seed;
+    const total = _batchPictures();
+    return total > 1 ? `${seedPart} · ×${total}` : seedPart;
   },
   hires() {
     if (!document.getElementById("checkHires")?.classList.contains("checked")) return "off";
@@ -6188,7 +6242,7 @@ function bindUI() {
     .forEach(h => h.addEventListener("click", _schedulePanelBadgeRefresh));
   [
     "paramSampler", "paramSteps", "paramCFG", "paramWidth", "paramHeight",
-    "paramSeed", "paramHrScale",
+    "paramSeed", "paramBatch", "paramBatchSize", "paramHrScale",
     "paramHrUpscaler", "paramHrSteps", "paramUpscaleScale", "paramUpscaleModel",
   ].forEach(id => {
     const el = document.getElementById(id);
@@ -7828,6 +7882,20 @@ function bindUI() {
     if (window.Progress) window.Progress.sendPreviewConfig();
   });
 
+  // BM1. Generate mode, Queue or Batch: a server preference, applied at once
+  // (the Batch controls appear or go) and read again at every Generate.
+  {
+    const modeSelect = document.getElementById("settingGenerationMode");
+    if (modeSelect) {
+      modeSelect.value = _generationMode();
+      modeSelect.addEventListener("change", () => {
+        window.Prefs?.set("generation_mode", modeSelect.value === "batch" ? "batch" : "queue");
+        _applyGenerationMode();
+      });
+    }
+    _applyGenerationMode();
+  }
+
   // Live preview quality mode (auto/fast/legacy) — a machine display preference,
   // persisted in localStorage. Restore the saved value, then push changes to the
   // backend decode path.
@@ -8720,6 +8788,7 @@ function bindUI() {
       ["paramSampler", "val"], ["paramScheduler", "val"],
       ["paramSteps", "val"], ["paramCFG", "val"], ["paramDenoise", "val"],
       ["paramWidth", "val"], ["paramHeight", "val"],
+      ["paramBatch", "val"], ["paramBatchSize", "val"],
       ["arRandBase", "checkbox"], ["arRandRatio", "checkbox"], ["arRandOrientation", "checkbox"],
       ["arBasePoolData", "val"], ["arRatioPoolData", "val"],
     ],
@@ -10484,39 +10553,40 @@ const ExtensionBridge = {
 // THEME SWITCHER
 // ═══════════════════════════════════════════
 
+// UI1. Themes moved to studio-themes.js (window.StudioThemes): the built-in
+// list, the saved choice (now a Studio preference, not only localStorage)
+// and custom themes. It themes the page as it loads; studio-themes-ui.js
+// binds the Settings tiles. This keeps the old call site harmless.
 const ThemeSwitcher = {
   init() {
-    // Restore saved theme
-    const saved = localStorage.getItem("studio-theme") || "";
-    if (saved) document.documentElement.setAttribute("data-theme", saved);
-    this._updateButtons(saved);
-
-    // Bind clicks
-    document.getElementById("themeSelector")?.addEventListener("click", e => {
-      const btn = e.target.closest(".theme-btn");
-      if (!btn) return;
-      const theme = btn.dataset.theme;
-      if (theme) {
-        document.documentElement.setAttribute("data-theme", theme);
-      } else {
-        document.documentElement.removeAttribute("data-theme");
-      }
-      localStorage.setItem("studio-theme", theme);
-      this._updateButtons(theme);
-      // Invalidate canvas background cache so it picks up the new --bg-void
-      if (window.StudioCore?.state) {
-        window.StudioCore.state._voidColor = null;
-        // Force immediate redraw
-        if (typeof window.StudioCore.composite === "function") window.StudioCore.composite();
-      }
-    });
+    if (!window.StudioThemes) console.warn("[Themes] studio-themes.js did not load; the default theme stays.");
   },
+};
 
-  _updateButtons(active) {
-    document.querySelectorAll(".theme-btn").forEach(btn => {
-      btn.classList.toggle("active", btn.dataset.theme === active);
+// UI1. The pinned Generate bar repeats the Jobs block's status chip, so the
+// state of the queue is readable next to Generate however far the panel is
+// scrolled. A mirror, not a move: the chip stays the Jobs block's own, and
+// studio-model-controls.js keeps writing only to it.
+const GenStatusMirror = {
+  init() {
+    const out = document.getElementById("genStatusMirror");
+    const chip = document.getElementById("studioStageChip");
+    if (!out) return;
+    if (!chip) { out.hidden = true; return; }
+    const label = out.querySelector(".gen-status-text");
+    const sync = () => {
+      const status = chip.textContent.trim();
+      out.hidden = !status || chip.hidden;
+      out.dataset.stage = chip.dataset.stage || "idle";
+      if (label) label.textContent = _i18n("ui.jobs.statusLine", "Jobs: {status}", { status });
+    };
+    sync();
+    new MutationObserver(sync).observe(chip, {
+      childList: true, characterData: true, subtree: true,
+      attributes: true, attributeFilter: ["data-stage", "hidden"],
     });
-  }
+    window.addEventListener("i18n:change", sync);
+  },
 };
 
 
@@ -11776,6 +11846,7 @@ async function init() {
 
   // Initialize theme switcher
   ThemeSwitcher.init();
+  GenStatusMirror.init();
 
   // Initialize layout preset switcher (WP-L1) — must run after bindUI so
   // the accordion handlers and output-gallery bindings already exist.
@@ -12098,6 +12169,8 @@ async function init() {
     { name: "Remacri", role: "upscaler, by FoolhardyVEVO" },
     { name: "ag-psd", role: "PSD files, by Agamnentzar (MIT)" },
     { name: "Playfair Display", role: "font (SIL OFL 1.1)" },
+    { name: "DM Sans", role: "interface font (SIL OFL 1.1)" },
+    { name: "JetBrains Mono", role: "number font (SIL OFL 1.1)" },
   ];
   const creditsComponents = document.getElementById("creditsComponents");
   if (creditsComponents) {

@@ -33,35 +33,108 @@
   src: url('/studio/static/fonts/PlayfairDisplay-Italic-VariableFont_wght.ttf') format('truetype-variations');
 }
 
+/* DM Sans (interface) and JetBrains Mono (values), SIL OFL 1.1
+   (fonts/OFL-DMSans.txt, fonts/OFL-JetBrainsMono.txt). They were named
+   in --font and --mono from the start but never shipped, so testers saw
+   the system fallback. */
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+  src: url('/studio/static/fonts/DMSans-VariableFont.ttf') format('truetype-variations');
+}
+
+@font-face {
+  font-family: 'DM Sans';
+  font-style: italic;
+  font-weight: 100 1000;
+  font-display: swap;
+  src: url('/studio/static/fonts/DMSans-Italic-VariableFont.ttf') format('truetype-variations');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/studio/static/fonts/JetBrainsMono-VariableFont.ttf') format('truetype-variations');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: italic;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/studio/static/fonts/JetBrainsMono-Italic-VariableFont.ttf') format('truetype-variations');
+}
+
 
 /* ═══════════════════════════════════════════
    TOKENS
+   Liam is the default theme (owner, 2026-10-21); Studio is a named
+   theme like the others. Every theme sets the same colour tokens. The
+   greys are lifted so hints (text-3) clear 6:1 and faint text (text-4)
+   clears 4.5:1 on the raised ground, and --on-accent is the label
+   colour on an accent fill (Generate, size buttons, checkmarks).
+   Contrast table: Evidence/source-review/UI1-themes.md.
    ═══════════════════════════════════════════ */
 
 :root {
-  --bg-void: #0e0e11;
-  --bg-surface: #161619;
-  --bg-raised: #1c1c20;
-  --bg-input: #111114;
-  --border: #2a2a30;
-  --border-subtle: #222226;
-  --border-hover: #3a3a42;
-  --text-1: #e0dfd8;
-  --text-2: #c2bfb5;
-  --text-3: #8b8b93;
-  --text-4: #5a5a62;
-  --accent: #7b8fff;
-  --accent-dim: #7b8fff22;
-  --accent-mid: #7b8fff44;
-  --accent-bright: #9aabff;
-  --pink: #d4537e;
-  --pink-dim: #d4537e22;
+  color-scheme: dark;
+  --bg-void: #0a0a0a;
+  --bg-surface: #141414;
+  --bg-raised: #1a1a1a;
+  --bg-input: #0f0f0f;
+  --border: #2a2a2a;
+  --border-subtle: #222222;
+  --border-hover: #3a3a3a;
+  --text-1: #f0f0f0;
+  --text-2: #c5c5c5;
+  --text-3: #9b9b9b;
+  --text-4: #848484;
+  --accent: #ff9b00;
+  --accent-dim: #ff9b0022;
+  --accent-mid: #ff9b0044;
+  --accent-bright: #ffb740;
+  --on-accent: #0a0a0a;
+  /* Second accent: the far end of a theme gradient. Themes without a
+     gradient leave it equal to the accent. */
+  --accent-2: var(--accent);
+  --accent-blend: var(--accent);
+  --accent-active: var(--accent);
+  /* What the canvas paints behind the picture. Dark themes use their
+     void; a light theme keeps the surround dark so the image is judged
+     against the same ground. */
+  --canvas-void: var(--bg-void);
+  --pink: #d75e86;
+  --pink-dim: #d75e8622;
   --green: #5dca85;
   --green-dim: #5dca8522;
-  --amber: #efaa27;
-  --amber-dim: #efaa2722;
-  --red: #e24b4a;
-  --red-dim: #e24b4a22;
+  --amber: #f5d547;
+  --amber-dim: #f5d54722;
+  --red: #e45756;
+  --red-dim: #e4575622;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --dock-shadow: 0 -8px 16px rgba(0, 0, 0, 0.35);
+  /* Names some stylesheets and scripts use that no theme ever defined,
+     so those rules fell back to a fixed dark colour (or to nothing:
+     Gallery's danger buttons lost their red). They follow the theme now.
+     New code uses the real token names. */
+  --bg: var(--bg-void);
+  --bg-deep: var(--bg-void);
+  --bg-1: var(--bg-surface);
+  --panel: var(--bg-surface);
+  --bg-2: var(--bg-input);
+  --bg-inset: var(--bg-input);
+  --bg-3: var(--bg-raised);
+  --bg-hover: var(--bg-raised);
+  --hover: var(--bg-raised);
+  --danger: var(--red);
+  --error: var(--red);
+  --warning: var(--amber);
+  --yellow: var(--amber);
+  --font-mono: var(--mono);
   --radius: 8px;
   --radius-sm: 5px;
   --radius-lg: 12px;
@@ -81,50 +154,63 @@
   --section-pad: 12px;
 }
 
-/* --- Theme: Liam (amber/black) --- */
-[data-theme="liam"] {
-  --bg-void: #0a0a0a;
-  --bg-surface: #141414;
-  --bg-raised: #1a1a1a;
-  --bg-input: #0f0f0f;
-  --border: #2a2a2a;
-  --border-subtle: #222222;
-  --border-hover: #3a3a3a;
-  --text-1: #f0f0f0;
-  --text-2: #c5c5c5;
-  --text-3: #898989;
-  --text-4: #585858;
-  --accent: #ff9b00;
-  --accent-dim: #ff9b0022;
-  --accent-mid: #ff9b0044;
-  --accent-bright: #ffb740;
+/* --- Theme: Studio (periwinkle) --- */
+[data-theme="studio"] {
+  --bg-void: #0e0e11;
+  --bg-surface: #161619;
+  --bg-raised: #1c1c20;
+  --bg-input: #111114;
+  --border: #2a2a30;
+  --border-subtle: #222226;
+  --border-hover: #3a3a42;
+  --text-1: #e0dfd8;
+  --text-2: #c2bfb5;
+  --text-3: #9c9ca3;
+  --text-4: #85858f;
+  --accent: #7b8fff;
+  --accent-dim: #7b8fff22;
+  --accent-mid: #7b8fff44;
+  --accent-bright: #9aabff;
+  --on-accent: #0e0e11;
+  --pink: #d76188;
+  --pink-dim: #d7618822;
+  --amber: #efaa27;
+  --amber-dim: #efaa2722;
+  --red: #e55b5a;
+  --red-dim: #e55b5a22;
 }
 
-/* --- Theme: Oliver (earth tones) --- */
-[data-theme="oliver"] {
-  --bg-void: #1a1a1a;
-  --bg-surface: #261e17;
-  --bg-raised: #2a2018;
-  --bg-input: #1a1310;
-  --border: #3d3028;
-  --border-subtle: #332818;
-  --border-hover: #4d3d30;
-  --text-1: #dfd0b5;
-  --text-2: #c8b8a0;
-  --text-3: #968a72;
-  --text-4: #6e6452;
-  --accent: #7d9c60;
-  --accent-dim: #7d9c6022;
-  --accent-mid: #7d9c6044;
-  --accent-bright: #95b574;
+/* --- Theme: Oliver (warm charcoal and clay; the 2026-10-21 refresh of
+   the earlier brown Oliver). "terracotta" was its name on development
+   builds for a day and stays as an alias. --- */
+[data-theme="oliver"],
+[data-theme="terracotta"] {
+  --bg-void: #121110;
+  --bg-surface: #1b1917;
+  --bg-raised: #221f1c;
+  --bg-input: #100e0d;
+  --border: #312d29;
+  --border-subtle: #2a2723;
+  --border-hover: #423d37;
+  --text-1: #e6ddd0;
+  --text-2: #c8bdae;
+  --text-3: #a69e95;
+  --text-4: #91867b;
+  --accent: #c8744a;
+  --accent-dim: #c8744a22;
+  --accent-mid: #c8744a44;
+  --accent-bright: #d98d64;
+  --on-accent: #121110;
+  --pink: #da698f;
+  --pink-dim: #da698f22;
+  --green: #6fc2a6;
+  --green-dim: #6fc2a622;
+  --red: #ea5f78;
+  --red-dim: #ea5f7822;
 }
 
-/* ═══════════════════════════════════════════
-   Theme: ToxicHost — "dreamy but clearly toxic"
-   Soporific violet (#9070c0) + ghostflame (#a0c8a0)
-   Same structure as Neon: tokens + gradient accents
-   ═══════════════════════════════════════════ */
-
+/* --- Theme: ToxicHost — "dreamy but clearly toxic".
+   Soporific violet + ghostflame, drifting (see THEME GRADIENTS). --- */
 [data-theme="toxic"] {
   --bg-void: #0a080e;
   --bg-surface: #110e16;
@@ -135,67 +221,24 @@
   --border-hover: #36304a;
   --text-1: #e2dce8;
   --text-2: #b8b2c2;
-  --text-3: #858094;
-  --text-4: #585364;
+  --text-3: #9995a6;
+  --text-4: #847d93;
   --accent: #9070c0;
   --accent-dim: #9070c018;
   --accent-mid: #9070c035;
   --accent-bright: #a888d8;
+  --on-accent: #0a080e;
   --accent-2: #a0c8a0;
+  --accent-blend: #7860a8;
+  --accent-active: #a0c8a0;
   --pink: #9070c0;
   --pink-dim: #9070c022;
   --green: #a0c8a0;
   --green-dim: #a0c8a022;
-}
-/* Toxic: gradient accents on specific elements */
-[data-theme="toxic"] .progress-fill {
-  background: linear-gradient(90deg, #9070c0, #a0c8a0);
-  box-shadow: 0 0 16px #9070c060, 0 0 28px #a0c8a030;
-}
-[data-theme="toxic"] .progress-fill.indeterminate {
-  background: linear-gradient(90deg, transparent, #9070c0, #a0c8a0, transparent);
-  background-size: 200% 100%;
-  box-shadow: 0 0 20px #9070c080, 0 0 35px #a0c8a050;
-}
-[data-theme="toxic"] .tool-btn.active {
-  background: linear-gradient(135deg, #9070c015, #a0c8a015);
-  color: #a0c8a0;
-}
-[data-theme="toxic"] .mode-btn.active {
-  background: linear-gradient(135deg, #9070c018, #a0c8a018);
-  color: #a0c8a0;
-}
-[data-theme="toxic"] #genBtn {
-  background: linear-gradient(135deg, #9070c0, #7860a8, #a0c8a0);
-  background-size: 200% 200%;
-  animation: toxic-drift 8s ease-in-out infinite;
-  color: #0a080e;
-  border: none;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-}
-[data-theme="toxic"] #genBtn:hover {
-  filter: brightness(1.12) saturate(1.1);
-}
-[data-theme="toxic"] #genBtn.generating {
-  animation: toxic-drift 3s ease-in-out infinite;
-}
-@keyframes toxic-drift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-}
-[data-theme="toxic"] .panel-tab.active::after {
-  background: linear-gradient(90deg, #9070c0, #a0c8a0);
-}
-[data-theme="toxic"] .output-thumb.selected {
-  border-color: #a0c8a0;
-  box-shadow: 0 0 8px #a0c8a040, 0 0 14px #9070c020;
-}
-[data-theme="toxic"] .layer-row.active {
-  background: linear-gradient(90deg, #9070c010, #a0c8a008);
-  border-color: #9070c040;
-}
-[data-theme="toxic"] ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #9070c040, #a0c8a030);
+  --amber: #efaa27;
+  --amber-dim: #efaa2722;
+  --red: #e35150;
+  --red-dim: #e3515022;
 }
 
 /* --- Theme: Neutral (color-accurate work) --- */
@@ -209,15 +252,22 @@
   --border-hover: #4a4a4a;
   --text-1: #d4d4d4;
   --text-2: #bdbdbd;
-  --text-3: #828282;
-  --text-4: #585858;
+  --text-3: #ababab;
+  --text-4: #929292;
   --accent: #8ab4f8;
   --accent-dim: #8ab4f822;
   --accent-mid: #8ab4f844;
   --accent-bright: #aecbfa;
+  --on-accent: #1a1a1a;
+  --pink: #dd7598;
+  --pink-dim: #dd759822;
+  --amber: #efaa27;
+  --amber-dim: #efaa2722;
+  --red: #e87170;
+  --red-dim: #e8717022;
 }
 
-/* --- Theme: Neon (dual-accent gradient) --- */
+/* --- Theme: Neon (pink to cyan, shifting) --- */
 [data-theme="neon"] {
   --bg-void: #050508;
   --bg-surface: #0a0a10;
@@ -228,65 +278,119 @@
   --border-hover: #2a2a40;
   --text-1: #f0eef8;
   --text-2: #c4bed4;
-  --text-3: #7c7494;
-  --text-4: #544e6a;
+  --text-3: #9790aa;
+  --text-4: #80799c;
   --accent: #ffa9f3;
   --accent-dim: #ffa9f318;
   --accent-mid: #ffa9f335;
   --accent-bright: #ffd0f8;
+  --on-accent: #050508;
   --accent-2: #63feff;
+  --accent-blend: #d480e0;
   --pink: #ffa9f3;
   --pink-dim: #ffa9f322;
+  --amber: #efaa27;
+  --amber-dim: #efaa2722;
+  --red: #e24b4a;
+  --red-dim: #e24b4a22;
 }
-/* Neon: gradient accents on specific elements */
-[data-theme="neon"] .progress-fill {
-  background: linear-gradient(90deg, #ffa9f3, #63feff);
-  box-shadow: 0 0 16px #ffa9f360, 0 0 28px #63feff30;
+
+/* --- Theme: Cream Paper (light; olive accent). The canvas surround
+   stays dark: a light ground around a picture changes how it reads. --- */
+[data-theme="cream"] {
+  color-scheme: light;
+  --bg-void: #e9e3d6;
+  --bg-surface: #f4efe4;
+  --bg-raised: #ebe4d6;
+  --bg-input: #fbf8f1;
+  --border: #d6cdbb;
+  --border-subtle: #e0d8c8;
+  --border-hover: #c4b9a4;
+  --text-1: #2a251e;
+  --text-2: #4b443a;
+  --text-3: #575146;
+  --text-4: #6d6353;
+  --accent: #51653e;
+  --accent-dim: #51653e1a;
+  --accent-mid: #51653e40;
+  --accent-bright: #435333;
+  --on-accent: #fbf8f1;
+  --canvas-void: #1b1a18;
+  --pink: #b32d59;
+  --pink-dim: #b32d591a;
+  --green: #206a63;
+  --green-dim: #206a631a;
+  --amber: #845a0a;
+  --amber-dim: #845a0a1a;
+  --red: #bf201f;
+  --red-dim: #bf201f1a;
+  --overlay: rgba(42, 37, 30, 0.35);
+  --dock-shadow: 0 -6px 14px rgba(60, 45, 20, 0.12);
 }
-[data-theme="neon"] .progress-fill.indeterminate {
-  background: linear-gradient(90deg, transparent, #ffa9f3, #63feff, transparent);
+
+/* ═══════════════════════════════════════════
+   THEME GRADIENTS — a theme (or a custom theme) with a second accent
+   sets data-gradient on <html>: "still", "drift" (8 s, ToxicHost) or
+   "shift" (4 s, Neon). Both speed up while generating; reduced motion
+   stops them like every other animation.
+   ═══════════════════════════════════════════ */
+
+[data-gradient] .progress-fill {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 38%, transparent),
+              0 0 28px color-mix(in srgb, var(--accent-2) 19%, transparent);
+}
+[data-gradient] .progress-fill.indeterminate {
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent);
   background-size: 200% 100%;
-  box-shadow: 0 0 20px #ffa9f380, 0 0 35px #63feff50;
 }
-[data-theme="neon"] .tool-btn.active {
-  background: linear-gradient(135deg, #ffa9f315, #63feff15);
-  color: #ffa9f3;
+[data-gradient] .tool-btn.active {
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 8%, transparent),
+    color-mix(in srgb, var(--accent-2) 8%, transparent));
+  color: var(--accent-active);
 }
-[data-theme="neon"] .mode-btn.active {
-  background: linear-gradient(135deg, #ffa9f318, #63feff18);
-  color: #ffa9f3;
+[data-gradient] .mode-btn.active {
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 9%, transparent),
+    color-mix(in srgb, var(--accent-2) 9%, transparent));
+  color: var(--accent-active);
 }
-[data-theme="neon"] #genBtn {
-  background: linear-gradient(135deg, #ffa9f3, #d480e0, #63feff);
+[data-gradient] #genBtn {
+  background: linear-gradient(135deg, var(--accent), var(--accent-blend), var(--accent-2));
   background-size: 200% 200%;
-  animation: neon-shift 4s ease-in-out infinite;
-  color: #050508;
+  color: var(--on-accent);
   border: none;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
-[data-theme="neon"] #genBtn:hover {
-  filter: brightness(1.15) saturate(1.1);
-}
-[data-theme="neon"] #genBtn.generating {
-  animation: neon-shift 1.5s ease-in-out infinite;
-}
-@keyframes neon-shift {
+[data-gradient] #genBtn:hover { filter: brightness(1.12) saturate(1.1); }
+[data-gradient="drift"] #genBtn { animation: theme-gradient 8s ease-in-out infinite; }
+[data-gradient="drift"] #genBtn.generating { animation-duration: 3s; }
+[data-gradient="shift"] #genBtn { animation: theme-gradient 4s ease-in-out infinite; }
+[data-gradient="shift"] #genBtn.generating { animation-duration: 1.5s; }
+@keyframes theme-gradient {
   0%, 100% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
 }
-[data-theme="neon"] .panel-tab.active::after {
-  background: linear-gradient(90deg, #ffa9f3, #63feff);
+/* The active tab's underline and the selected layer. These were
+   `.panel-tab.active::after` and `.layer-row.active` before, which
+   match nothing in this page, so the gradient never showed. */
+[data-gradient] .panel-tab.active {
+  border-image: linear-gradient(90deg, var(--accent), var(--accent-2)) 1;
 }
-[data-theme="neon"] .output-thumb.selected {
-  border-color: #ffa9f3;
-  box-shadow: 0 0 8px #ffa9f340, 0 0 14px #63feff20;
+[data-gradient] .output-thumb.selected {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-2) 25%, transparent),
+              0 0 14px color-mix(in srgb, var(--accent) 12%, transparent);
 }
-[data-theme="neon"] .layer-row.active {
-  background: linear-gradient(90deg, #ffa9f310, #63feff08);
-  border-color: #ffa9f340;
+[data-gradient] .layer-item.selected {
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent) 7%, transparent),
+    color-mix(in srgb, var(--accent-2) 4%, transparent));
 }
-[data-theme="neon"] ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #ffa9f340, #63feff30);
+[data-gradient] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 25%, transparent),
+    color-mix(in srgb, var(--accent-2) 19%, transparent));
 }
 
 /* ═══════════════════════════════════════════
@@ -306,12 +410,14 @@ body[data-density="compact"] {
 }
 
 /* ═══════════════════════════════════════════
-   COLORBLIND MODES — stack on top of any theme
+   COLORBLIND MODES — stack on top of any theme. :root raises them
+   above a theme rule ([data-theme], 0-1-0) whatever the order, so they
+   also win over a custom theme's rule appended after this sheet.
    ═══════════════════════════════════════════ */
 
 /* Deuteranopia (red-green, no green cones — ~5% of men) */
 /* Okabe-Ito sourced. Accent forced to safe blue. No green/red in UI. */
-[data-cb="deutan"] {
+:root[data-cb="deutan"] {
   --accent: #0072B2;
   --accent-dim: #0072B222;
   --accent-mid: #0072B244;
@@ -326,7 +432,7 @@ body[data-density="compact"] {
 
 /* Protanopia (red-green, no red cones — ~2.5% of men) */
 /* Okabe-Ito sourced. Accent forced to safe blue. No green/red in UI. */
-[data-cb="protan"] {
+:root[data-cb="protan"] {
   --accent: #0072B2;
   --accent-dim: #0072B222;
   --accent-mid: #0072B244;
@@ -341,17 +447,50 @@ body[data-density="compact"] {
 
 /* Tritanopia (blue-yellow, no blue cones — ~0.01%) */
 /* Okabe-Ito sourced. No blue or yellow anywhere. */
-[data-cb="tritan"] {
+:root[data-cb="tritan"] {
   --accent: #CC79A7;
   --accent-dim: #CC79A722;
   --accent-mid: #CC79A744;
   --accent-bright: #dd8ab8;
+  --on-accent: #0e0e11;
   --green: #009E73;
   --green-dim: #009E7322;
   --red: #D55E00;
   --red-dim: #D55E0022;
   --amber: #D55E00;
   --amber-dim: #D55E0022;
+}
+/* Okabe-Ito blue carries a white label (5.2:1); a dark one is 3.7:1. */
+:root[data-cb="deutan"], :root[data-cb="protan"] { --on-accent: #ffffff; }
+
+/* The same modes on the light theme: Okabe-Ito's hues, darkened until
+   they read on cream (4.8:1 on the raised ground). */
+[data-theme="cream"][data-cb="deutan"],
+[data-theme="cream"][data-cb="protan"] {
+  --accent: #0067a1;
+  --accent-dim: #0067a11a;
+  --accent-mid: #0067a140;
+  --accent-bright: #0067a1;
+  --on-accent: #fbf8f1;
+  --green: #146897;
+  --green-dim: #1468971a;
+  --red: #a24700;
+  --red-dim: #a247001a;
+  --amber: #825a00;
+  --amber-dim: #825a001a;
+}
+[data-theme="cream"][data-cb="tritan"] {
+  --accent: #a13d74;
+  --accent-dim: #a13d741a;
+  --accent-mid: #a13d7440;
+  --accent-bright: #a13d74;
+  --on-accent: #fbf8f1;
+  --green: #007052;
+  --green-dim: #0070521a;
+  --red: #a24700;
+  --red-dim: #a247001a;
+  --amber: #a24700;
+  --amber-dim: #a247001a;
 }
 
 
@@ -540,7 +679,7 @@ body {
 
 .canvas-area {
   flex: 1;
-  background: var(--bg-void);
+  background: var(--canvas-void);
   position: relative;
   overflow: hidden;
   cursor: crosshair;
@@ -791,19 +930,22 @@ body {
   flex: 1; padding: 12px 0; text-align: center;
   font-size: var(--ui-font-small); font-weight: 600;
   letter-spacing: 0.8px; text-transform: uppercase;
-  color: var(--text-4); cursor: pointer;
+  color: var(--text-3); cursor: pointer;
   border: none; background: none; font-family: var(--font);
   transition: all 0.15s;
   border-bottom: 2px solid transparent;
 }
-.panel-tab:hover { color: var(--text-3); }
+.panel-tab:hover { color: var(--text-2); }
 .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
 .panel-content {
   flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
-  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin; scrollbar-color: var(--border-hover) transparent;
 }
 .panel-page { display: none; padding-bottom: 60px; }
+/* The Generate page ends in the pinned Generate bar, which needs no room
+   under it. */
+#page-generate { padding-bottom: 0; }
 .panel-page.active { display: block; }
 
 
@@ -916,7 +1058,7 @@ body {
   padding: 0 4px; flex-shrink: 0;
   transition: color 0.12s;
 }
-.lora-stack-remove:hover { color: var(--red, #e55); }
+.lora-stack-remove:hover { color: var(--red); }
 .lora-stack-preview { display: none; margin-top: 6px; }
 .lora-stack-preview.open { display: block; }
 .lora-stack-preview-text {
@@ -1044,13 +1186,13 @@ body {
 
 .gen-btn {
   width: 100%; height: 36px;
-  background: var(--accent); color: #fff; border: none;
+  background: var(--accent); color: var(--on-accent); border: none;
   border-radius: var(--radius); font-family: var(--font);
   font-size: 13px; font-weight: 600; cursor: pointer;
   letter-spacing: 0.5px; transition: all 0.15s;
   position: relative; overflow: hidden;
 }
-.gen-btn:hover { filter: brightness(1.1); box-shadow: 0 4px 16px #7b8fff33; }
+.gen-btn:hover { filter: brightness(1.1); box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 20%, transparent); }
 .gen-btn:active { filter: brightness(0.95); }
 .gen-btn.generating { background: var(--accent-mid); cursor: wait; }
 .gen-btn.generating:hover { filter: none; transform: none; box-shadow: none; }
@@ -1065,12 +1207,38 @@ body {
 .gen-actions { display: flex; gap: var(--control-gap); margin-top: var(--control-gap); }
 .gen-actions button {
   flex: 1; height: var(--control-h-sm);
-  background: var(--bg-raised); color: var(--text-4);
+  background: var(--bg-raised); color: var(--text-3);
   border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
   font-family: var(--font); font-size: var(--ui-font-small); cursor: pointer;
   transition: all 0.12s;
 }
 .gen-actions button:hover { color: var(--text-2); border-color: var(--border); }
+
+/* UI1. The pinned Generate bar: the Generate block is the panel page's last
+   child, so `sticky` keeps it at the bottom of the panel while everything
+   above scrolls. Only in the panel: in the Deck zone it is an ordinary
+   block. */
+#page-generate > .gen-dock {
+  position: sticky; bottom: 0; z-index: 6;
+  margin-top: 12px; padding: 10px var(--section-pad);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  box-shadow: var(--dock-shadow);
+}
+#page-generate > .gen-dock .gen-btn,
+#page-generate > .gen-dock .live-btn { height: 38px; }
+.gen-status {
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  padding: 0 4px; white-space: nowrap;
+  font-size: var(--ui-font-small); color: var(--text-2);
+}
+.gen-status[hidden] { display: none; }
+.gen-status-dot { width: 6px; height: 6px; border-radius: 3px; background: var(--text-3); }
+.gen-status:not([data-stage="idle"]) .gen-status-dot { background: var(--accent); }
+.model-label-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 3px; }
+.model-label-row label { margin-bottom: 0; }
+.model-unload-btn { padding: 2px 8px; font-size: var(--ui-font-meta); }
+.cn-upload-btn.icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 4px 7px; }
 
 /* Live Painting */
 .gen-row { display: flex; gap: 4px; }
@@ -1085,12 +1253,12 @@ body {
 }
 .live-btn:hover { color: var(--text-1); border-color: var(--accent); }
 .live-btn.active {
-  background: #1a3a1a; color: #4ade80; border-color: #4ade80;
+  background: var(--green-dim); color: var(--green); border-color: var(--green);
   animation: live-pulse 2s infinite;
 }
 @keyframes live-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 #4ade8044; }
-  50% { box-shadow: 0 0 8px 2px #4ade8033; }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 27%, transparent); }
+  50% { box-shadow: 0 0 8px 2px color-mix(in srgb, var(--green) 20%, transparent); }
 }
 
 .live-panel {
@@ -1126,7 +1294,7 @@ body {
 .live-apply-btn:disabled { opacity: 0.4; cursor: default; }
 
 .ad-live-warning {
-  font-size: 9px; color: #f59e0b; font-weight: 500;
+  font-size: 9px; color: var(--amber); font-weight: 500;
   margin-left: auto; white-space: nowrap;
 }
 
@@ -1281,27 +1449,27 @@ body {
   z-index: 10000;
 }
 .modal-box {
-  background: var(--bg-1, #1f1f23); color: var(--text-1, #e5e5e5);
-  border: 1px solid var(--border, #333); border-radius: 8px;
+  background: var(--bg-1); color: var(--text-1);
+  border: 1px solid var(--border); border-radius: 8px;
   padding: 18px 20px; min-width: 320px; max-width: 480px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.45);
 }
 .modal-box h3 { margin: 0 0 12px 0; font-size: 16px; }
-.modal-box p { margin: 0 0 14px 0; color: var(--text-2, #c4c4c4); }
+.modal-box p { margin: 0 0 14px 0; color: var(--text-2); }
 .modal-box .workflow-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; }
 .modal-box .workflow-field input,
 .modal-box .workflow-field select {
-  background: var(--bg-2, #2a2a30); color: inherit;
-  border: 1px solid var(--border, #444); border-radius: 4px;
+  background: var(--bg-2); color: inherit;
+  border: 1px solid var(--border); border-radius: 4px;
   padding: 6px 8px; font: inherit;
 }
 .modal-box .workflow-checkrow { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
 .modal-box .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
-.modal-box .ar-btn.primary { color: var(--accent, #6cf); border-color: var(--accent, #6cf); }
+.modal-box .ar-btn.primary { color: var(--accent); border-color: var(--accent); }
 
 /* Extras: a mask's colour on its row (a named mask's is a button). */
 .mask-swatch { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 3px; margin: 0 6px;
-  border: 1px solid rgba(255, 255, 255, 0.35); padding: 0; cursor: default; }
+  border: 1px solid color-mix(in srgb, var(--text-1) 35%, transparent); padding: 0; cursor: default; }
 button.mask-swatch { cursor: pointer; }
 button.mask-swatch:hover { border-color: var(--text-1); }
 
@@ -1418,7 +1586,7 @@ button.mask-swatch:hover { border-color: var(--text-1); }
 .ar-base-btn {
   flex: 1; height: 24px;
   background: var(--accent); border: none;
-  border-radius: var(--radius-sm); color: #fff;
+  border-radius: var(--radius-sm); color: var(--on-accent);
   font-family: var(--mono); font-size: 10px; font-weight: 600;
   cursor: pointer; transition: all 0.12s;
 }
@@ -1589,7 +1757,7 @@ label[data-help] {
 .collapse-check.checked { background: var(--accent); border-color: var(--accent); }
 .collapse-check.checked::after {
   content: ''; width: 7px; height: 4px;
-  border-left: 1.5px solid #fff; border-bottom: 1.5px solid #fff;
+  border-left: 1.5px solid var(--on-accent); border-bottom: 1.5px solid var(--on-accent);
   transform: rotate(-45deg) translateY(-1px);
 }
 
@@ -1598,7 +1766,7 @@ label[data-help] {
 /* Level 1 of the three-level label hierarchy (block headers). */
 .collapse-title { flex: 1; font-size: 14px; font-weight: 600; color: var(--text-2); }
 
-.collapse-arrow { transition: transform 0.2s; color: var(--text-4); }
+.collapse-arrow { transition: transform 0.2s; color: var(--text-3); }
 .collapse-arrow.open { transform: rotate(180deg); }
 
 /* Collapsed-block value badge — compact key-value summary, right of
@@ -1737,8 +1905,8 @@ label[data-help] {
 
 .layer-controls { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .layer-blend-select {
-  font-size: 9px; background: #1a1a2e; color: #ccc;
-  border: 1px solid #374151; border-radius: 3px;
+  font-size: 9px; background: var(--bg-input); color: var(--text-2);
+  border: 1px solid var(--border); border-radius: 3px;
   padding: 1px 2px; max-width: 80px;
 }
 .layer-opacity-slider { width: 50px; height: 3px; accent-color: var(--accent); }
@@ -1751,8 +1919,8 @@ label[data-help] {
 
 .adj-editor {
   padding: 8px 10px;
-  background: var(--bg-raised, #111827);
-  border: 1px solid var(--border, #374151);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
   border-radius: 4px;
   margin: 2px 0 4px 0;
   display: flex; flex-direction: column; gap: 6px;
@@ -1828,7 +1996,7 @@ label[data-help] {
   background: var(--bg-surface); color: var(--text-3);
   border: none; cursor: pointer;
 }
-.adj-segmented button.active { background: var(--accent-dim, rgba(124,58,237,0.25)); color: var(--text-1); }
+.adj-segmented button.active { background: var(--accent-dim); color: var(--text-1); }
 .adj-checkbox {
   font-size: 10px; color: var(--text-3);
   display: inline-flex; align-items: center; gap: 4px;
@@ -1887,7 +2055,7 @@ label[data-help] {
 .gradient-slider__handle--point {
   top: 50%;
   width: 10px; height: 14px;
-  background: var(--accent, #7c3aed);
+  background: var(--accent);
   border: 1px solid var(--text-1);
   border-radius: 2px;
   transform: translate(-50%, -50%);
@@ -1896,7 +2064,7 @@ label[data-help] {
 /* histogram */
 .histogram {
   width: 100%;
-  background: #0b0b14;
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 2px;
@@ -2400,7 +2568,7 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   font-size: 11px; color: var(--text-2);
 }
 .shortcut-capture-hint { color: var(--accent-bright); }
-.shortcut-capture-error { color: var(--red, #e55); }
+.shortcut-capture-error { color: var(--red); }
 .shortcut-capture-info { font-family: var(--mono); font-size: 10px; color: var(--text-2); }
 .shortcut-capture-choice { display: flex; flex-direction: column; gap: 2px; }
 .shortcut-capture-choice-item { cursor: pointer; color: var(--text-2); }
@@ -2567,6 +2735,84 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   border-color: var(--accent); color: var(--accent);
   background: var(--accent-dim);
 }
+/* Theme tiles: a swatch of the theme's panel and accent above its name. */
+.theme-selector .theme-btn {
+  display: inline-flex; flex-direction: column; align-items: stretch; gap: 5px;
+  width: 92px; padding: 6px; text-align: center;
+}
+.theme-swatch {
+  position: relative; display: flex; align-items: flex-end;
+  height: 38px; border-radius: 4px; padding: 5px; box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-1) 14%, transparent);
+}
+.theme-swatch-bar { flex: 1; height: 7px; border-radius: 3px; }
+.theme-swatch-new {
+  align-items: center; justify-content: center; border-style: dashed;
+  font-size: 18px; color: var(--text-3); background: none;
+}
+[data-setting-key="themeSelector"] .settings-item-control {
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+}
+.theme-editor-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.theme-editor-form .theme-editor-actions { margin-top: 6px; }
+.theme-editor {
+  margin-top: 12px; padding: 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); background: var(--bg-raised);
+  display: flex; gap: 16px; flex-wrap: wrap;
+}
+.theme-editor[hidden] { display: none; }
+.theme-editor-form { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.theme-editor-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.theme-editor-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.theme-editor-row > label:first-child { width: 128px; flex-shrink: 0; font-size: 12px; color: var(--text-2); }
+.theme-editor-row[hidden], .theme-editor-hint[hidden] { display: none; }
+.theme-editor-hint { font-size: var(--ui-font-small); color: var(--text-3); line-height: 1.45; }
+.theme-editor input[type="color"] {
+  width: 30px; height: 30px; padding: 0; border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm); background: none; cursor: pointer;
+}
+.theme-editor input.theme-hex, .theme-editor input.theme-name, .theme-editor select {
+  height: 30px; box-sizing: border-box; padding: 0 8px;
+  background: var(--bg-input); color: var(--text-1);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  font-size: 12px; outline: none;
+}
+.theme-editor input.theme-hex { width: 92px; font-family: var(--mono); }
+.theme-editor input.theme-name { width: 200px; font-family: var(--font); }
+.theme-editor input:focus, .theme-editor select:focus { border-color: var(--accent); }
+.theme-editor-side { flex: 0 1 280px; min-width: 240px; display: flex; flex-direction: column; gap: 10px; }
+/* The preview carries the derived tokens on its own element. */
+.theme-preview {
+  background: var(--bg-surface); color: var(--text-1);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 11px;
+}
+.theme-preview-tabs { display: flex; border-bottom: 1px solid var(--border); font-size: 10px; font-weight: 600; letter-spacing: .8px; }
+.theme-preview-tabs span { flex: 1; text-align: center; padding: 4px 0 6px; color: var(--text-3); }
+.theme-preview-tabs span:first-child { color: var(--accent); border-bottom: 2px solid var(--accent); }
+.theme-preview-field { background: var(--bg-input); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px 8px; }
+.theme-preview-field.faint { color: var(--text-4); }
+.theme-preview-card { background: var(--bg-raised); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; }
+.theme-preview-card span:last-child { color: var(--text-3); font-size: 10px; }
+.theme-preview-generate {
+  height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center;
+  color: var(--on-accent); font-size: 12px; font-weight: 600;
+}
+.theme-preview-generate[data-motion="drift"] { animation: theme-gradient 8s ease-in-out infinite; }
+.theme-preview-generate[data-motion="shift"] { animation: theme-gradient 4s ease-in-out infinite; }
+.theme-preview-status { display: flex; gap: 4px; flex-wrap: wrap; }
+.theme-preview-status span { font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+.theme-report { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.theme-check {
+  display: flex; align-items: center; gap: 8px; padding: 5px 0;
+  border-top: 1px solid var(--border-subtle); font-size: 12px; color: var(--text-2);
+}
+.theme-check::before { content: ""; width: 8px; height: 8px; border-radius: 4px; flex-shrink: 0; background: var(--green); }
+.theme-check.fail::before, .theme-check.note::before { background: var(--amber); }
+.theme-check-num { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-1); }
+.theme-check.note { align-items: flex-start; line-height: 1.45; }
+.theme-check.note::before { margin-top: 5px; }
+
 .defaults-btn-reset {
   border-color: var(--border-subtle);
 }
@@ -2773,9 +3019,9 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   animation: toastIn 0.3s ease, toastOut 0.3s ease 2.5s forwards;
   pointer-events: none;
 }
-.toast-success { background: var(--green-dim); color: var(--green); border: 1px solid #5dca8544; }
-.toast-error { background: var(--red-dim); color: var(--red); border: 1px solid #e24b4a44; }
-.toast-info { background: var(--accent-dim); color: var(--accent); border: 1px solid #7b8fff44; }
+.toast-success { background: var(--green-dim); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 27%, transparent); }
+.toast-error { background: var(--red-dim); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 27%, transparent); }
+.toast-info { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent-mid); }
 
 @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
@@ -2799,7 +3045,7 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   border: 1px solid var(--accent); background: transparent;
   color: var(--accent); cursor: pointer; font-family: var(--font);
 }
-.update-banner-btn:hover { background: var(--accent); color: #fff; }
+.update-banner-btn:hover { background: var(--accent); color: var(--on-accent); }
 .update-banner-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .update-banner-btn:disabled:hover { background: transparent; color: var(--accent); }
 .update-banner-dismiss {
@@ -2808,7 +3054,7 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
 }
 .update-banner-dismiss:hover { color: var(--text-1); }
 .update-restart-banner {
-  background: #3a352022; border-color: var(--amber);
+  background: var(--amber-dim); border-color: var(--amber);
   color: var(--amber);
 }
 .update-indicator {
@@ -2938,18 +3184,18 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
 /* Mask mode toggle in context bar */
 #maskModeBtn { transition: all 0.15s; }
 #maskModeBtn.active {
-  background: rgba(255, 40, 40, 0.25);
-  color: #ff6b6b;
-  border-color: rgba(255, 40, 40, 0.5);
-  box-shadow: 0 0 6px rgba(255, 40, 40, 0.2);
+  background: var(--red-dim);
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 50%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--red) 20%, transparent);
 }
 
 #pressureBtn { transition: all 0.15s; }
 #pressureBtn.active {
-  background: rgba(100, 180, 255, 0.25);
-  color: #6bb8ff;
-  border-color: rgba(100, 180, 255, 0.5);
-  box-shadow: 0 0 6px rgba(100, 180, 255, 0.2);
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 6px var(--accent-dim);
 }
 .pressure-sub {
   font-size: 10px;
@@ -2958,9 +3204,9 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   transition: all 0.15s;
 }
 .pressure-sub.active {
-  background: rgba(100, 180, 255, 0.2);
-  color: #6bb8ff;
-  border-color: rgba(100, 180, 255, 0.4);
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+  border-color: var(--accent-mid);
 }
 
 /* Inpaint settings sub-bar */
@@ -3063,7 +3309,7 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
 }
 .first-run-skip:hover { color: var(--text-1); border-color: var(--border); }
 .first-run-go {
-  padding: 8px 20px; background: var(--accent); color: #fff;
+  padding: 8px 20px; background: var(--accent); color: var(--on-accent);
   border: 1px solid var(--accent); border-radius: var(--radius-sm);
   font-family: var(--font); font-size: 12px; font-weight: 500; cursor: pointer;
   transition: all 0.12s;
@@ -3535,8 +3781,8 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   align-items: center;
   gap: 3px;
   padding: 1px 3px 1px 6px;
-  background: var(--bg-3, #2a2a2a);
-  border: 1px solid var(--border-subtle, #3a3a3a);
+  background: var(--bg-3);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
   font-size: 10px;
   line-height: 1.4;
@@ -3547,17 +3793,17 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-2, #cfcfcf);
+  color: var(--text-2);
 }
 .ad-lora-chip .ad-lora-weight {
   width: 40px;
   padding: 0 2px;
   font-size: 10px;
   text-align: center;
-  background: var(--bg-2, #1e1e1e);
-  border: 1px solid var(--border-subtle, #3a3a3a);
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  color: var(--text-1, #eee);
+  color: var(--text-1);
   -moz-appearance: textfield;
 }
 .ad-lora-chip .ad-lora-weight::-webkit-outer-spin-button,
@@ -3572,16 +3818,16 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
-  border: 1px solid var(--border-subtle, #3a3a3a);
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
   background: transparent;
-  color: var(--text-3, #888);
+  color: var(--text-3);
   cursor: pointer;
 }
 .ad-lora-chip .ad-lora-trig.on {
-  background: var(--accent, #6c8cff);
-  border-color: var(--accent, #6c8cff);
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 .ad-lora-chip .ad-lora-remove {
   width: 14px;
@@ -3591,22 +3837,22 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   line-height: 1;
   border: none;
   background: transparent;
-  color: var(--text-3, #888);
+  color: var(--text-3);
   cursor: pointer;
 }
-.ad-lora-chip .ad-lora-remove:hover { color: var(--danger, #e06666); }
+.ad-lora-chip .ad-lora-remove:hover { color: var(--danger); }
 
 /* Model-root rows and the folder picker (P0.4f).
    The picker is appended to <body>, not to the Settings card, so the card
    itself stays free of a fixed-position dialog. */
 .settings-model-root-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
 .studio-root-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px;
-  border: 1px solid var(--border, #333); border-radius: 4px; font-size: 12px; }
+  border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
 .studio-root-handle { opacity: .45; cursor: grab; }
 .studio-root-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-root-status { opacity: .7; font-size: 11px; }
-.studio-root-status[data-state="refused"] { color: var(--danger, #d66); }
-.studio-root-status[data-state="unreachable"] { color: var(--warning, #d9a441); }
+.studio-root-status[data-state="refused"] { color: var(--danger); }
+.studio-root-status[data-state="unreachable"] { color: var(--warning); }
 .studio-root-btn { background: none; border: none; color: inherit; cursor: pointer;
   padding: 0 4px; opacity: .7; }
 .studio-root-btn:disabled { opacity: .25; cursor: default; }
@@ -3627,7 +3873,7 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   display: flex; align-items: center; justify-content: center; z-index: 9000; }
 .studio-dir-panel { width: min(760px, 92vw); max-height: 80vh; display: flex;
   flex-direction: column; gap: 8px; padding: 16px;
-  background: var(--panel, #1c1c1c); border: 1px solid var(--border, #333);
+  background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; }
 .studio-dir-title { font-weight: 600; }
 .studio-dir-note { font-size: 11px; opacity: .7; }
@@ -3640,14 +3886,14 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   overflow-y: auto; }
 .studio-dir-place { text-align: left; background: none; border: none; color: inherit;
   cursor: pointer; padding: 4px 6px; font-size: 12px; border-radius: 4px; }
-.studio-dir-place:hover { background: var(--hover, #2a2a2a); }
+.studio-dir-place:hover { background: var(--hover); }
 .studio-dir-listing { flex: 1; display: flex; flex-direction: column; gap: 1px;
-  overflow-y: auto; border: 1px solid var(--border, #333); border-radius: 4px; padding: 4px; }
+  overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px; }
 .studio-dir-entry { text-align: left; background: none; border: none; color: inherit;
   cursor: pointer; padding: 3px 6px; font-size: 12px; border-radius: 3px; }
 .studio-dir-entry.is-file { opacity: .45; cursor: default; }
 .studio-dir-entry.is-link { opacity: .5; font-style: italic; }
-.studio-dir-entry.is-dir:hover { background: var(--hover, #2a2a2a); }
+.studio-dir-entry.is-dir:hover { background: var(--hover); }
 .studio-dir-footer { display: flex; align-items: center; gap: 8px; }
 .studio-dir-message { flex: 1; font-size: 11px; opacity: .75; }
 

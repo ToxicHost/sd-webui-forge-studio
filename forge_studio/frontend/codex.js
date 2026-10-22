@@ -9,8 +9,8 @@
  * title, category, tags and shortcut. The text lives in locales/en.json:
  *   codex.entry.<id>.content  — main body (clear, accessible to all skill levels)
  *   codex.entry.<id>.deep     — optional collapsible "Under the Hood" (technical detail)
- * The one exception is param_seed_batch, which keeps its text here (the Batch
- * Count removal test reads it). Edit en.json, not this file, to change a body.
+ * Edit en.json, not this file, to change a body. (param_seed_batch was the one
+ * exception while Batch Count was removed; BM1 moved its text to en.json too.)
  *
  * Registers via StudioModules.register("codex", {...})
  *
@@ -65,9 +65,7 @@ function _entryTitle(e) {
 var ENTRIES = [
 
   // Bodies live in locales/en.json (codex.entry.<id>.content and .deep) - that file
-  // is the single source of truth. Entries here are metadata only, EXCEPT
-  // param_seed_batch, whose text stays here on purpose: the Batch Count removal test
-  // (tests/studio_alpha/test_batch_removal.py) reads it and asserts it has no locale key.
+  // is the single source of truth. Entries here are metadata only.
 
   // ── GETTING STARTED ────────────────────────────────────────
 
@@ -126,7 +124,7 @@ var ENTRIES = [
   { id: "param_denoise", title: "Denoise Strength", category: "generation", tags: ["denoise", "strength", "img2img", "change", "canvas"] },
   { id: "param_sampler", title: "Sampler & Scheduler", category: "generation", tags: ["sampler", "scheduler", "karras", "dpm", "euler", "bfs"] },
   { id: "param_dimensions", title: "Canvas Dimensions", category: "generation", tags: ["width", "height", "resolution", "aspect", "size", "portrait", "landscape"] },
-  { id: "param_seed_batch", title: "Seed", category: "generation", tags: ["seed", "random", "variation", "dice", "recycle"], content: "<p><strong>Seed:</strong> -1 = random (dice button). Same seed + same settings = same image. Click the recycle button to lock the seed and make variations by tweaking prompts or other settings.</p><p><em>Extra → Variation Seed</em> lets you blend between two seeds for subtle variations.</p><p>To make several images, submit several jobs — the queue runs them in order and lets you cancel or reorder any one of them.</p>" },
+  { id: "param_seed_batch", title: "Seed & Batch", category: "generation", tags: ["seed", "random", "variation", "dice", "recycle", "batch", "count", "size", "queue", "several"] },
   { id: "loras", title: "LoRAs", category: "generation", tags: ["lora", "style", "character", "finetune", "download", "install", "weight", "civitai", "trigger"] },
   { id: "wildcards", title: "Wildcards", category: "generation", tags: ["wildcard", "random", "dynamic", "lexicon", "template", "variety"] },
   // ── INPAINTING ────────────────────────────────────────

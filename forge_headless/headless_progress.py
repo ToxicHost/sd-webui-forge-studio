@@ -145,6 +145,10 @@ class ProgressSnapshot:
     #: CN1. What the job is waiting on that is not a step, e.g. the file a
     #: preprocessor is downloading on first use. None almost always.
     note: str | None = None
+    #: BM1. Which picture of a Batch-mode job is running, and how many it
+    #: makes. Both 0 for every other job, which is one picture.
+    picture: int = 0
+    pictures: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,6 +163,8 @@ class ProgressSnapshot:
             "terminal": self.terminal,
             "error": self.error,
             "note": self.note,
+            "picture": self.picture,
+            "pictures": self.pictures,
         }
 
 
@@ -186,6 +192,9 @@ class HeadlessProgress:
         self._preview_at = 0.0
         self._started = time.monotonic()
         self._note: str | None = None
+        #: BM1. 0 and 0 unless the port announced a batch (`begin_picture`).
+        self._picture = 0
+        self._pictures = 0
         self._lock = threading.RLock()
 
     # -- reads -------------------------------------------------------------
@@ -233,6 +242,8 @@ class HeadlessProgress:
                 terminal=self._state in TERMINAL_STATES,
                 error=self._error,
                 note=self._note,
+                picture=self._picture,
+                pictures=self._pictures,
             )
 
     def preview_frame(self) -> tuple[int, str | None]:
@@ -327,6 +338,36 @@ class HeadlessProgress:
 
         with self._lock:
             self._hires_expected = True
+
+    def begin_picture(self, picture: int, pictures: int) -> None:
+        """BM1. Picture `picture` of a `pictures`-picture Batch-mode job starts.
+
+        For the first picture this only records the count: the job is still
+        loading or encoding, and the port moves it to SAMPLING as for any job.
+        For every later one it is a NAMED rewind to SAMPLING, from wherever the
+        previous picture stopped -- publishing, usually. Not an entry in
+        `ALLOWED_TRANSITIONS`, whose rule is that nothing moves backwards
+        through ONE picture's pipeline; a new picture is a new pipeline, and
+        saying so by name keeps that rule true for every other caller.
+
+        Terminal stays terminal: a cancelled or failed job does not start
+        another picture.
+        """
+
+        with self._lock:
+            if self._state in TERMINAL_STATES:
+                raise ProgressError(
+                    f"job {self._job_id} is {self._state.value} and cannot start "
+                    f"picture {picture}"
+                )
+            self._picture = int(picture)
+            self._pictures = int(pictures)
+            if self._state in (JobState.QUEUED, JobState.LOADING,
+                               JobState.CONDITIONING):
+                return
+            self._state = JobState.SAMPLING
+            self._step = 0
+            self._total = None
 
     def set_note(self, downloading: str | None) -> None:
         """CN1. Name the file being downloaded on first use, or clear it."""

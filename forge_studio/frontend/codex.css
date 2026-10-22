@@ -50,7 +50,7 @@
 /* Show Me button(s) */
 .cx-showme { margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
 .cx-showme-btn {
-  background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm);
+  background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius-sm);
   padding: 5px 14px; font-size: 10px; font-weight: 600; font-family: var(--font);
   cursor: pointer; transition: all 0.12s; text-transform: uppercase; letter-spacing: 0.4px;
 }

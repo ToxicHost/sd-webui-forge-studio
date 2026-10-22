@@ -47,7 +47,7 @@
   position: absolute; top: 4px; left: 4px;
   font-family: var(--mono); font-size: 9px;
   padding: 1px 5px; border-radius: 3px;
-  background: rgba(0, 0, 0, 0.55); color: var(--text-1);
+  background: rgba(0, 0, 0, 0.55); color: #f0f0f0;
   pointer-events: none; max-width: calc(100% - 8px);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

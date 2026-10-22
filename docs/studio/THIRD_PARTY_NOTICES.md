@@ -56,6 +56,8 @@ than guessed.
 |---|---|
 | **ag-psd** (Agamnentzar), `forge_studio/frontend/ag-psd.js` | MIT upstream **(to confirm: the bundle carries no ag-psd notice)**. The bundle includes **jpeg-js** (Copyright 2011 notmasteryet, Apache-2.0), **buffer** (feross, MIT), **base64-js** (MIT), **ieee754** (BSD-3-Clause), **pako** (Vitaly Puzrin, Andrei Tuputcyn; MIT and zlib, from zlib by Jean-loup Gailly and Mark Adler) and **Node.js** helpers (Joyent, MIT). |
 | **Playfair Display** fonts, `forge_studio/frontend/fonts/` | SIL Open Font License 1.1 — Copyright 2017 The Playfair Display Project Authors; Reserved Font Name "Playfair Display" (`fonts/OFL.txt`) |
+| **DM Sans** fonts (the interface), `forge_studio/frontend/fonts/DMSans-*.ttf` | SIL Open Font License 1.1 — Copyright 2014 The DM Sans Project Authors (`fonts/OFL-DMSans.txt`) |
+| **JetBrains Mono** fonts (numbers), `forge_studio/frontend/fonts/JetBrainsMono-*.ttf` | SIL Open Font License 1.1 — Copyright 2020 The JetBrains Mono Project Authors (`fonts/OFL-JetBrainsMono.txt`) |
 | Tag autocomplete lists, `forge_studio/frontend/data/*.csv` (danbooru, e621, derpibooru, an English dictionary, quality tags) | publicly available tag lists from those communities; no licence terms attach to them |
 | Studio's own branding, `forge_studio/frontend/brand/` | the Forge Studio authors |
 

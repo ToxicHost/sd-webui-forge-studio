@@ -133,12 +133,12 @@
   }
 
   // --- void color from CSS variable -------------------------------------
-  // Read the same --bg-void the Canvas 2D mode uses so themes apply.
+  // Read the same --canvas-void the Canvas 2D mode uses so themes apply.
 
   function _refreshVoidColor() {
     try {
       var hex = getComputedStyle(document.documentElement)
-        .getPropertyValue("--bg-void").trim();
+        .getPropertyValue("--canvas-void").trim();
       if (!hex) return;
       var rgb = _hexToRgb01(hex);
       if (rgb) _voidColor = [rgb[0], rgb[1], rgb[2], 1.0];

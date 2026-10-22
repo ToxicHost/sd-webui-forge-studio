@@ -307,7 +307,7 @@
 
 .lex-save-btn {
     padding: 4px 12px; font-size: 11px; font-family: var(--font);
-    background: var(--accent); color: #fff; border: none;
+    background: var(--accent); color: var(--on-accent); border: none;
     border-radius: var(--radius-sm); cursor: pointer; font-weight: 600;
     opacity: 0.4; pointer-events: none; transition: opacity 0.2s;
 }
@@ -425,7 +425,7 @@
 
 .lex-preview-roll {
     padding: 3px 10px; font-size: 11px; font-family: var(--font);
-    background: var(--accent); color: #fff; border: none;
+    background: var(--accent); color: var(--on-accent); border: none;
     border-radius: var(--radius-sm); cursor: pointer; font-weight: 600;
     transition: background 0.15s;
 }

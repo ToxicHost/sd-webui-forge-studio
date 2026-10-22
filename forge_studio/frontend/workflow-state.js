@@ -88,6 +88,10 @@ var FIELD_MAP = {
 
   // Seed / batch -----------------------------------------------------------
   seed:                    { id: "paramSeed",            type: "int" },
+  // BM1. Batch mode's two controls, as the Extension's profiles carried them.
+  // They travel in every mode; only Batch mode reads them at Generate.
+  batch_count:             { id: "paramBatch",           type: "int" },
+  batch_size:              { id: "paramBatchSize",       type: "int" },
   variation_seed:          { id: "paramVarSeed",         type: "int" },
   variation_strength:      { id: "paramVarStrength",     type: "number" },
   variation_strength_val:  { id: "paramVarStrengthVal",  type: "number" },

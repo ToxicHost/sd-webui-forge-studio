@@ -170,6 +170,10 @@ class JobLog:
                 ("size", _size(resolved)),
                 ("seed", resolved.get("seed")),
                 ("preview", _flag(resolved.get("preview_enabled"))),
+                # BM1. Only a Batch-mode job names these, so a one-picture
+                # line is unchanged and a batch is visible in the console.
+                ("pictures", resolved.get("pictures")),
+                ("batch_size", resolved.get("batch_size")),
             ))
         ))
 

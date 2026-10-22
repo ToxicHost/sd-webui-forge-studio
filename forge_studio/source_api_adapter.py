@@ -250,6 +250,10 @@ class _ProgressSnapshot:
     #: its own id. Defaulted to empty so the legacy path -- where the two are
     #: the same string -- constructs unchanged.
     backend_job_id: str = ""
+    #: BM1. Which picture of a Batch-mode job is running (1-based) and how
+    #: many it makes; 0 and 0 for every other job.
+    picture: int = 0
+    pictures: int = 0
 
 
 class SourceFrontendAdapter:
@@ -1394,8 +1398,10 @@ class SourceFrontendAdapter:
             "state": {
                 "sampling_step": snapshot.step,
                 "sampling_steps": snapshot.total_steps,
-                "job_no": 0,
-                "job_count": 1 if snapshot.job_id else 0,
+                # BM1. Forge's own words for "picture N of M": `job_no` is
+                # 0-based, as `shared.state.job_no` is.
+                "job_no": max(0, snapshot.picture - 1),
+                "job_count": (snapshot.pictures or 1) if snapshot.job_id else 0,
             },
             "current_image": None,
             "textinfo": snapshot.message,
@@ -1423,8 +1429,10 @@ class SourceFrontendAdapter:
             "progress": snapshot.fraction,
             "step": snapshot.step,
             "total_steps": snapshot.total_steps,
-            "job": 0,
-            "job_count": 1 if snapshot.job_id else 0,
+            # BM1. The batch picture, 0-based, and how many; 0 of 1 for any
+            # other job, as before.
+            "job": max(0, snapshot.picture - 1),
+            "job_count": (snapshot.pictures or 1) if snapshot.job_id else 0,
             "preview": frame,
             "preview_id": frame_id,
             "textinfo": snapshot.message,
@@ -1943,6 +1951,8 @@ class SourceFrontendAdapter:
             total_steps=total_steps,
             message=str(event.get("message", _state_of(event).title())),
             backend_job_id=str(event.get("backend_job_id") or ""),
+            picture=_optional_int(event.get("picture")) or 0,
+            pictures=_optional_int(event.get("pictures")) or 0,
         )
         with self._state_lock:
             self._last_progress = snapshot

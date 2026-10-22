@@ -86,9 +86,14 @@ class GenerationOutcome:
     #: `result_relative_location` is then "" and nothing was written anywhere.
     #: Never in `to_dict` -- it is pixels, and the dict is for logs.
     image_data_url: str = ""
+    #: BM1. A Batch-mode job's pictures AFTER the first, in order, each its
+    #: own outcome: its own file, seed, size and parameters. The fields above
+    #: describe picture 1, so everything that reads one result still reads
+    #: one. Empty for every job of one picture.
+    pictures: tuple["GenerationOutcome", ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        described = {
             "job_id": self.job_id,
             "request_id": self.request_id,
             "result_relative_location": self.result_relative_location,
@@ -103,6 +108,9 @@ class GenerationOutcome:
             ],
             "infotext": self.infotext,
         }
+        if self.pictures:
+            described["pictures"] = [picture.to_dict() for picture in self.pictures]
+        return described
 
 
 class GenerationPort(Protocol):

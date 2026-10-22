@@ -54,6 +54,10 @@ def gradio_in_process() -> bool:
 #: `Evidence/source-review/AR6.2-seed-substitution.md`.
 _UNBOUNDED_SEED = sys.maxsize
 
+#: BM1. How many result handles the registry keeps: the session strip's
+#: largest setting (200) plus one full batch (16 x 8 = 128), rounded up.
+RESULT_HANDLES = 400
+
 
 class StudioApplication:
     def __init__(
@@ -67,10 +71,17 @@ class StudioApplication:
         selection_resolver: object | None = None,
     ) -> None:
         self._backend = backend
+        # BM1. Room for the session strip at its largest (200 entries) and a
+        # whole Batch-mode job on top (16 x 8). The registry holds paths, not
+        # pixels; at the old 64 one large batch evicted its own first pictures
+        # before the page could show them.
         self._results = (
-            ResultRegistry(result_root) if result_root is not None else None
+            ResultRegistry(result_root, max_entries=RESULT_HANDLES)
+            if result_root is not None else None
         )
         self._assets: dict[str, ResultAsset] = {}
+        #: BM1. A Batch-mode job's handles for pictures 2..N, in order.
+        self._picture_assets: dict[str, list[ResultAsset | None]] = {}
         self._assets_lock = Lock()
         # Optional headless integration, injected. Studio holds it as an opaque
         # object and reads only its declared reporting surface -- never Forge
@@ -388,6 +399,41 @@ class StudioApplication:
             self._results.forget(asset.handle)
         return winner
 
+    def result_picture_assets(self, job_id: str) -> list[ResultAsset | None]:
+        """BM1. Handles for a Batch-mode job's pictures after the first, in
+        the order `GeneratedResult.pictures` holds them.
+
+        Registered once per job, like `result_asset`. A picture whose file
+        cannot be registered is None in its place rather than failing the
+        others. Empty for a job of one picture, and with no registry.
+        """
+
+        if self._results is None:
+            return []
+        with self._assets_lock:
+            existing = self._picture_assets.get(job_id)
+        if existing is not None:
+            return list(existing)
+        try:
+            result = self._backend.get_result(job_id)
+        except StudioError:
+            return []
+        assets: list[ResultAsset | None] = []
+        for picture in tuple(getattr(result, "pictures", ()) or ()):
+            try:
+                assets.append(self._results.register(
+                    Path(picture.output_path), media_type=picture.mime_type)
+                    if picture.output_path else None)
+            except StudioError:
+                assets.append(None)
+        with self._assets_lock:
+            winner = self._picture_assets.setdefault(job_id, assets)
+        if winner is not assets:
+            for asset in assets:
+                if asset is not None:
+                    self._results.forget(asset.handle)
+        return list(winner)
+
     def allow_result_roots(self, roots: Any) -> None:
         """OF1. Let the registry serve files in the owner's trusted save
         folders, as well as in the result root. `roots` is called on every
@@ -434,14 +480,18 @@ class StudioApplication:
                 self._results.clear()
             with self._assets_lock:
                 self._assets.clear()
+                self._picture_assets.clear()
 
     def _release_result(self, job_id: str) -> None:
         """Drop any delivery handle held for one job."""
 
         with self._assets_lock:
             asset = self._assets.pop(job_id, None)
-        if asset is not None and self._results is not None:
-            self._results.forget(asset.handle)
+            pictures = self._picture_assets.pop(job_id, None) or []
+        if self._results is not None:
+            for held in (asset, *pictures):
+                if held is not None:
+                    self._results.forget(held.handle)
 
     def _validate_request(self, request: GenerationRequest) -> None:
         model_ids = {model.model_id for model in self.list_models()}

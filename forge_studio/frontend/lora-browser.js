@@ -275,7 +275,7 @@
   font-family: var(--mono); font-size: 10px; font-weight: 600;
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.55);
-  color: var(--text-2);
+  color: #d8d8d8;
   pointer-events: auto;
   user-select: none;
   z-index: 2;

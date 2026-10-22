@@ -455,6 +455,35 @@ class GenerationRequest(Contract):
     regions: tuple["RegionSettings", ...] = ()
     #: RG1. One of `REGION_METHODS`. Read only when `regions` is not empty.
     region_method: str = "auto"
+    #: BM1. Batch mode's Batch Count and Batch Size, or None for one picture.
+    #: Absent means absent: a Queue-mode job carries no group and is
+    #: byte-identical to one made before Batch mode existed.
+    batch: "BatchSettings | None" = None
+
+
+@dataclass(frozen=True)
+class BatchSettings(Contract):
+    """BM1. One job making Batch Count x Batch Size pictures.
+
+    The owner's two numbers, as the Extension's `GenerateRequest` had them
+    (`studio_api.py:1054-1055`) and multiplied as its `run_generation` does
+    (`total_images`, `studio_generation.py:2756`): every picture is made one
+    after another. `size` is not a parallel batch -- the Extension shipped it
+    the same way, its one-tensor path never switched on.
+
+    `expansions` is filled by the SERVER at admission, never by the page: one
+    `PromptExpansion` per picture, in order, each drawn with seed + i as the
+    Extension's loop draws them. Empty when wildcards are off or absent, and
+    then every picture uses the job's prompts.
+    """
+
+    count: int = 1
+    size: int = 1
+    expansions: tuple["PromptExpansion", ...] = ()
+
+    @property
+    def pictures(self) -> int:
+        return max(1, int(self.count)) * max(1, int(self.size))
 
 
 @dataclass(frozen=True)
@@ -970,6 +999,10 @@ class ProgressEvent(Contract):
     error: StructuredError | None = None
     step: int | None = None
     total_steps: int | None = None
+    #: BM1. Which picture of a Batch-mode job is running, of how many. None
+    #: for every other job.
+    picture: int | None = None
+    pictures: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1101,6 +1134,11 @@ class GeneratedResult(Contract):
     metadata: dict[str, Any]
     output_path: str | None = None
     metadata_path: str | None = None
+    #: BM1. A Batch-mode job's pictures after the first, each its own result
+    #: with its own output and metadata. The fields above are picture 1's, so
+    #: a reader of one result still reads one. Empty for every other job, and
+    #: then absent from `to_dict`.
+    pictures: tuple["GeneratedResult", ...] = ()
 
     def __init__(
         self,
@@ -1111,6 +1149,7 @@ class GeneratedResult(Contract):
         metadata: dict[str, Any] | object = _REQUIRED_METADATA,
         output_path: str | None = None,
         metadata_path: str | None = None,
+        pictures: tuple["GeneratedResult", ...] = (),
     ) -> None:
         if metadata is _REQUIRED_METADATA:
             raise TypeError("metadata is required")
@@ -1125,9 +1164,14 @@ class GeneratedResult(Contract):
         object.__setattr__(self, "metadata", metadata)
         object.__setattr__(self, "output_path", output_path)
         object.__setattr__(self, "metadata_path", metadata_path)
+        object.__setattr__(self, "pictures", tuple(pictures))
 
     def to_dict(self) -> dict[str, Any]:
         payload = super().to_dict()
         if self.image_data_url is None:
             del payload["image_data_url"]
+        if self.pictures:
+            payload["pictures"] = [picture.to_dict() for picture in self.pictures]
+        else:
+            del payload["pictures"]
         return payload

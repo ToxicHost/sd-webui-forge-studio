@@ -780,7 +780,7 @@
     flex: 1;
     height: 38px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border: none;
     border-radius: var(--radius);
     font-family: var(--font);
@@ -1458,7 +1458,7 @@
 }
 
 .ws-journal-filter-btn:hover { color: var(--text-1); border-color: var(--border); }
-.ws-jf-active { color: var(--accent); border-color: var(--accent); background: rgba(99, 102, 241, 0.08); }
+.ws-jf-active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
 
 .ws-journal-list {
     width: 100%;
@@ -1604,10 +1604,10 @@
     display: inline-block;
 }
 
-.ws-jt-merge { background: var(--accent); color: #fff; }
-.ws-jt-chain { background: var(--accent); color: #fff; }
-.ws-jt-lora_bake { background: var(--green); color: #fff; }
-.ws-jt-vae_bake { background: var(--amber); color: #000; }
+.ws-jt-merge { background: var(--accent); color: var(--on-accent); }
+.ws-jt-chain { background: var(--accent); color: var(--on-accent); }
+.ws-jt-lora_bake { background: var(--green); color: var(--bg-void); }
+.ws-jt-vae_bake { background: var(--amber); color: var(--bg-void); }
 .ws-jt-unknown { background: var(--bg-raised); color: var(--text-3); }
 
 .ws-journal-star {
@@ -1785,7 +1785,7 @@
 
 .ws-je-image-drop.ws-je-drag-over {
     border-color: var(--accent);
-    background: rgba(99, 102, 241, 0.06);
+    background: var(--accent-dim);
 }
 
 .ws-je-image-browse {
@@ -1843,9 +1843,9 @@
     flex: 1 1 auto;
     padding: 5px 10px;
     background: var(--bg-raised);
-    border: 1px solid var(--accent-dim, var(--border-subtle));
+    border: 1px solid var(--accent-dim);
     border-radius: var(--radius-sm);
-    color: var(--accent, var(--text-2));
+    color: var(--accent);
     font-family: var(--font);
     font-size: 10px;
     cursor: pointer;
@@ -1854,7 +1854,7 @@
     font-weight: 500;
 }
 .ws-je-import-btn:hover {
-    color: #fff;
+    color: var(--on-accent);
     background: var(--accent);
     border-color: var(--accent);
 }
@@ -1986,7 +1986,7 @@
     border-color: var(--accent);
 }
 
-.ws-jt-note { background: var(--text-4); color: #fff; }
+.ws-jt-note { background: var(--text-4); color: var(--bg-void); }
 
 .ws-je-name-input {
     width: 100%;
@@ -2135,7 +2135,7 @@
     transition: border-color 0.12s, box-shadow 0.12s;
 }
 
-.ws-row:hover { border-color: var(--border-hover, var(--border)); }
+.ws-row:hover { border-color: var(--border-hover); }
 
 .ws-row-active {
     border-color: var(--accent);
@@ -2220,7 +2220,7 @@
     text-align: right;
     padding: 0 4px !important;
     -moz-appearance: textfield;
-    background: var(--bg-input, var(--bg-raised));
+    background: var(--bg-input);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-1);
@@ -2315,7 +2315,7 @@
     text-align: right;
     padding: 0 4px !important;
     -moz-appearance: textfield;
-    background: var(--bg-input, var(--bg-raised));
+    background: var(--bg-input);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-1);
@@ -2381,7 +2381,7 @@
     font-size: 10px !important;
     text-align: left !important;
     padding: 0 6px !important;
-    background: var(--bg-input, var(--bg-raised));
+    background: var(--bg-input);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-1);

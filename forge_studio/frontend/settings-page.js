@@ -56,6 +56,7 @@
     toggleMousePress: { category: "canvas-tools", section: "canvas" },
     toggleSaveOutputs: { category: "generation-preview", section: "generation" },
     toggleArchShowAll: { category: "generation-preview", section: "generation" },
+    settingGenerationMode: { category: "generation-preview", section: "generation" },
     toggleLivePreview: { category: "generation-preview", section: "live-preview" },
     settingLivePreviewQuality: { category: "generation-preview", section: "live-preview" },
     toggleTagAutocomplete: { category: "prompts-metadata", section: "prompt-autocomplete" },

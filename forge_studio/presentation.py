@@ -114,7 +114,11 @@ _SOURCE_LOADER_CSP_HASH = (
     # SR3-4 moves it: the loader's comment on the V2 modules said they were
     # inert and the default Legacy, and V2 is now the default engine. Same
     # method; it reproduced the previous constant from the previous file.
-    "'sha256-I8LM5PPZCry/y2DAeN0CoRFV86WvxNu+h2bpJhAvXcI='"
+    #
+    # UI1 adds studio-themes.js (after prefs.js) and studio-themes-ui.js to
+    # the loader. Same method, which reproduced I8LM5PPZ... from c86b86d2's
+    # file first.
+    "'sha256-RkZGg4C7Un2Xi8DBu6tr9inxp26s5eF1shmyrQqPRf0='"
 )
 _UPDATE_HANDLER_CSP_HASH = (
     "'sha256-q6WhThBFsQIP9RODqeJp+tqgTSG3Y20BYxMivfQlkX0='"
@@ -166,6 +170,27 @@ def _state_of(value: Any) -> str:
         candidate = plain
     state = str(candidate or "unknown").strip().lower()
     return _STATE_ALIASES.get(state, state)
+
+
+def _delivers_pictures(status: Any) -> bool:
+    """Whether a job status hands the page pictures: a completed job's result,
+    or (BM1) the finished pictures a cancelled BATCH carries
+    (`_cancelled_batch_result`). A cancelled status counts only when its
+    result says it is a batch -- its metadata names the pictures asked for --
+    so a cancelled job of one picture never does, whatever it carries."""
+
+    if not isinstance(status, Mapping) or not isinstance(status.get("result"), Mapping):
+        return False
+    state = _state_of(status)
+    if state == "completed":
+        return True
+    if state != "cancelled":
+        return False
+    metadata = status["result"].get("metadata")
+    try:
+        return isinstance(metadata, Mapping) and int(metadata.get("pictures") or 0) > 1
+    except (TypeError, ValueError):
+        return False
 
 
 def _job_id_of(value: Any) -> str:
@@ -311,7 +336,19 @@ _GENERATION_FIELDS = (
     # RG1. Painted regions, each a group (`_REGION_FIELDS`), and the method.
     "regions",
     "region_method",
+    # BM1. Batch mode's count and size, as ONE group (`_BATCH_FIELDS`). The
+    # page sends it only in Batch mode; Queue mode never names it.
+    "batch",
 )
+
+#: BM1. Every field a batch group may carry, and the bounds the Extension's
+#: controls had (`frontend/index.html:620-621`: Batch 1..16, Batch Size 1..8).
+#: The page cannot send more, and the server refuses what the page cannot
+#: send: each picture is rolled and drawn at admission, so the bound is also
+#: what keeps one request from asking the server for a million of each.
+_BATCH_FIELDS = ("count", "size")
+BATCH_COUNT_MAX = 16
+BATCH_SIZE_MAX = 8
 
 #: RG1. Every field a region may carry (`RegionSettings`).
 _REGION_FIELDS = ("name", "prompt", "negative_prompt", "weight",
@@ -594,12 +631,50 @@ def _validated_request_payload(payload: Any) -> dict[str, Any]:
     # and BEFORE the request leaves admission, because the concrete answer has
     # to be what gets queued.
     request["document"] = _validated_document(payload.get("document"))
+    # BM1. Only a real batch adds a key, so a Queue-mode request is the same
+    # dict it always was.
+    batch = _validated_batch(payload.get("batch"))
+    if batch is not None:
+        request["batch"] = batch
     request.update(_resolved_aspect(
         payload,
         operation=str(request.get("operation") or "txt2img"),
         width=int(request["width"]), height=int(request["height"]),
-        image_count=_submission_image_count(payload)))
+        image_count=_submission_image_count(request)))
     return request
+
+
+def _validated_batch(raw: Any) -> Any:
+    """BM1. Batch mode's group, or None.
+
+    None when absent, AND when it asks for one picture: a batch of one is a
+    Queue-mode job, and carrying a group that changes nothing would make two
+    spellings of the same request. Unknown keys and out-of-range numbers are
+    refused by name, as at every other level.
+    """
+
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise PresentationError("batch must be a JSON object.")
+    unexpected = sorted(str(key) for key in raw if key not in _BATCH_FIELDS)
+    if unexpected:
+        raise PresentationError(
+            f"Unsupported generation field: batch.{unexpected[0]}.")
+    values = {}
+    for name, ceiling in (("count", BATCH_COUNT_MAX), ("size", BATCH_SIZE_MAX)):
+        value = raw.get(name, 1)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise PresentationError(f"batch.{name} must be a whole number.")
+        if not 1 <= value <= ceiling:
+            raise PresentationError(
+                f"batch.{name} must be between 1 and {ceiling}.")
+        values[name] = value
+    if values["count"] * values["size"] == 1:
+        return None
+    from .contracts import BatchSettings
+
+    return BatchSettings(count=values["count"], size=values["size"])
 
 
 #: Every field an aspect group may carry.
@@ -607,26 +682,28 @@ _ASPECT_FIELDS = ("randomize_base", "randomize_ratio", "randomize_orientation",
                   "base_pool", "ratio_pool")
 
 
-def _submission_image_count(payload: Mapping[str, Any]) -> int:
-    """How many images this submission covers. One.
+def _submission_image_count(request: Mapping[str, Any]) -> int:
+    """How many images this submission covers: Batch Count x Batch Size in
+    Batch mode, one otherwise.
 
-    A single named function rather than a literal `1` scattered through the
+    A single named function rather than a literal scattered through the
     aspect path, because the per-image rolling above is written against a
-    count and reads better for having one.
+    count -- which is why Batch mode needed nothing new there.
 
-    It used to say "one, until WP5", and to describe a Batch control the page
-    had but nothing read. Both halves are now out of date: the owner removed
-    Batch Count and Batch Size on 2026-08-20, so there is no control to read
-    and no batch admission coming. `batch_count` is what the queue already
-    does -- with per-job cancel and reorder -- and `batch_size` would need a
-    multi-result contract Studio does not have.
+    History, because the docstring has told it wrong twice. It returned one
+    "until WP5"; then, after the owner removed Batch Count and Batch Size on
+    2026-08-20 (AR5.1), one "because Studio produces one". The owner brought
+    the controls back on 2026-10-21 as an optional Batch mode in Settings,
+    and the multi-result contract AR5.1 said was missing now exists
+    (`Evidence/source-review/BM1-batch-mode.md`). Queue mode -- the default
+    -- still sends no batch, and still covers one image.
 
-    So this returns one because Studio produces one, not because a larger
-    number is still being waited for.
-    `Evidence/source-review/AR5.1-batch-removal.md`.
+    Reads the VALIDATED request, so a count the server refused cannot reach
+    the randomizer.
     """
 
-    return 1
+    batch = request.get("batch")
+    return int(batch.pictures) if batch is not None else 1
 
 
 def _resolved_aspect(payload: Mapping[str, Any], *, operation: str,
@@ -1990,6 +2067,19 @@ class StudioPresentation:
         if seed < 0:
             seed = random.SystemRandom().randrange(0, 2 ** 32)
             payload["seed"] = seed
+        # BM1. A batch with a variation walks the variation seed (Neo's rule,
+        # `processing.py:911-914`), so a random one is fixed NOW, like the seed
+        # above: every picture's number is then decided before the job queues
+        # and execution draws none (PROJECT_STATE, WP5). One picture leaves -1
+        # to Neo, as it always has.
+        variation = payload.get("variation")
+        if (payload.get("batch") is not None and variation is not None
+                and float(getattr(variation, "subseed_strength", 0) or 0) != 0
+                and int(getattr(variation, "subseed", -1)) < 0):
+            from dataclasses import replace
+
+            payload["variation"] = replace(
+                variation, subseed=random.SystemRandom().randrange(0, 2 ** 32))
 
         service = self._wildcards
         record = PromptExpansion(
@@ -2018,7 +2108,39 @@ class StudioPresentation:
         # (`_resolve_wildcards`), each from its own seed so two regions naming
         # the same wildcard do not always draw the same line.
         self._resolve_region_prompts(payload, service, seed)
-        return {"prompt_expansion": PromptExpansion(
+        first = self._expansion_record(original, original_negative, positive, negative, seed)
+        resolved = {"prompt_expansion": first}
+        # BM1. Every later picture of a batch draws its own, with seed + i,
+        # as the Extension's loop does (`studio_generation.py:3155-3185`).
+        # Regions keep picture 1's draw. Never raises, like the rest.
+        batch = payload.get("batch")
+        if batch is not None:
+            records = [first]
+            try:
+                for index in range(1, int(batch.pictures)):
+                    drawn = seed + index
+                    records.append(self._expansion_record(
+                        original, original_negative,
+                        service.expand(original, drawn),
+                        service.expand(original_negative,
+                                       (drawn ^ self._NEGATIVE_SEED_OFFSET) & 0xFFFFFFFF),
+                        drawn))
+            except Exception:  # noqa: BLE001 - every picture keeps picture 1's prompt
+                records = []
+            if len(records) == int(batch.pictures):
+                from dataclasses import replace
+
+                resolved["batch"] = replace(batch, expansions=tuple(records))
+        return resolved
+
+    @staticmethod
+    def _expansion_record(original: str, original_negative: str, positive: Any,
+                          negative: Any, seed: int) -> Any:
+        """One draw as the `PromptExpansion` the job records."""
+
+        from .contracts import PromptExpansion
+
+        return PromptExpansion(
             original_prompt=original,
             original_negative_prompt=original_negative,
             resolved_prompt=positive.text,
@@ -2029,7 +2151,7 @@ class StudioPresentation:
             truncated=bool(positive.truncated or negative.truncated),
             warnings=tuple(sorted({*positive.warnings, *negative.warnings})),
             seed=seed,
-        )}
+        )
 
     #: RG1. Spaces regions' draws apart from the main prompt's and each other.
     _REGION_SEED_STRIDE = 0x01000193
@@ -2464,9 +2586,57 @@ class StudioPresentation:
                     if expansion is not None:
                         merged["prompt_expansion"] = expansion
                     return merged
+                if record["state"] == "cancelled":
+                    self._cancelled_batch_result(record, backend_id)
                 record.setdefault("progress", None)
                 return record
         return self.poll(job_id)
+
+    def _cancelled_batch_result(self, record: dict[str, Any], backend_id: Any) -> None:
+        """BM1. A cancelled BATCH keeps the pictures that finished.
+
+        The Extension returns them (`studio_generation.py:3138-3142`: on an
+        interrupt, `if all_images: break`), so this record carries them as
+        `result`, exactly as a completed job's does. `result_pending` says the
+        batch is still finishing the picture the cancel landed in, so the
+        page asks again rather than concluding there is nothing.
+
+        A cancelled job of ONE picture gets neither key, whatever the backend
+        did -- Queue mode delivers nothing for a cancelled job, as before.
+        """
+
+        if not backend_id:
+            return
+        try:
+            progress = _as_mapping(self._application.poll_or_stream_progress(backend_id))
+        except Exception as exc:  # noqa: BLE001 - an unknown id has nothing to give
+            if getattr(exc, "error", None) is None:
+                raise
+            return
+        state = _state_of(progress)
+        if state not in ("completed", "cancelled", "failed"):
+            if int(progress.get("pictures") or 0) > 1:
+                record["result_pending"] = True
+            return
+        try:
+            result = _as_mapping(self._application.get_result(backend_id))
+        except Exception as exc:  # noqa: BLE001 - nothing finished, or a failure
+            if getattr(exc, "error", None) is None:
+                raise
+            return
+        # Only a batch: its metadata names how many pictures it asked for.
+        if int((result.get("metadata") or {}).get("pictures") or 0) < 2:
+            return
+        result.pop("output_path", None)
+        result.pop("metadata_path", None)
+        asset = self.result_asset(backend_id)
+        if asset is None:
+            return
+        result["image_handle"] = asset.handle
+        result["image_media_type"] = asset.media_type
+        result["image_byte_length"] = asset.byte_length
+        self._attach_pictures(backend_id, result)
+        record["result"] = result
 
     def submit(self, payload: Any) -> dict[str, Any]:
         request_payload = _validated_request_payload(payload)
@@ -2516,8 +2686,41 @@ class StudioPresentation:
                 result["image_handle"] = asset.handle
                 result["image_media_type"] = asset.media_type
                 result["image_byte_length"] = asset.byte_length
+            self._attach_pictures(job_id, result)
             response["result"] = result
         return response
+
+    def _attach_pictures(self, job_id: str, result: dict[str, Any]) -> None:
+        """BM1. A Batch-mode result lists EVERY picture as `images`, in order.
+
+        Picture 1 stays where it always was -- `image_handle` and `metadata`
+        at the top -- so a reader of one result reads one. `images` repeats it
+        first and adds the rest, each with its own handle and metadata. The
+        nested results' paths are dropped here, as the top one's are above.
+        Nothing is added for a job of one picture.
+        """
+
+        pictures = result.pop("pictures", None)
+        if not pictures or not result.get("image_handle"):
+            return
+        getter = getattr(self._application, "result_picture_assets", None)
+        assets = list(getter(job_id) or ()) if callable(getter) else []
+        images = [{
+            "image_handle": result["image_handle"],
+            "image_media_type": result.get("image_media_type"),
+            "image_byte_length": result.get("image_byte_length"),
+            "metadata": result.get("metadata") or {},
+        }]
+        for picture, asset in zip(pictures, assets):
+            if asset is None:
+                continue
+            images.append({
+                "image_handle": asset.handle,
+                "image_media_type": asset.media_type,
+                "image_byte_length": asset.byte_length,
+                "metadata": dict(picture.get("metadata") or {}),
+            })
+        result["images"] = images
 
     def preview_frame(self, job_id: str) -> tuple[int, str | None]:
         """The latest live-preview frame for one job, and its id.
@@ -2899,27 +3102,28 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         """
 
         try:
-            if _state_of(status) != "completed":
-                return
-            if not isinstance(status, Mapping):
+            if not _delivers_pictures(status):
                 return
             result = status.get("result")
-            if not isinstance(result, Mapping):
-                return
-            raw_metadata = result.get("metadata")
-            metadata = (
-                dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
-            )
+            # BM1. Every picture of a Batch-mode job, in order -- each its own
+            # file, so each its own row, as the Extension writes one per image
+            # (`studio_api.py:3260-3270`). One for every other job.
+            pictures = [
+                (str(entry.get("image_handle") or ""),
+                 dict(entry["metadata"]) if isinstance(entry.get("metadata"), Mapping) else {})
+                for entry in (result.get("images") or ()) if isinstance(entry, Mapping)
+            ] or [(
+                str(result.get("image_handle") or ""),
+                dict(result["metadata"]) if isinstance(result.get("metadata"), Mapping) else {},
+            )]
             # The engine's own parameter string. A backend that produces none
             # has nothing to record, which is exactly how the Extension gates
             # it -- and is a different case from one that produced an empty
             # picture.
-            infotext = str(metadata.get("infotext", "") or "")
-            if not infotext:
-                return
+            pictures = [(handle, metadata) for handle, metadata in pictures
+                        if handle and str(metadata.get("infotext", "") or "")]
             job_id = str(status.get("job_id") or "")
-            handle = str(result.get("image_handle") or "")
-            if not job_id or not handle:
+            if not job_id or not pictures:
                 return
             gallery = self._gallery
             if gallery is None:
@@ -2937,29 +3141,36 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             if len(seen) >= 4096:
                 seen.clear()
             seen.add(job_id)
-            payload = self._presentation.read_result_asset(handle)
             # Imported here rather than at module scope: `gallery_index` reaches
             # Pillow, and `forge_studio` is the purity-locked package -- a
             # child interpreter asserts what a bare `import forge_studio`
             # drags in (`test_import_boundaries.py:104`).
             from forge_studio.gallery_index import content_hash
 
-            digest = content_hash(getattr(payload, "content", b""))
-            if not digest:
-                # Nothing Pillow can decode has no pixel identity, so a scan
-                # could not index it either. The mock's SVG lands here.
-                return
-            # `metadata` as the settings mapping: where the infotext and the
-            # engine disagree the engine wins, which is what
-            # `gallery_actions._parsed_fields` is built to express -- a seed of
-            # -1 in the prompt box became a real number by the time the picture
-            # existed.
-            gallery.record_generation(digest, infotext, metadata)
-            # HM1. The attention capture the port left for this job, moved
-            # under the delivered pixels' identity and named on the row just
-            # written. Here because this is the one place that hash exists.
-            self._adopt_attention_capture(
-                gallery, str(metadata.get("request_id") or ""), digest)
+            for handle, metadata in pictures:
+                try:
+                    payload = self._presentation.read_result_asset(handle)
+                    digest = content_hash(getattr(payload, "content", b""))
+                    if not digest:
+                        # Nothing Pillow can decode has no pixel identity, so a
+                        # scan could not index it either. The mock's SVG lands
+                        # here.
+                        continue
+                    # `metadata` as the settings mapping: where the infotext
+                    # and the engine disagree the engine wins, which is what
+                    # `gallery_actions._parsed_fields` is built to express -- a
+                    # seed of -1 in the prompt box became a real number by the
+                    # time the picture existed.
+                    gallery.record_generation(
+                        digest, str(metadata.get("infotext", "")), metadata)
+                    # HM1. The attention capture the port left for this
+                    # picture, moved under the delivered pixels' identity and
+                    # named on the row just written. Here because this is the
+                    # one place that hash exists.
+                    self._adopt_attention_capture(
+                        gallery, str(metadata.get("request_id") or ""), digest)
+                except Exception:  # noqa: BLE001 - one picture never costs the rest
+                    continue
         except Exception:  # noqa: BLE001 - see the docstring
             return
 
@@ -3016,9 +3227,7 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         """
 
         try:
-            if _state_of(status) != "completed":
-                return
-            if not isinstance(status, Mapping) or not status.get("result"):
+            if not _delivers_pictures(status):
                 return
             job_id = str(status.get("job_id") or "")
             if not job_id:

@@ -7841,7 +7841,8 @@ function composite(dirtyOnly) {
         if (wetTool === "brush") strokeDrawCanvas = S.stroke.canvas;
     }
 
-    // Background fill — reads --bg-void from CSS so themes apply.
+    // Background fill — reads --canvas-void from CSS so themes apply (a
+    // light theme keeps a dark surround behind the picture).
     // In image-preview mode S.canvas is a transparent UI-only overlay over
     // the <img>, so clear (don't fill) and skip the checker — those visuals
     // are baked into the <img> source by the preview module instead.
@@ -7849,7 +7850,7 @@ function composite(dirtyOnly) {
     if (S.imagePreviewActive) {
         c.clearRect(0, 0, S.canvas.width, S.canvas.height);
     } else {
-        if (!S._voidColor) S._voidColor = getComputedStyle(document.documentElement).getPropertyValue("--bg-void").trim() || "#1e2130";
+        if (!S._voidColor) S._voidColor = getComputedStyle(document.documentElement).getPropertyValue("--canvas-void").trim() || "#1e2130";
         c.fillStyle = S._voidColor;
         c.fillRect(0, 0, S.canvas.width, S.canvas.height);
     }

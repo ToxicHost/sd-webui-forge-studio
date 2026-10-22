@@ -393,6 +393,22 @@ class SourceImage:
 
 
 @dataclass(frozen=True)
+class PicturePrompts:
+    """BM1. One Batch-mode picture's prompts, after its wildcard draw.
+
+    The templates are "" when the draw changed nothing, exactly as the job's
+    own `prompt_template` is (`studio_generation._template_fields`), so a
+    picture's saved parameters gain a `Template:` line only when it means
+    something.
+    """
+
+    positive_prompt: str = ""
+    negative_prompt: str = ""
+    prompt_template: str = ""
+    negative_prompt_template: str = ""
+
+
+@dataclass(frozen=True)
 class FirstImageRequest:
     """One immutable txt2img request. Frozen, so it cannot drift after checks."""
 
@@ -479,7 +495,29 @@ class FirstImageRequest:
     #: owner's setting, snapshotted server-side). Consumed by
     #: `live_generation_port._generate_in_scope`.
     attention_capture_requested: bool = True
+    #: BM1. How many pictures this job makes: Batch count x Batch size in
+    #: Batch mode, 1 otherwise. `batch_size` above stays 1 on the JOB: the
+    #: port sets it per sampling pass, from `pass_size`.
     output_count: int = 1
+    #: BM1. Batch size: how many pictures one sampling pass makes -- Neo's
+    #: `p.batch_size`, one tensor, `processing.py:948-993`. The port runs
+    #: `output_count / pass_size` passes one after another, which is Neo's
+    #: `n_iter` loop (Batch count); it falls back to one picture per pass
+    #: where a batched pass is not safe (`live_generation_port._pass_size`).
+    pass_size: int = 1
+    #: BM1. Each picture's prompts, in order -- the server expanded wildcards
+    #: once per picture with seed + i, as the Extension does
+    #: (`studio_generation.py:3155-3185`). Empty means every picture uses the
+    #: prompts above. When present there is exactly one per picture.
+    picture_prompts: tuple["PicturePrompts", ...] = ()
+    #: BM1. Each picture's `(width, height)`, from the aspect randomizer's
+    #: per-image rolls. Empty means every picture uses `width` x `height`.
+    picture_sizes: tuple[tuple[int, int], ...] = ()
+    #: BM1. Set by the port on the one-picture request it builds for each
+    #: picture: which one this is, of how many. Both 0 on every other request,
+    #: which is a job of one picture.
+    picture: int = 0
+    pictures: int = 0
     #: The Hires second pass, in NEO's spelling. Studio's own vocabulary lives
     #: in `HiresSettings`; the translation happens once, at the boundary, so
     #: neither side has to know the other's names.
@@ -681,14 +719,33 @@ def validate_request(
                 "one image at a time",
             )
         )
-    if request.output_count != 1:
+    # BM1. More than one picture is a Batch-mode job: `output_count` pictures
+    # in passes of `pass_size`. `batch_size` above stays refused on the JOB
+    # because the port, not the caller, sets Neo's per-pass batch.
+    if request.output_count < 1:
         problems.append(
             _problem(
                 "GENERATION_OUTPUT_COUNT_UNSUPPORTED",
-                f"output count {request.output_count} is not supported; "
-                "one image at a time",
+                f"output count {request.output_count} is below 1",
             )
         )
+    elif request.pass_size < 1 or request.output_count % request.pass_size:
+        problems.append(
+            _problem(
+                "GENERATION_OUTPUT_COUNT_UNSUPPORTED",
+                f"batch size {request.pass_size} does not divide "
+                f"{request.output_count} pictures",
+            )
+        )
+    for name, values in (("picture prompts", request.picture_prompts),
+                         ("picture sizes", request.picture_sizes)):
+        if values and len(values) != request.output_count:
+            problems.append(
+                _problem(
+                    "GENERATION_OUTPUT_COUNT_UNSUPPORTED",
+                    f"{len(values)} {name} for {request.output_count} pictures",
+                )
+            )
     # A FLOOR, not a range. Fewer than one step is not a number of steps --
     # that is arithmetic, not a policy about how long an owner may wait.
     if request.steps < 1:
@@ -936,6 +993,7 @@ __all__ = (
     "DERIVATIONS",
     "DIMENSION_ALIGNMENT",
     "FirstImageRequest",
+    "PicturePrompts",
     "InpaintOptions",
     "MAX_REFERENCE_IMAGES",
     "MAX_CONTROLNET_UNITS",

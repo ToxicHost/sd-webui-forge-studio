@@ -615,6 +615,12 @@ class JobCoordinator:
                 # cancelled at all; and `owner_stage` had nothing to project,
                 # so the Jobs panel said "Generating" through a Hires pass.
                 merged["message"] = getattr(progress, "message", "") or ""
+                # BM1. A Batch-mode job says which picture it is on; every
+                # other job's view is unchanged.
+                pictures = getattr(progress, "pictures", None)
+                if pictures:
+                    merged["picture"] = getattr(progress, "picture", None)
+                    merged["pictures"] = pictures
             except BaseException:  # noqa: BLE001 - observation never raises
                 pass
         return merged

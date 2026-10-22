@@ -192,7 +192,7 @@
   text-overflow: ellipsis; white-space: nowrap;
 }
 .wc-item-insert {
-  background: var(--accent); color: #fff; border: none;
+  background: var(--accent); color: var(--on-accent); border: none;
   border-radius: var(--radius-sm);
   font-family: var(--font); font-size: 9px; font-weight: 600;
   padding: 2px 8px; cursor: pointer;
@@ -285,7 +285,7 @@
   color: var(--text-1); border-color: var(--accent);
 }
 .wc-preview-inprompt.on {
-  background: var(--accent); color: #fff; border-color: var(--accent);
+  background: var(--accent); color: var(--on-accent); border-color: var(--accent);
 }
 
 /* Footer */
