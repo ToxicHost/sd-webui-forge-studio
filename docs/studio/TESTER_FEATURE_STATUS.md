@@ -1,24 +1,24 @@
 # Studio Standalone — feature status for testers
 
-Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30; Workshop, saving and in-app updates added 2026-10-05; Develop fixes, inpaint-aware Auto Detail and a GPU choice added 2026-10-10; ControlNet, the memory warning and crash recovery added 2026-10-20. Regional prompting and Live Painting added 2026-10-21. This describes the current Standalone source and the
+Features reviewed 2026-09-13; Git installation verified 2026-09-15; Canvas painting updated 2026-09-30; Workshop, saving and in-app updates added 2026-10-05; Develop fixes, inpaint-aware Auto Detail and a GPU choice added 2026-10-10; ControlNet, the memory warning and crash recovery added 2026-10-20. Regional prompting and Live Painting added 2026-10-21. Core generation rows updated 2026-10-22. This describes the current Standalone source and the
 verification performed for this candidate, not the inherited Neo README.
 
 **Available** means there is an implemented Standalone path. **Contract-tested**
 means existing automated tests passed with fixtures; it does not mean that a
-real GPU or every browser workflow was exercised. Real model generation has
-historical evidence, but was not rerun in this preparation because no private
-generation-model paths were accessed.
+real GPU or every browser workflow was exercised. Rows that say "used on real
+GPUs" were exercised by the owner and testers during the tester alpha, not by
+a separate certification run.
 
 ## Available, with the stated limits
 
 | Area | Current status | Evidence / limits |
 |---|---|---|
-| Studio interface and local server | Available | A fresh Git installation with cached dependencies, source and private-runtime portable extractions passed startup and registry checks. Portable startup also passed with an empty PATH; Windows/NVIDIA is the initial target. |
+| Studio interface and local server | Available | Installed from fresh Git clones by testers through the tester alpha. A fresh Git installation with cached dependencies, source and private-runtime portable extractions passed startup and registry checks. Portable startup also passed with an empty PATH; Windows/NVIDIA is the initial target. |
 | Model folders and selection | Available (one list, 0.9.3) | Add any number of folders in Settings > Model folders (or on the welcome screen); every subfolder is scanned and each file sorted by what it is, with an Unrecognized list to correct. Earlier per-type folders are converted on first start. Then choose checkpoint/components; Generate owns loading. |
-| Basic image generation | Implemented; GPU retest required | Request/lifecycle tests passed. No new model-family, VRAM, quality or performance certification. |
-| Img2Img and Inpaint | Implemented; GPU/browser retest required | Source image, mask and translation contracts tested. These do not prove every Canvas interaction or final pixel result. |
-| Hires | Implemented; GPU retest required | Hires and Img2Img/Hires contracts passed. Requires a suitable upscaler/model and enough memory. |
-| Auto Detail | Implemented; GPU retest required | Detector/slot contracts passed. Five pinned detectors included and ultralytics declared. A detector finding no target can leave the image unchanged. While inpainting, faces the mask is not on are skipped (2026-10-10; confirmed on a real inpaint). |
+| Basic image generation | Available | Used on real GPUs by the owner and testers through the tester alpha. Request/lifecycle tests passed. Memory needs depend on the model; the console warns when memory runs short. |
+| Img2Img and Inpaint | Available | Used on real GPUs by the owner and testers through the tester alpha. Source image, mask and translation contracts tested. |
+| Hires | Available | Used on real GPUs by the owner and testers through the tester alpha. Hires and Img2Img/Hires contracts passed. Requires a suitable upscaler/model and enough memory. |
+| Auto Detail | Available | Used on real GPUs by the owner and testers through the tester alpha. Detector/slot contracts passed. Five pinned detectors included and ultralytics declared. A detector finding no target can leave the image unchanged. While inpainting, faces the mask is not on are skipped (2026-10-10; confirmed on a real inpaint). |
 | Queue and cancellation | Available | Queue/lifecycle contracts passed. Cancellation is bounded by safe execution points, not necessarily immediate. |
 | Batch mode | Available for testing (0.9.4) | Settings > Generation > Generate mode: Queue (default) or Batch. Batch size is Neo's batch (one sampling pass), Batch count the passes; tested through the real server path, and confirmed by the owner on a real GPU. Regions, ControlNet, Klein references, Word Detail, image Hires and outpaint refine make one picture per pass. A large Batch size can run out of video memory (Studio names it). |
 | Canvas brushes, layers and masks | Available for testing | Brush Engine V2 is the default painting engine (2026-09-30): automated brush checks passed and every preset was reviewed with a mouse. Aliased/Pixel Perfect brushes, touch input and mask/region painting use the previous engine. No tablet certification. |
@@ -28,7 +28,7 @@ generation-model paths were accessed.
 | Themes and custom themes | Available for testing (0.9.4) | Seven themes (Liam default, Cream Paper light) with contrast checked by tests; custom themes derived from a few colours, with a readability check, export and import. Checked in the browser on the mock server; Gallery and Workshop in the light theme still need tester eyes. Studio's own colour picker in the editor; New theme always adds a theme (0.9.6). |
 | Refreshed screens | Available for testing (0.9.5) | Workspace, Settings, Gallery, Codex, the tour, Workshop, dialogs, Wildcards and Develop restyled to match the Generate panel; no control removed. Each checked in the browser on the mock server or a harness with made-up data, and by automated tests. Needs tester eyes with real folders, models and pictures, and in the Cream Paper light theme. |
 | Wildcards / Lexicon | Available | Editor and preference tests passed. Configured local folders are required for user content. Refresh lists newly added wildcards, and they expand without a restart (2026-10-15). Preview picks an entry and shows what it resolves to (0.9.5). |
-| LoRAs / embeddings | Implemented; not certified in this pass | Catalogue/bridge source exists. Model-family and combination-specific behavior still needs testing. The LoRA and Checkpoint browsers (previews, activation text, Civitai lookup) were added 2026-10-05 with route tests. Refresh lists newly added LoRAs (2026-10-15). |
+| LoRAs / embeddings | Available | Used on real GPUs by the owner and testers through the tester alpha. The LoRA and Checkpoint browsers (previews, activation text, Civitai lookup) were added 2026-10-05 with route tests. Refresh lists newly added LoRAs (2026-10-15). |
 | Develop | Available for testing | Saved presets work (2026-10-05). Shadows, Blacks, Dehaze, Vignette, Blue Saturation and negative number entry fixed and measured with automated checks (2026-10-10). Sliders render in a background worker (2026-10-21): no pause on the page's thread per drag frame (measured in the browser), saved pictures byte-identical to before; Dehaze and Noise Reduction preview at half size while dragging. A "Develop on" chip in the canvas toolbar shows when Develop is changing the picture (2026-10-21). Float (High Precision) sources are not available. |
 | Workshop | Available for testing (2026-10-05) | Weighted Sum, Add Difference and SLERP merges, block weights, LoRA and VAE baking, multi-step chains, History, and a basic Inspector. The arithmetic was tested against the reference formulas on test models, and a real merge on real checkpoints. LoRA baking is proven on test LoRAs only. Results go to the first checkpoint folder; files are never overwritten. |
 | Saving and export | Available (2026-10-05) | Save, Save to Gallery, Canvas Export (with watermark stamping) and Export EXR (Standard) write files; route tests passed. |
