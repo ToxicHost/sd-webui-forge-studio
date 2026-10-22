@@ -1813,6 +1813,8 @@
   "develop.section.local": "Lokale Anpassungen",
   "dialog.apply": "Anwenden",
   "dialog.cancel": "Abbrechen",
+  "colorPicker.label": "Farbe",
+  "colorPicker.hex": "Hex-Farbe",
   "dialog.ok": "OK",
   "dialog.delete": "Löschen",
   "dialog.replace": "Ersetzen",

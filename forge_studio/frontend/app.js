@@ -1072,6 +1072,181 @@ function studioConfirm(message, opts) {
 }
 window.studioConfirm = studioConfirm;
 
+// CP1. Studio's own colour picker. A plain <input type="color"> opens the
+// operating system's colour dialog, which looks like another program; every
+// colour input on the page opens this one instead (the theme editor's, for
+// one). It writes the value back into the input and fires the same "input"
+// and "change" events, so the code that owns the input does not change.
+// Code without an input in the page (the mask swatch) calls
+// StudioColorPicker.open(anchor, hex, { onInput, onChange }) directly.
+const StudioColorPicker = (() => {
+  let pop = null, els = {}, hsv = { h: 0, s: 0, v: 0 }, target = null, original = "", current = "";
+  const RECENT_KEY = "studio-recent-colors";
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const toHex = (r, g, b) => "#" + [r, g, b].map((x) => Math.round(x).toString(16).padStart(2, "0")).join("");
+  function hexToRgb(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+    if (!m) return null;
+    const n = parseInt(m[1], 16);
+    return { r: n >> 16, g: (n >> 8) & 255, b: n & 255 };
+  }
+  function rgbToHsv({ r, g, b }) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return { h: (h * 60 + 360) % 360, s: max ? d / max : 0, v: max };
+  }
+  function hsvToHex({ h, s, v }) {
+    const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+    return toHex(f(5) * 255, f(3) * 255, f(1) * 255);
+  }
+  function recent() {
+    try { const v = JSON.parse(localStorage.getItem(RECENT_KEY)); return Array.isArray(v) ? v.slice(0, 12) : []; } catch (_) { return []; }
+  }
+  function remember(hex) {
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify([hex, ...recent().filter((c) => c !== hex)].slice(0, 12))); } catch (_) {}
+  }
+
+  function build() {
+    pop = document.createElement("div");
+    pop.className = "cpop";
+    pop.setAttribute("role", "dialog");
+    pop.setAttribute("aria-label", _i18n("colorPicker.label", "Colour"));
+    pop.hidden = true;
+    pop.innerHTML = '<div class="cpop-sv"><span class="cpop-sv-thumb"></span></div>'
+      + '<div class="cpop-hue"><span class="cpop-hue-thumb"></span></div>'
+      + '<div class="cpop-row"><span class="cpop-preview"></span><input class="cpop-hex" type="text" maxlength="7" spellcheck="false"></div>'
+      + '<div class="cpop-recent"></div>';
+    els = {
+      sv: pop.querySelector(".cpop-sv"), svThumb: pop.querySelector(".cpop-sv-thumb"),
+      hue: pop.querySelector(".cpop-hue"), hueThumb: pop.querySelector(".cpop-hue-thumb"),
+      preview: pop.querySelector(".cpop-preview"), hex: pop.querySelector(".cpop-hex"), recent: pop.querySelector(".cpop-recent"),
+    };
+    els.hex.setAttribute("aria-label", _i18n("colorPicker.hex", "Hex colour"));
+    const drag = (el, fn) => {
+      el.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        el.setPointerCapture(e.pointerId);
+        fn(e);
+        const move = (ev) => fn(ev);
+        const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); };
+        el.addEventListener("pointermove", move);
+        el.addEventListener("pointerup", up);
+      });
+    };
+    drag(els.sv, (e) => {
+      const r = els.sv.getBoundingClientRect();
+      hsv.s = clamp((e.clientX - r.left) / r.width, 0, 1);
+      hsv.v = clamp(1 - (e.clientY - r.top) / r.height, 0, 1);
+      set(hsvToHex(hsv), true);
+    });
+    drag(els.hue, (e) => {
+      const r = els.hue.getBoundingClientRect();
+      hsv.h = clamp((e.clientX - r.left) / r.width, 0, 0.9999) * 360;
+      set(hsvToHex(hsv), true);
+    });
+    els.hex.addEventListener("input", () => {
+      let v = els.hex.value.trim();
+      if (!v.startsWith("#")) v = "#" + v;
+      if (hexToRgb(v)) set(v.toLowerCase(), false, true);
+    });
+    els.recent.addEventListener("click", (e) => {
+      const chip = e.target.closest("[data-color]");
+      if (chip) set(chip.dataset.color, false);
+    });
+    pop.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); set(original, false); close(); }
+      if (e.key === "Enter") { e.preventDefault(); close(); }
+    });
+    // A press anywhere else closes the picker and keeps the colour.
+    document.addEventListener("pointerdown", (e) => {
+      if (pop.hidden || pop.contains(e.target) || (target && target.anchor && target.anchor.contains(e.target))) return;
+      close();
+    }, true);
+    document.body.appendChild(pop);
+  }
+
+  function paint() {
+    els.sv.style.setProperty("--cpop-hue", "hsl(" + hsv.h + ", 100%, 50%)");
+    els.svThumb.style.left = hsv.s * 100 + "%";
+    els.svThumb.style.top = (1 - hsv.v) * 100 + "%";
+    els.hueThumb.style.left = (hsv.h / 360) * 100 + "%";
+    els.preview.style.background = current;
+  }
+
+  // fromHsv: the square or the strip moved, so keep their hue even where
+  // the colour itself has none (grey, black). typed: the hex field is the
+  // source, so it is left as the person is typing it.
+  function set(hex, fromHsv, typed) {
+    current = hex;
+    if (!fromHsv) { const rgb = hexToRgb(hex); if (rgb) { const n = rgbToHsv(rgb); hsv = { h: n.s ? n.h : hsv.h, s: n.s, v: n.v }; } }
+    if (!typed) els.hex.value = hex;
+    paint();
+    if (target && target.onInput) target.onInput(hex);
+  }
+
+  function open(anchor, hex, callbacks) {
+    if (!pop) build();
+    if (!pop.hidden) close();
+    target = Object.assign({ anchor }, callbacks || {});
+    original = hexToRgb(hex) ? hex.toLowerCase() : "#000000";
+    current = original;
+    const rgb = hexToRgb(original); hsv = rgbToHsv(rgb);
+    els.hex.value = original;
+    els.recent.replaceChildren(...recent().map((c) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "cpop-chip"; b.dataset.color = c; b.title = c; b.style.background = c;
+      return b;
+    }));
+    els.recent.hidden = !els.recent.childElementCount;
+    paint();
+    pop.hidden = false;
+    const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    let left = r.left, top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    pop.style.left = clamp(left, 8, window.innerWidth - w - 8) + "px";
+    pop.style.top = top + "px";
+    els.hex.focus();
+    els.hex.select();
+  }
+
+  function close() {
+    if (!pop || pop.hidden) return;
+    pop.hidden = true;
+    const t = target; target = null;
+    if (current !== original) {
+      remember(current);
+      if (t && t.onChange) t.onChange(current);
+    }
+    if (t && t.anchor && t.anchor.focus) t.anchor.focus();
+  }
+
+  // Colour inputs in the page open the picker instead of the system dialog.
+  function forInput(input) {
+    open(input, input.value, {
+      onInput(hex) { input.value = hex; input.dispatchEvent(new Event("input", { bubbles: true })); },
+      onChange() { input.dispatchEvent(new Event("change", { bubbles: true })); },
+    });
+  }
+  document.addEventListener("click", (e) => {
+    const input = e.target.closest && e.target.closest('input[type="color"]');
+    if (!input || input.disabled) return;
+    e.preventDefault();
+    forInput(input);
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    const input = e.target.closest && e.target.closest('input[type="color"]');
+    if (!input || input.disabled || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    forInput(input);
+  }, true);
+
+  return { open, close };
+})();
+window.StudioColorPicker = StudioColorPicker;
+
 // OOM1. If the launcher restarted Studio's server after an unexpected stop,
 // say so -- once -- when the page reaches it again. Asked on every WebSocket
 // connect, so a restart (which the socket survives by reconnecting) is seen

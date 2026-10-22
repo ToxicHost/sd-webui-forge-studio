@@ -4011,15 +4011,15 @@ function _maskRow(m, id) {
         swatch.title = _i18n("mask.row.colour", "Mask colour");
         swatch.addEventListener("click", e => {
             e.stopPropagation();
-            const pick = document.createElement("input");
-            pick.type = "color"; pick.value = C.maskColorOf(m);
-            pick.addEventListener("change", () => {
-                if (C.setMaskColor(id, pick.value)) {
-                    renderMaskPanel(); renderHistoryPanel(); _redraw();
-                    if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
-                }
+            // Studio's own picker (CP1), not the system colour dialog.
+            window.StudioColorPicker.open(swatch, C.maskColorOf(m), {
+                onChange(hex) {
+                    if (C.setMaskColor(id, hex)) {
+                        renderMaskPanel(); renderHistoryPanel(); _redraw();
+                        if (window.StudioRecovery) window.StudioRecovery.scheduleCapture();
+                    }
+                },
             });
-            pick.click();
         });
     }
     row.title = _maskTooltip(m, id);

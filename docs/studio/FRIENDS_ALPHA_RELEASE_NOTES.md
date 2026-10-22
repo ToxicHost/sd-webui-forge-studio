@@ -4,6 +4,24 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.6: Colour picker, New theme fix — 2026-10-22
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **New theme no longer overwrites your custom theme.** After editing a
+  custom theme, New theme followed by Save replaced that theme instead of
+  adding one. New theme now always makes a new theme: it starts from the
+  colours in use, named "My theme". Edit still changes the theme itself.
+- **Studio's own colour picker.** The colour boxes in the custom theme
+  editor and the mask colour in the Masks panel used to open the Windows
+  colour dialog. They now open a small picker under the box, with:
+  - a colour square, a hue bar and a hex field;
+  - your 12 most recent colours.
+  The theme preview and readability check update as you drag. Enter or a
+  click elsewhere keeps the colour; Escape puts back the colour you started
+  with.
+
 ## 0.9.5: Refreshed screens — 2026-10-22
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

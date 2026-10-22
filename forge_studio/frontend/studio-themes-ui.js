@@ -98,6 +98,16 @@
         };
     }
 
+    // New theme starts from the colours in use but is always a theme of its
+    // own. Seeding straight from seedFrom() carried a custom theme's id, so
+    // after editing one, New theme then Save overwrote it (tester, 0.9.5).
+    function newSpec() {
+        var spec = Object.assign({}, seedFrom(T.current()));
+        spec.id = "";
+        spec.name = _i18n("settings.theme.custom.defaultName", "My theme");
+        return spec;
+    }
+
     function openEditor(spec) {
         _editing = Object.assign({}, spec);
         var box = $("themeEditor");
@@ -237,7 +247,7 @@
         host.addEventListener("click", function (e) {
             var btn = e.target.closest(".theme-btn");
             if (!btn) return;
-            if (btn.classList.contains("theme-btn-new")) { openEditor(seedFrom(T.current())); return; }
+            if (btn.classList.contains("theme-btn-new")) { openEditor(newSpec()); return; }
             T.apply(btn.dataset.theme);
             markActive();
         });
