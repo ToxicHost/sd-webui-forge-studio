@@ -69,6 +69,7 @@ function forEntry(entryId) {
 function run(tutorialId) {
   var tut = _tutorials[tutorialId];
   if (!tut) { console.warn(TAG, "No tutorial for", tutorialId); return; }
+  _runningLabel = tut.label;
 
   // Switch to Studio tab
   if (window.StudioModules) {
@@ -133,7 +134,10 @@ function _closeTutorialDoc() {
 // Every walkthrough starts here: no persistence, no cancel prompt, and the
 // tutorial tab is taken down when the walkthrough finishes or is ended.
 // `after` runs once at the end, for tutorials that leave the Canvas tab.
+var _runningLabel = "";
+
 function _startTour(cfg, after) {
+  if (!cfg.title) cfg.title = _runningLabel;
   cfg.persist = false;
   cfg.confirmCancel = false;
   var finish = function () {

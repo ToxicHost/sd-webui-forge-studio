@@ -317,7 +317,7 @@ async function deleteSelected() {
   var meta = _list.find(function (m) { return m.id === _select.value; });
   var name = (meta && meta.name) || _select.value;
   var msg = _t("workflows.delete.confirm", "Delete workflow '{name}'?", { name: name });
-  if (!window.confirm(msg)) return;
+  if (!(await window.studioConfirm(msg, { confirm: _t("dialog.delete", "Delete"), danger: true }))) return;
   try {
     await API.deleteWorkflow(_select.value);
     _toast(_t("workflows.toast.deleted", "Workflow deleted"), "success");

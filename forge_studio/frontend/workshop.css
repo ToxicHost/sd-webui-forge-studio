@@ -2552,3 +2552,168 @@
     color: var(--text-4);
     font-style: italic;
 }
+
+
+/* ═══════════════════════════════════════════
+   WORKSHOP REFRESH (WK1) — direction B, board WorkshopRefined
+   A toolbar, the recipe scrolling under a pinned dock, quiet rows,
+   bakes side by side, Inspector sections that fold, a footer.
+   ═══════════════════════════════════════════ */
+
+.ws-layout { flex-direction: column; }
+.ws-main { flex: 1; min-height: 0; display: flex; }
+.ws-center { padding: 0; overflow: hidden; align-items: stretch; }
+.ws-header { display: none; }
+
+.ws-toolbar {
+    height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+    padding: 0 12px; border-bottom: 1px solid var(--border);
+}
+.ws-tabs {
+    width: auto; max-width: none; margin: 0; border: 1px solid var(--border-subtle); border-radius: 6px;
+    background: var(--bg-input); padding: 2px; gap: 2px;
+}
+.ws-tab {
+    flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 12px;
+    border: 1px solid transparent; border-radius: 5px; color: var(--text-3);
+    font-size: 11.5px; font-weight: 500; text-transform: none; letter-spacing: 0;
+}
+.ws-tab:hover { color: var(--text-1); }
+.ws-tab-active { color: var(--text-1); background: var(--bg-raised); border-color: var(--border-hover); }
+.ws-toolbar .ws-refresh-btn {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+    border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-raised); color: var(--text-2);
+    font-size: 11.5px; text-transform: none; letter-spacing: 0;
+}
+
+.ws-tab-content { flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px; box-sizing: border-box; }
+#wsTabRecipe { padding: 0; overflow: hidden; align-items: stretch; }
+#wsTabRecipe .ws-stack {
+    flex: 1; min-height: 0; overflow-y: auto; max-width: none; box-sizing: border-box;
+    padding: 28px max(24px, calc((100% - 780px) / 2)) 28px;
+}
+
+/* Section labels share the Gallery sidebar's voice. */
+.ws-board-title, .ws-chain-tools-label, .ws-recipe-section-label {
+    font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-3);
+}
+.ws-board-header { display: flex; align-items: baseline; justify-content: flex-start; gap: 10px; margin-bottom: 12px; padding: 0; border: none; }
+.ws-board-hint { font-size: 12px; color: var(--text-3); }
+
+/* Rows: quiet, the active one marked by an accent bar. */
+.ws-board { display: flex; flex-direction: column; gap: 8px; }
+.ws-row { position: relative; overflow: visible; border-radius: 8px; }
+.ws-row-active { border-color: var(--border); box-shadow: none; }
+.ws-row-active::before {
+    content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.ws-row-line { gap: 8px; padding: 8px 10px 8px 12px; min-height: 46px; }
+.ws-row-line2 { min-height: 0; padding: 9px 12px 10px 40px; gap: 18px; font-size: 12px; }
+.ws-row-num { width: 20px; background: none; color: var(--text-3); font-family: var(--mono); font-size: 11px; font-weight: 400; }
+.ws-row-active .ws-row-num { color: var(--accent); }
+.ws-row .param-select, .ws-bakes .param-select {
+    height: 30px; border-radius: 6px; font-size: 12px; background-color: var(--bg-input); border: 1px solid var(--border-subtle); color: var(--text-1);
+}
+.ws-row-expand, .ws-row-delete {
+    width: 30px; height: 30px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-3); padding: 0; font-size: 0;
+}
+.ws-row-expand:hover, .ws-row-delete:hover:not(:disabled) { color: var(--text-1); background: var(--bg-raised); }
+.ws-row-expand.ws-row-expanded { color: var(--accent); background: var(--accent-dim); border-color: var(--accent-mid); }
+.ws-row-delete:disabled { opacity: 0.4; cursor: not-allowed; }
+.ws-row .ws-checkbox-label { font-size: 12px; color: var(--text-2); text-transform: none; letter-spacing: 0; }
+
+.ws-row-add-btn {
+    display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; width: auto; height: 28px; margin: 8px 0 0 4px; padding: 0 8px;
+    border: none; border-radius: 6px; background: none; color: var(--text-2); font-size: 12px; text-transform: none; letter-spacing: 0;
+}
+.ws-row-add-btn:hover { background: var(--bg-raised); color: var(--text-1); }
+
+/* Final composition: one stacked bar and a legend. */
+.ws-chain-tools { margin-top: 26px; padding: 0; border: none; background: none; }
+.ws-chain-tools-header { display: flex; align-items: center; gap: 10px; margin: 0; }
+.ws-chain-tools .ws-equalize-btn {
+    margin-left: auto; height: 26px; padding: 0 8px; border: none; background: none; color: var(--text-3);
+    font-size: 12px; text-transform: none; letter-spacing: 0;
+}
+.ws-chain-tools .ws-equalize-btn:hover:not(:disabled) { color: var(--text-1); background: var(--bg-raised); }
+.ws-chain-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; margin: 8px 0 10px; }
+.ws-chain-legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 12px; color: var(--text-2); }
+.ws-chain-legend-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ws-chain-legend-item i { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.ws-chain-legend-name { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-chain-legend-item b { font-weight: 400; font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.ws-chain-contrib-list { margin-top: 6px; }
+.ws-chain-contrib-note, .ws-chain-contrib-empty { font-size: 11.5px; color: var(--text-3); }
+
+/* Bakes side by side. */
+.ws-bakes { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 30px; }
+.ws-bakes .ws-recipe-section { margin: 0; padding: 0; border: none; background: none; }
+.ws-bakes .ws-recipe-section-header { display: flex; align-items: center; min-height: 28px; margin-bottom: 8px; }
+.ws-bakes .ws-bake-add-btn {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px;
+    border: none; background: none; color: var(--text-3); font-size: 12px; text-transform: none; letter-spacing: 0;
+}
+.ws-bakes .ws-bake-add-btn:hover { color: var(--text-1); background: var(--bg-raised); border-radius: 6px; }
+.ws-lora-row { display: flex; align-items: center; gap: 8px; padding: 0; border: none; background: none; margin-bottom: 6px; }
+.ws-lora-row .ws-rl-lora { flex: 1; min-width: 0; }
+.ws-lora-row .ws-rl-strength { width: 90px; flex-shrink: 0; }
+.ws-lora-row .ws-rl-strength-val { width: 48px; flex-shrink: 0; }
+.ws-lora-remove-btn { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; color: var(--text-3); }
+.ws-recipe-section-hint { font-size: 11.5px; color: var(--text-3); margin-top: 7px; }
+
+/* The dock: output settings and Begin merge stay in view. */
+.ws-dock { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--bg-surface); padding: 14px max(24px, calc((100% - 780px) / 2)) 16px; }
+.ws-dock .ws-output-section { display: flex; align-items: center; gap: 16px; margin: 0 0 12px; padding: 0; border: none; background: none; }
+.ws-dock .ws-output-section .ws-param { flex: 1; min-width: 0; margin: 0; }
+.ws-dock .ws-output-section .ws-param label { display: none; }
+.ws-dock .ws-output-input { width: 100%; height: 30px; border-radius: 6px; font-size: 12px; }
+.ws-dock .ws-output-opts { display: flex; align-items: center; gap: 16px; margin: 0; font-size: 12px; color: var(--text-2); }
+.ws-dock .ws-output-dtype-label { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--text-2); }
+.ws-dock .ws-checkbox-label { font-size: 12px; color: var(--text-2); text-transform: none; letter-spacing: 0; }
+.ws-dock .ws-action-row { margin: 0; padding: 0; border: none; }
+.ws-merge-btn {
+    width: 100%; height: 40px; display: flex; align-items: center; justify-content: center; gap: 10px;
+    border-radius: 8px; font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: 0;
+    background: var(--accent); color: var(--on-accent);
+}
+.ws-merge-steps { font-weight: 400; opacity: 0.7; }
+.ws-dock .ws-progress-section { margin-top: 10px; }
+
+/* Inspector: a summary line and sections that fold. */
+.ws-inspector { width: 320px; }
+.ws-inspector-header { font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-3); height: 44px; }
+.ws-inspector-body { padding: 0; }
+.ws-inspector-toggle svg { transition: transform 0.15s ease; }
+.ws-inspector.collapsed .ws-inspector-toggle svg { transform: rotate(180deg); }
+.ws-info-summary { padding: 12px 16px 6px; font-size: 12px; color: var(--text-3); }
+.ws-info-summary b { font-weight: 500; color: var(--text-1); }
+.ws-isec + .ws-isec { border-top: 1px solid var(--border-subtle); }
+.ws-isec-title {
+    display: flex; align-items: center; gap: 6px; width: 100%; padding: 11px 16px; border: none; background: none; cursor: pointer;
+    font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-2); text-align: left;
+}
+.ws-isec-title svg { flex-shrink: 0; transition: transform 0.15s ease; }
+.ws-isec.collapsed .ws-isec-title { color: var(--text-3); }
+.ws-isec.collapsed .ws-isec-title > svg { transform: rotate(-90deg); }
+.ws-isec-name { font-family: var(--font); font-size: 11.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-2); }
+.ws-isec-right { margin-left: auto; font-family: var(--font); font-size: 11.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--text-2); white-space: nowrap; }
+.ws-isec-bad { color: var(--red); }
+.ws-verdict { display: inline-flex; align-items: center; gap: 4px; }
+.ws-isec-body { padding: 0 16px 14px 32px; font-size: 12px; color: var(--text-2); line-height: 1.55; }
+.ws-isec.collapsed .ws-isec-body { display: none; }
+.ws-isec .ws-info-row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 12px; color: var(--text-3); }
+.ws-isec .ws-info-row span:last-child { color: var(--text-1); font-family: var(--mono); font-size: 11px; text-align: right; }
+.ws-isec .ws-compat-item { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--text-2); padding: 3px 0; }
+.ws-isec .ws-compat-item > span { display: inline-flex; padding-top: 2px; }
+.ws-isec .ws-method-help-text { font-size: 12px; color: var(--text-2); }
+.ws-ram-bar { height: 5px; border-radius: 3px; background: var(--bg-void); overflow: hidden; margin: 2px 0 8px; }
+.ws-ram-bar span { display: block; height: 100%; background: var(--accent); }
+.ws-ram-bar-bad span { background: var(--red); }
+.ws-info-warning { display: flex; align-items: center; gap: 6px; margin: 8px 16px; font-size: 12px; color: var(--amber); }
+
+.ws-footer {
+    height: 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
+    border-top: 1px solid var(--border-subtle); font-size: 10.5px; color: var(--text-3);
+}
+#wsFooterCounts { font-family: var(--mono); font-size: 10px; }

@@ -1006,6 +1006,14 @@ function _refreshTokenCountSoon() {
 // browser's bare confirm(). This reuses its styles (gallery.css loads on
 // every page): resolves the clicked key, or null on Escape/backdrop. The
 // crash notice is its one user.
+// A message written "Title?<br><br>detail" reads as a title line over body
+// text; anything else is body text alone.
+function _dialogMessageHtml(html) {
+  const parts = String(html).split(/<br\s*\/?>\s*<br\s*\/?>/);
+  if (parts.length < 2) return '<div class="gal-confirm-text">' + html + "</div>";
+  return '<div class="gal-confirm-title">' + parts[0] + '</div><div class="gal-confirm-text">' + parts.slice(1).join("<br><br>") + "</div>";
+}
+
 function _studioChoose(html, buttons) {
   return new Promise((resolve) => {
     const background = document.createElement("div");
@@ -1014,7 +1022,7 @@ function _studioChoose(html, buttons) {
     box.className = "gal-confirm-box";
     const message = document.createElement("div");
     message.className = "gal-confirm-msg";
-    message.innerHTML = html;
+    message.innerHTML = _dialogMessageHtml(html);
     const actions = document.createElement("div");
     actions.className = "gal-confirm-actions";
     const finish = (key) => {
@@ -1043,6 +1051,26 @@ function _studioChoose(html, buttons) {
     document.body.appendChild(background);
   });
 }
+
+// Studio's own confirm, for every yes/no question the app asks (DL1): the
+// browser's confirm() looks like another program and cannot be themed.
+// `message` is plain text; "Title? detail" shows the question as a title
+// line. Resolves true for the action, false for Cancel, Escape or a click
+// outside. A destructive action is red and Enter does not pick it.
+function studioConfirm(message, opts) {
+  opts = opts || {};
+  const text = String(message);
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const at = text.search(/\?\s+\S/);
+  const html = at > 0
+    ? esc(text.slice(0, at + 1)) + "<br><br>" + esc(text.slice(at + 1).trim()).replace(/\n/g, "<br>")
+    : esc(text).replace(/\n/g, "<br>");
+  return _studioChoose(html, [
+    { label: opts.cancel || _i18n("dialog.cancel", "Cancel"), key: "cancel" },
+    { label: opts.confirm || _i18n("dialog.ok", "OK"), key: "ok", cls: opts.danger ? "danger" : "primary" },
+  ]).then((key) => key === "ok");
+}
+window.studioConfirm = studioConfirm;
 
 // OOM1. If the launcher restarted Studio's server after an unexpected stop,
 // say so -- once -- when the page reaches it again. Asked on every WebSocket
@@ -8676,8 +8704,9 @@ function bindUI() {
     if (s.refused) { showToast(s.refused, "info"); return; }
     const n = Number(s.orphan_files || 0);
     if (!n) { showToast(_i18n("settings.heatmap.nothing", "Nothing to clean up."), "info"); return; }
-    if (!window.confirm(_i18n("settings.heatmap.confirmClean",
-      "Delete {n} heatmap files ({size}) whose pictures are gone?", { n, size: _attnBytes(s.orphan_bytes) }))) return;
+    if (!(await studioConfirm(_i18n("settings.heatmap.confirmClean",
+      "Delete {n} heatmap files ({size}) whose pictures are gone?", { n, size: _attnBytes(s.orphan_bytes) }),
+      { confirm: _i18n("dialog.delete", "Delete"), danger: true }))) return;
     const data = await _attnPost({ action: "clean" });
     if (data.ok) {
       showToast(_i18n("settings.heatmap.cleaned", "Removed {n} files ({size}).",
@@ -8698,8 +8727,8 @@ function bindUI() {
       showToast(_i18n("settings.heatmap.typeFolder", "Choose the folder to move to with Browse, or type its full path."), "info");
       return;
     }
-    if (!window.confirm(_i18n("settings.heatmap.confirmMove", "Move the heatmap data ({size}) to {folder}?",
-      { size: _attnBytes(s?.bytes), folder }))) return;
+    if (!(await studioConfirm(_i18n("settings.heatmap.confirmMove", "Move the heatmap data ({size}) to {folder}?",
+      { size: _attnBytes(s?.bytes), folder }), { confirm: _i18n("dialog.move", "Move") }))) return;
     const data = await _attnPost({ action: "move", folder });
     if (data.ok) {
       showToast(_i18n("settings.heatmap.moved", "Moved {n} files.", { n: data.moved }), "success");
@@ -10589,6 +10618,46 @@ const GenStatusMirror = {
   },
 };
 
+// WS1. The docked options bar (owner, 2026-10-21: direction B). Two jobs:
+// it names the active tool (its icon and its tooltip name, copied from the
+// tool strip, so nothing is spelled twice), and it reports its own height as
+// --options-dock-h on the canvas area, which places the document strip and
+// the canvas viewport below it. The bar wraps to a second row when a tool's
+// options do not fit, so the height is measured, not assumed.
+const OptionsDock = {
+  init() {
+    const dock = document.getElementById("optionsDock");
+    const area = document.getElementById("canvasArea");
+    const strip = document.getElementById("toolstrip");
+    if (!dock || !area) return;
+    const label = dock.querySelector(".dock-tool-name");
+    const icon = dock.querySelector(".dock-tool-icon");
+    const syncTool = () => {
+      const active = strip?.querySelector(".tool-btn.active");
+      if (!active) return;
+      const name = active.dataset.toolTip ? _toolTipName(active.dataset.toolTip) : (active.getAttribute("aria-label") || "");
+      if (label) label.textContent = name;
+      const svg = active.querySelector("svg");
+      if (icon) icon.replaceChildren(...(svg ? [svg.cloneNode(true)] : []));
+    };
+    syncTool();
+    if (strip) new MutationObserver(syncTool).observe(strip, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    window.addEventListener("i18n:change", syncTool);
+    let last = -1;
+    const syncHeight = () => {
+      const h = Math.round(dock.getBoundingClientRect().height);
+      if (h === last || h === 0) return;
+      last = h;
+      area.style.setProperty("--options-dock-h", h + "px");
+      // The viewport changed size: the same path a window resize takes
+      // refits the canvas.
+      window.dispatchEvent(new Event("resize"));
+    };
+    syncHeight();
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(syncHeight).observe(dock);
+  },
+};
+
 
 // ═══════════════════════════════════════════
 // LAYOUT PRESETS (WP-L1) + BLOCK/ZONE REGISTRY (WP-L3)
@@ -10940,8 +11009,9 @@ const LayoutSwitcher = {
       // never a forced save). Named layouts live on the server and stay
       // loadable, so switching away from one is silent.
       if (LayoutManager.isCustomActive() && !LayoutManager.activeName) {
-        if (!window.confirm(_i18n("layout.confirm.replaceUnsaved",
-            "Replace your current custom layout? It isn't saved — Cancel and use Save as… first to keep it."))) {
+        if (!(await studioConfirm(_i18n("layout.confirm.replaceUnsaved",
+            "Replace your current custom layout? It isn't saved — Cancel and use Save as… first to keep it."),
+            { confirm: _i18n("dialog.replace", "Replace"), danger: true }))) {
           return;
         }
       }
@@ -11235,7 +11305,8 @@ const LayoutManager = {
       showToast(_i18n("toast.layout.noneActive", "No named layout is active"), "info");
       return;
     }
-    if (!window.confirm(_i18n("layout.confirm.delete", "Delete this layout file?"))) return;
+    if (!(await studioConfirm(_i18n("layout.confirm.delete", "Delete this layout file?"),
+      { confirm: _i18n("dialog.delete", "Delete"), danger: true }))) return;
     try {
       const r = await fetch(API.base + "/studio/layouts/" + encodeURIComponent(slug), { method: "DELETE" });
       if (!r.ok) {
@@ -11847,6 +11918,7 @@ async function init() {
   // Initialize theme switcher
   ThemeSwitcher.init();
   GenStatusMirror.init();
+  OptionsDock.init();
 
   // Initialize layout preset switcher (WP-L1) — must run after bindUI so
   // the accordion handlers and output-gallery bindings already exist.

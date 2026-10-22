@@ -93,6 +93,21 @@
     if (text !== undefined) node.textContent = text;   // never innerHTML
     return node;
   };
+  // ST1. A stroke icon, built node by node (the rule above holds for markup
+  // too). `shapes` is a list of [tag, attributes].
+  const icon = (size, width, shapes) => {
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    for (const [k, v] of Object.entries({ width: size, height: size, viewBox: "0 0 24 24", fill: "none",
+      stroke: "currentColor", "stroke-width": width, "stroke-linecap": "round", "stroke-linejoin": "round",
+      "aria-hidden": "true" })) svg.setAttribute(k, String(v));
+    for (const [tag, attrs] of shapes) {
+      const shape = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) shape.setAttribute(k, v);
+      svg.appendChild(shape);
+    }
+    return svg;
+  };
 
   async function post(url, body) {
     const response = await fetch(url, {
@@ -185,13 +200,24 @@
     const block = el("div", "studio-library-folder");
     const row = el("div", "studio-root-row");
 
+    // ST1. A folder icon, then the path; a ready folder's counts become chips
+    // ("8 Checkpoints"), every other state keeps its sentence.
+    const folderIcon = el("span", "studio-root-folder-icon");
+    folderIcon.appendChild(icon(16, 2, [["path", { d: "M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" }]]));
+    row.appendChild(folderIcon);
+
     const label = el("span", "studio-root-path", folder.path);
     label.title = folder.path;                // full text on hover, ellipsised in CSS
     row.appendChild(label);
 
-    const status = el("span", "studio-root-status", statusText(detail));
-    status.dataset.state = (detail && detail.status) || "unknown";
-    row.appendChild(status);
+    const chips = countChips(detail);
+    if (chips) {
+      row.appendChild(chips);
+    } else {
+      const status = el("span", "studio-root-status", statusText(detail));
+      status.dataset.state = (detail && detail.status) || "unknown";
+      row.appendChild(status);
+    }
 
     const served = detail && detail.status === "ready" && detail.inside === undefined;
     // Only when there is something in it (owner, 2026-10-21: an
@@ -220,9 +246,11 @@
       row.appendChild(toggle);
     }
 
-    const remove = el("button", "studio-root-btn", "×");
+    const remove = el("button", "studio-root-btn studio-root-remove");
+    remove.appendChild(icon(12, 2.4, [["line", { x1: "6", y1: "6", x2: "18", y2: "18" }], ["line", { x1: "18", y1: "6", x2: "6", y2: "18" }]]));
     remove.type = "button";
     remove.title = t("settings.modelFolders.remove", "Remove this folder");
+    remove.setAttribute("aria-label", remove.title);
     remove.addEventListener("click", () => {
       state.library.splice(index, 1);
       state.status.splice(index, 1);
@@ -241,6 +269,24 @@
       loadUnrecognized(index, panel);
     }
     return block;
+  }
+
+  // ST1. A ready folder's counts as chips, in SUMMARY_ORDER; null when the
+  // folder is in any other state (or holds nothing), which keeps its sentence.
+  function countChips(detail) {
+    if (!detail || detail.status !== "ready" || detail.inside !== undefined) return null;
+    const counts = detail.counts || {};
+    const kinds = SUMMARY_ORDER.filter((kind) => counts[kind]);
+    if (!kinds.length) return null;
+    const box = el("span", "studio-library-chips");
+    kinds.forEach((kind) => {
+      const chip = el("span", "studio-library-chip");
+      chip.appendChild(el("b", "", String(counts[kind])));
+      chip.appendChild(document.createTextNode(t(PLURAL[kind][0], PLURAL[kind][1])));
+      box.appendChild(chip);
+    });
+    box.setAttribute("aria-label", statusText(detail));
+    return box;
   }
 
   function statusText(detail) {

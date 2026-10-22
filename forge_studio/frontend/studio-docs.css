@@ -6,7 +6,7 @@
  */
 
 .doc-strip {
-  position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+  position: absolute; top: var(--options-dock-h, 0px); left: 0; right: 0; z-index: 6;
   display: flex; align-items: center; gap: 1px;
   height: 26px; flex-shrink: 0;
   background: var(--bg-void); border-bottom: 1px solid var(--border);
@@ -16,7 +16,8 @@
 .doc-strip::-webkit-scrollbar { display: none; }
 
 /* Push viewport down when doc strip is present */
-.canvas-area.has-docs #studio-viewport { top: 26px !important; }
+/* WS1: below the docked options bar as well (--options-dock-h, app.js). */
+.canvas-area.has-docs #studio-viewport { top: calc(var(--options-dock-h, 0px) + 26px) !important; }
 
 .doc-tab {
   display: flex; align-items: center; gap: 4px;

@@ -110,7 +110,16 @@ function _getBlockTooltip(name) { return BLOCK_TOOLTIPS[name] || null; }
 // STATE
 // ========================================================================
 
+function _closedSections() {
+    try {
+        const v = JSON.parse(localStorage.getItem("ws_inspector_closed"));
+        if (Array.isArray(v)) return new Set(v);
+    } catch (_) {}
+    return new Set(["primary", "secondary"]);
+}
+
 const WS = {
+    inspectorClosed: _closedSections(),
     models: [], loras: [], vaes: [],
 
     // Merge board: each row is a self-contained merge step.
@@ -284,8 +293,9 @@ async function loadVaes() {
 
 async function refreshAssets() {
     const btn = _els && _els.refreshAssets;
-    const prevLabel = btn ? btn.textContent : null;
-    if (btn) { btn.disabled = true; btn.textContent = _t("workshop.action.scanning", "Scanning…"); }
+    const label = btn ? (btn.querySelector(".ws-btn-label") || btn) : null;
+    const prevLabel = label ? label.textContent : null;
+    if (btn) { btn.disabled = true; label.textContent = _t("workshop.action.scanning", "Scanning…"); }
     try {
         let summary = null;
         try { summary = await fetchJSON(API + "/refresh", { method: "POST" }); }
@@ -303,7 +313,7 @@ async function refreshAssets() {
             }
         }
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = prevLabel || "↻ Refresh"; }
+        if (btn) { btn.disabled = false; label.textContent = prevLabel || _t("workshop.rescan", "Rescan models"); }
     }
 }
 
@@ -648,16 +658,13 @@ function _renderRecipeLoras() {
     let html = '';
     for (let i = 0; i < WS.recipeLoras.length; i++) {
         const l = WS.recipeLoras[i];
+        const strength = _t("workshop.lora.strength", "Strength");
         html += '<div class="ws-lora-row" data-idx="' + i + '">'
-            + '<div class="ws-lora-row-top">'
             + '<select class="param-select ws-model-select ws-rl-lora" data-idx="' + i + '">' + _getLoraOpts() + '</select>'
-            + '<button class="ws-lora-remove-btn ws-rl-remove" data-idx="' + i + '" title="Remove">×</button>'
-            + '</div>'
-            + '<div class="ws-lora-row-bottom">'
-            + '<span class="ws-lora-strength-label">Strength</span>'
-            + '<input type="range" min="-2" max="2" step="0.05" value="' + l.strength + '" class="ws-slider ws-rl-strength" data-idx="' + i + '">'
-            + '<input type="number" min="-2" max="2" step="0.05" value="' + l.strength.toFixed(2) + '" class="param-val ws-alpha-input ws-rl-strength-val" data-idx="' + i + '">'
-            + '</div></div>';
+            + '<input type="range" min="-2" max="2" step="0.05" value="' + l.strength + '" class="ws-slider ws-rl-strength" data-idx="' + i + '" aria-label="' + _esc(strength) + '" title="' + _esc(strength) + '">'
+            + '<input type="number" min="-2" max="2" step="0.05" value="' + l.strength.toFixed(2) + '" class="param-val ws-alpha-input ws-rl-strength-val" data-idx="' + i + '" aria-label="' + _esc(strength) + '">'
+            + '<button class="ws-lora-remove-btn ws-rl-remove" data-idx="' + i + '" title="' + _esc(_t("workshop.lora.remove", "Remove")) + '" aria-label="' + _esc(_t("workshop.lora.remove", "Remove")) + '">' + IC.x + '</button>'
+            + '</div>';
     }
     _els.loraList.innerHTML = html;
     _bindLoraEvents();
@@ -1528,7 +1535,8 @@ function _bindHistoryDetailEvents() {
     const deleteBtn = overlay.querySelector(".ws-je-delete");
     if (deleteBtn) {
         deleteBtn.addEventListener("click", async () => {
-            if (!confirm("Delete this entry?")) return;
+            if (!(await window.studioConfirm(_t("workshop.journal.deleteConfirm", "Delete this entry?"),
+                { confirm: _t("dialog.delete", "Delete"), danger: true }))) return;
             const id = deleteBtn.dataset.id;
             try {
                 await fetchJSON(API + "/journal/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
@@ -1606,58 +1614,61 @@ function _hookWebSocket() {
 // ========================================================================
 
 function _buildUI(container) {
-    container.innerHTML = '<div class="ws-layout"><div class="ws-center">'
-    + '<div class="ws-header"><span class="ws-title" data-i18n="workshop.title">' + _t("workshop.title", "Workshop") + '</span><span class="ws-subtitle">v' + VERSION + '</span></div>'
-    + '<div class="ws-tabs"><button class="ws-tab ws-tab-active" data-tab="recipe" data-i18n="workshop.tab.recipe">' + _t("workshop.tab.recipe", "Recipe") + '</button><button class="ws-tab" data-tab="history" data-i18n="workshop.tab.history">' + _t("workshop.tab.history", "History") + '</button></div>'
+    container.innerHTML = '<div class="ws-layout"><div class="ws-main"><div class="ws-center">'
+    + '<div class="ws-toolbar">'
+    + '<div class="ws-tabs" role="tablist"><button class="ws-tab ws-tab-active" data-tab="recipe" role="tab"><span data-i18n="workshop.tab.recipe">' + _t("workshop.tab.recipe", "Recipe") + '</span></button><button class="ws-tab" data-tab="history" role="tab">' + IC.history + '<span data-i18n="workshop.tab.history">' + _t("workshop.tab.history", "History") + '</span></button></div>'
+    + '<button id="wsRefreshAssets" class="ws-small-btn ws-refresh-btn" data-i18n-title="workshop.refresh.tooltip" title="' + _t("workshop.refresh.tooltip", "Rescan every model, LoRA and VAE directory") + '">' + IC.refresh + '<span class="ws-btn-label" data-i18n="workshop.rescan">' + _t("workshop.rescan", "Rescan models") + '</span></button>'
+    + '</div>'
 
     // ── Recipe tab ──
     + '<div id="wsTabRecipe" class="ws-tab-content">'
     + '<div class="ws-stack">'
 
-    // Board header (refresh button lives here, replaces the old Models card header)
+    // Board header
     + '<div class="ws-board-header">'
     + '<span class="ws-board-title" data-i18n="workshop.mergeBoard">' + _t("workshop.mergeBoard", "Merge Board") + '</span>'
-    + '<button id="wsRefreshAssets" class="ws-small-btn ws-refresh-btn" data-i18n="workshop.refresh" data-i18n-title="workshop.refresh.tooltip" title="' + _t("workshop.refresh.tooltip", "Rescan every model, LoRA and VAE directory") + '">' + _t("workshop.refresh", "↻ Refresh") + '</button>'
+    + '<span class="ws-board-hint" data-i18n="workshop.mergeBoard.hint">' + _t("workshop.mergeBoard.hint", "Each row merges two models; a later row can use an earlier result.") + '</span>'
     + '</div>'
 
-    // The row container
+    // The row container, then Add row right under it
     + '<div id="wsRowList" class="ws-board"></div>'
+    + '<button id="wsRowAdd" class="ws-row-add-btn">' + IC.plus + '<span data-i18n="workshop.addRowLabel">' + _t("workshop.addRowLabel", "Add row") + '</span></button>'
 
-    // Chain tools — equalize alphas + final-composition preview
+    // Final composition — one stacked bar, and Equalize
     + '<div class="ws-chain-tools">'
     + '<div class="ws-chain-tools-header">'
-    + '<span class="ws-chain-tools-label" data-i18n="workshop.chainTools.label">' + _t("workshop.chainTools.label", "Chain Analysis") + '</span>'
+    + '<span class="ws-chain-tools-label" data-i18n="workshop.chainTools.composition">' + _t("workshop.chainTools.composition", "Final composition") + '</span>'
     + '<button id="wsEqualizeChain" class="ws-small-btn ws-equalize-btn" disabled data-i18n="workshop.chainTools.equalize" data-i18n-title="workshop.chainTools.equalize.tooltip" title="' + _t("workshop.chainTools.equalize.tooltip", "Set every row's alpha so each source contributes equally to the final output.") + '">' + _t("workshop.chainTools.equalize", "Equalize Chain") + '</button>'
     + '</div>'
     + '<div id="wsChainContrib" class="ws-chain-contrib"></div>'
     + '</div>'
 
-    // Add Row button
-    + '<button id="wsRowAdd" class="ws-row-add-btn" data-i18n="workshop.addRow">' + _t("workshop.addRow", "+ Add Row") + '</button>'
-
-    // ── LoRAs (global — applied to the final output) ──
+    // Bakes side by side: LoRAs (applied to the final output) and the VAE
+    + '<div class="ws-bakes">'
     + '<div class="ws-recipe-section">'
-    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label" data-i18n="workshop.loras">' + _t("workshop.loras", "LoRAs") + '</span><button id="wsLoraAdd" class="ws-bake-add-btn ws-bake-add-btn-inline" data-i18n="workshop.addLora">' + _t("workshop.addLora", "+ Add LoRA") + '</button></div>'
+    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label" data-i18n="workshop.bakeLoras">' + _t("workshop.bakeLoras", "Bake LoRAs") + '</span><button id="wsLoraAdd" class="ws-bake-add-btn ws-bake-add-btn-inline">' + IC.plus + '<span data-i18n="workshop.addLoraLabel">' + _t("workshop.addLoraLabel", "Add LoRA") + '</span></button></div>'
     + '<div id="wsLoraList" class="ws-lora-list"></div>'
     + '</div>'
-
-    // ── VAE (global — applied once at the end of the chain) ──
     + '<div class="ws-recipe-section">'
-    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label" data-i18n="workshop.vae">' + _t("workshop.vae", "VAE") + '</span></div>'
+    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label" data-i18n="workshop.bakeVae">' + _t("workshop.bakeVae", "Bake VAE") + '</span></div>'
     + '<select id="wsRecipeVae" class="param-select ws-model-select"><option value="" data-i18n="workshop.vae.none">' + _t("workshop.vae.none", "— None —") + '</option></select>'
-    + '<div class="ws-recipe-section-hint" data-i18n="workshop.vae.hint">' + _t("workshop.vae.hint", "Baked into the chain's final output. Override per-row from a row's ⚙ menu if you need a different VAE on an intermediate result.") + '</div>'
+    + '<div class="ws-recipe-section-hint" data-i18n="workshop.vae.hint">' + _t("workshop.vae.hint", "Baked into the final model. For one row only, use that row's options.") + '</div>'
+    + '</div>'
     + '</div>'
 
+    + '</div>'  // close ws-stack: what follows is pinned
+
+    + '<div class="ws-dock">'
     // ── Output ──
     + '<div class="ws-output-section"><div class="ws-param"><label data-i18n="workshop.outputFilename">' + _t("workshop.outputFilename", "Output Filename") + '</label><input type="text" id="wsOutputName" class="param-val ws-output-input" data-i18n-placeholder="workshop.outputFilename.placeholder" placeholder="' + _t("workshop.outputFilename.placeholder", "auto-generated if empty") + '" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label" data-i18n-title="workshop.reducedPrecision.tooltip" title="' + _t("workshop.reducedPrecision.tooltip", "Auto saves Anima/Cosmos as BF16 and other models as FP16. Merge math always runs in FP32.") + '"><input type="checkbox" id="wsFp16" checked><span data-i18n="workshop.reducedPrecision">' + _t("workshop.reducedPrecision", "Reduced precision") + '</span></label><label class="ws-output-dtype-label" data-i18n-title="workshop.outputDtype.tooltip" title="' + _t("workshop.outputDtype.tooltip", "Auto saves Anima/Cosmos as BF16 and other models as FP16. Merge math always runs in FP32.") + '"><span data-i18n="workshop.outputDtype">' + _t("workshop.outputDtype", "Output dtype") + '</span><select id="wsOutputDtype" class="param-val ws-output-dtype-select"><option value="auto">' + _t("workshop.outputDtype.auto", "Auto") + '</option><option value="fp16">FP16</option><option value="bf16">BF16</option><option value="fp32">FP32</option></select></label><label class="ws-checkbox-label" data-i18n-title="workshop.keepIntermediates.tooltip" title="' + _t("workshop.keepIntermediates.tooltip", "Keep each row's output as its own .safetensors file (useful for multi-row boards)") + '"><input type="checkbox" id="wsSaveIntermediates"><span data-i18n="workshop.keepIntermediates">' + _t("workshop.keepIntermediates", "Keep intermediates") + '</span></label></div></div>'
 
     // Actions
-    + '<div class="ws-action-row"><button id="wsMergeBtn" class="ws-merge-btn" disabled data-i18n="workshop.action.beginMerge">' + _t("workshop.action.beginMerge", "Begin Merge") + '</button><button id="wsCancelBtn" class="ws-cancel-btn" style="display:none;" data-i18n="workshop.action.cancel">' + _t("workshop.action.cancel", "Cancel") + '</button></div>'
+    + '<div class="ws-action-row"><button id="wsMergeBtn" class="ws-merge-btn" disabled>' + IC.merge + '<span>' + _t("workshop.action.beginMerge", "Begin Merge") + '</span></button><button id="wsCancelBtn" class="ws-cancel-btn" style="display:none;" data-i18n="workshop.action.cancel">' + _t("workshop.action.cancel", "Cancel") + '</button></div>'
 
     // Progress
     + '<div id="wsProgressSection" class="ws-progress-section" style="display:none;"><div class="ws-progress-bar-bg"><div id="wsProgressFill" class="ws-progress-bar-fill"></div></div><div class="ws-progress-info"><span id="wsProgressText">0%</span><span id="wsProgressKeys"></span><span id="wsProgressTime"></span></div><div id="wsProgressStatus" class="ws-progress-status"></div></div>'
 
-    + '</div>'  // close ws-stack
+    + '</div>'  // close ws-dock
     + '</div>'  // close wsTabRecipe
 
     // ── History tab ──
@@ -1679,7 +1690,9 @@ function _buildUI(container) {
 
     + '</div>'
     // Inspector
-    + '<div class="ws-inspector" id="wsInspector"><div class="ws-inspector-header"><span data-i18n="workshop.inspector.title">' + _t("workshop.inspector.title", "Inspector") + '</span><button id="wsInspectorToggle" class="ws-inspector-toggle" data-i18n-title="workshop.inspector.toggle.tooltip" title="' + _t("workshop.inspector.toggle.tooltip", "Toggle inspector") + '">◀</button></div><div class="ws-inspector-body" id="wsInspectorBody"><div id="wsInfoContent" class="ws-info-content"><div class="ws-info-placeholder">' + _t("workshop.inspector.placeholder", "Select models to inspect") + '</div></div></div></div>'
+    + '<div class="ws-inspector" id="wsInspector"><div class="ws-inspector-header"><span data-i18n="workshop.inspector.title">' + _t("workshop.inspector.title", "Inspector") + '</span><button id="wsInspectorToggle" class="ws-inspector-toggle" data-i18n-title="workshop.inspector.toggle.tooltip" title="' + _t("workshop.inspector.toggle.tooltip", "Toggle inspector") + '">' + IC.chevR + '</button></div><div class="ws-inspector-body" id="wsInspectorBody"><div id="wsInfoContent" class="ws-info-content"><div class="ws-info-placeholder">' + _t("workshop.inspector.placeholder", "Select models to inspect") + '</div></div></div></div>'
+    + '</div>'
+    + '<div class="ws-footer"><span id="wsFooterCounts"></span><span id="wsFooterPeak"></span></div>'
     + '</div>';
 
     // Cache element refs
@@ -1709,7 +1722,20 @@ function _buildUI(container) {
         journalList: container.querySelector("#wsJournalList"),
         journalFilters: container.querySelectorAll(".ws-journal-filter-btn"),
         journalAddEntry: container.querySelector("#wsJournalAddEntry"),
+        footerCounts: container.querySelector("#wsFooterCounts"),
+        footerPeak: container.querySelector("#wsFooterPeak"),
     };
+    // Inspector sections fold like the Gallery sidebar's.
+    _els.infoContent.addEventListener("click", function (e) {
+        const head = e.target.closest(".ws-isec-title");
+        if (!head) return;
+        const sec = head.parentElement;
+        const key = sec.dataset.sec;
+        if (WS.inspectorClosed.has(key)) WS.inspectorClosed.delete(key); else WS.inspectorClosed.add(key);
+        try { localStorage.setItem("ws_inspector_closed", JSON.stringify([...WS.inspectorClosed])); } catch (_) {}
+        sec.classList.toggle("collapsed", WS.inspectorClosed.has(key));
+        head.setAttribute("aria-expanded", String(!WS.inspectorClosed.has(key)));
+    });
 
     // Seed one row, render, bind global events.
     if (!WS.rows.length) WS.rows.push(_newRow());
@@ -1816,11 +1842,11 @@ function _rowHtml(rowIdx) {
         + '<input type="number" min="0" max="1" step="0.01" value="' + displayedAlpha.toFixed(2) + '" class="param-val ws-row-alpha-val" data-row="' + rowIdx + '">'
         + '</div>';
     // Expand button (⚙) — only shown when there is something hidden behind it
-    html += '<button class="ws-row-expand' + (expanded || row.useBlockWeights ? ' ws-row-expanded' : '') + '" data-row="' + rowIdx + '" title="Per-block weights / advanced"' + (expandBtnVisible ? '' : ' style="visibility:hidden;"') + '>⚙</button>';
+    html += '<button class="ws-row-expand' + (expanded || row.useBlockWeights ? ' ws-row-expanded' : '') + '" data-row="' + rowIdx + '" title="' + _esc(_t("workshop.row.options", "Row options: block weights, VAE bake")) + '" aria-label="' + _esc(_t("workshop.row.options", "Row options: block weights, VAE bake")) + '"' + (expandBtnVisible ? '' : ' style="visibility:hidden;"') + '>' + IC.sliders + '</button>';
     // Delete button
     html += '<button class="ws-row-delete' + (referenced ? ' ws-row-delete-blocked' : '') + '" data-row="' + rowIdx + '"'
         + (referenced ? ' disabled' : '')
-        + ' title="' + _esc(deleteTitle) + '">×</button>';
+        + ' title="' + _esc(deleteTitle) + '" aria-label="' + _esc(deleteTitle) + '">' + IC.trash + '</button>';
     html += '</div>';
 
     // ── Line 2: conditional — params + block-weights toggle row ──
@@ -1828,7 +1854,7 @@ function _rowHtml(rowIdx) {
     // Block weights toggle + preset
     if (info.blockWeights) {
         html += '<div class="ws-row-blocks-toggle"' + (showBlockToggle ? '' : ' style="display:none;"') + '>'
-            + '<label class="ws-checkbox-label ws-row-blocks-label"><input type="checkbox" class="ws-row-block-toggle" data-row="' + rowIdx + '"' + (row.useBlockWeights ? ' checked' : '') + '><span>Blocks</span></label>'
+            + '<label class="ws-checkbox-label ws-row-blocks-label"><input type="checkbox" class="ws-row-block-toggle" data-row="' + rowIdx + '"' + (row.useBlockWeights ? ' checked' : '') + '><span>' + _t("workshop.row.blockWeights", "Block weights") + '</span></label>'
             + '<select class="param-select ws-row-preset" data-row="' + rowIdx + '" disabled><option value="">— Preset —</option></select>'
             + '</div>';
     }
@@ -1839,7 +1865,7 @@ function _rowHtml(rowIdx) {
     html += '<div class="ws-row-vae-cell">'
         + '<label class="ws-checkbox-label ws-row-blocks-label" title="Bake a VAE into this row’s output (extra chain step)">'
         + '<input type="checkbox" class="ws-row-bake-vae" data-row="' + rowIdx + '"' + (row.bakeVae ? ' checked' : '') + '>'
-        + '<span>Bake VAE</span>'
+        + '<span>' + _t("workshop.row.bakeVae", "Bake VAE after this row") + '</span>'
         + '</label>'
         + '<select class="param-select ws-row-vae" data-row="' + rowIdx + '"' + (row.bakeVae ? '' : ' style="display:none;"') + '>'
         + '<option value="">— Pick VAE —</option>'
@@ -2262,8 +2288,8 @@ function _bindGlobalEvents() {
     _els.cancelBtn.addEventListener("click", cancelMerge);
 
     _els.inspectorToggle.addEventListener("click", () => {
+        // The chevron turns with the panel (CSS); no text arrow to swap.
         _els.inspector.classList.toggle("collapsed");
-        _els.inspectorToggle.textContent = _els.inspector.classList.contains("collapsed") ? "▶" : "◀";
     });
 
     _els.loraAdd.addEventListener("click", _addRecipeLora);
@@ -2582,17 +2608,18 @@ function _renderChainContrib() {
         .sort((a, b) => b[1] - a[1]);
 
     const total = entries.reduce((s, [, v]) => s + v, 0);
-    let html = '<div class="ws-chain-contrib-title">Final composition</div>';
-    html += '<div class="ws-chain-contrib-list">';
-    for (const [name, weight] of entries) {
-        const pct = (weight * 100).toFixed(2);
-        const barPct = Math.max(2, weight * 100).toFixed(2);
-        html += '<div class="ws-chain-contrib-row" title="' + _esc(name) + '">'
-            + '<span class="ws-chain-contrib-name">' + _esc(name) + '</span>'
-            + '<div class="ws-chain-contrib-bar"><div class="ws-chain-contrib-bar-fill" style="width:' + barPct + '%;"></div></div>'
-            + '<span class="ws-chain-contrib-pct">' + pct + '%</span>'
-            + '</div>';
-    }
+    // Shades of the accent, strongest first, so the bar reads in any theme.
+    const shade = i => "color-mix(in srgb, var(--accent) " + Math.max(28, 100 - i * 24) + "%, var(--bg-surface))";
+    let html = '<div class="ws-chain-bar">';
+    entries.forEach(([name, weight], i) => {
+        html += '<span style="flex:' + weight + ';background:' + shade(i) + '" title="' + _esc(name) + '"></span>';
+    });
+    html += '</div><div class="ws-chain-legend">';
+    entries.forEach(([name, weight], i) => {
+        html += '<span class="ws-chain-legend-item" title="' + _esc(name) + '"><i style="background:' + shade(i) + '"></i>'
+            + '<span class="ws-chain-legend-name">' + _esc(name) + '</span><b>' + (weight * 100).toFixed(2) + '%</b></span>';
+    });
+    html += '</div><div class="ws-chain-contrib-list">';
     if (Math.abs(total - 1.0) > 0.001) {
         html += '<div class="ws-chain-contrib-note">Weights sum to ' + (total * 100).toFixed(2) + '% (chain has incomplete rows).</div>';
     }
@@ -2672,14 +2699,28 @@ function _updateActionButtons() {
     const saveReady = hasOperation && !validationError && !WS.merging;
     if (_els.mergeBtn) _els.mergeBtn.disabled = !saveReady;
 
+    const chainSteps = _buildRecipeChain();
     if (_els.mergeBtn) {
-        const chainSteps = _buildRecipeChain();
-        _els.mergeBtn.textContent = chainSteps.length > 1
-            ? "Begin Merge (" + chainSteps.length + " steps)"
-            : "Begin Merge";
+        _els.mergeBtn.innerHTML = IC.merge + '<span>' + _esc(_t("workshop.action.beginMerge", "Begin Merge")) + '</span>'
+            + (chainSteps.length > 1 ? '<span class="ws-merge-steps">\u00b7 ' + _esc(_t("workshop.action.steps", chainSteps.length + " steps", { n: chainSteps.length })) + '</span>' : '');
     }
 
     _renderChainContrib();
+    _renderFooter();
+}
+
+function _renderFooter() {
+    if (!_els.footerCounts) return;
+    const merges = WS.rows.filter(r => r.primary && r.secondary).length;
+    const loras = WS.recipeLoras.filter(l => l.filename).length;
+    const parts = [];
+    const arch = WS.inspectA && WS.inspectA.architecture && WS.inspectA.architecture.details;
+    if (arch) parts.push(arch);
+    if (merges) parts.push(merges === 1 ? _t("workshop.footer.merges.one", "1 merge") : _t("workshop.footer.merges.other", merges + " merges", { n: merges }));
+    if (loras) parts.push(loras === 1 ? _t("workshop.footer.loras.one", "1 LoRA bake") : _t("workshop.footer.loras.other", loras + " LoRA bakes", { n: loras }));
+    _els.footerCounts.textContent = parts.join(" \u00b7 ");
+    _els.footerPeak.textContent = WS.preflight && WS.preflight.peak_gb != null
+        ? _t("workshop.footer.peak", "Estimated peak memory " + WS.preflight.peak_gb + " GB", { gb: WS.preflight.peak_gb }) : "";
 }
 
 function _setMergeButtonState(merging) {
@@ -2714,51 +2755,58 @@ function _renderProgress() {
 // INSPECTOR
 // ========================================================================
 
+function _isec(key, title, right, body) {
+    const closed = WS.inspectorClosed.has(key);
+    return '<div class="ws-isec' + (closed ? ' collapsed' : '') + '" data-sec="' + key + '">'
+        + '<button type="button" class="ws-isec-title" aria-expanded="' + !closed + '">' + IC.chev + '<span>' + title + '</span>'
+        + (right ? '<span class="ws-isec-right">' + right + '</span>' : '') + '</button>'
+        + '<div class="ws-isec-body">' + body + '</div></div>';
+}
+
 function _renderInfo() {
     const r = _activeRow();
     const parts = [];
 
     if (r) {
         const rowLabel = _t("workshop.inspector.row", "Row " + (WS.activeRow + 1), { n: WS.activeRow + 1 });
-        const activeLabel = _t("workshop.inspector.active", "Active: " + rowLabel, { label: rowLabel });
         const info = METHOD_INFO[r.method] || {};
         // Method label + formula stay verbatim (they're math/feature names);
         // the long description paragraph translates via workshop.method.<id>.desc,
         // falling back to the English string baked into METHOD_INFO.
         const desc = info.desc ? _t("workshop.method." + r.method + ".desc", info.desc) : "";
-        parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _esc(activeLabel) + '</div>'
-            + '<div class="ws-info-row"><span>' + _t("workshop.inspector.method", "Method") + '</span><span>' + _esc(info.label || r.method) + '</span></div>'
-            + (info.formula ? '<div class="ws-method-formula" title="' + _esc(info.formula) + '">' + _esc(info.formula) + '</div>' : '')
-            + (desc ? '<div class="ws-method-help-text">' + _esc(desc) + '</div>' : '')
-            + '</div>');
+        parts.push('<div class="ws-info-summary">' + _esc(rowLabel) + ' \u00b7 <b>' + _esc(info.label || r.method) + '</b></div>');
+        parts.push(_isec("method", _t("workshop.inspector.method", "Method"), "",
+            (info.formula ? '<div class="ws-method-formula" title="' + _esc(info.formula) + '">' + _esc(info.formula) + '</div>' : '')
+            + (desc ? '<div class="ws-method-help-text">' + _esc(desc) + '</div>' : '')));
     }
 
     // Reference inputs that aren't files cannot be inspected.
     if (r && _isRefValue(r.primary)) {
         const refIdx = _rowIndexById(_refRowId(r.primary));
-        parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.inspector.primary", "Primary") + '</div><div class="ws-info-row"><span>Ref</span><span>' + _t("workshop.inspector.refOf", "Output of Row " + (refIdx + 1), { n: refIdx + 1 }) + '</span></div><div class="ws-card-hint">' + _t("workshop.inspector.resolvedAtMerge", "Resolved at merge time") + '</div></div>');
+        parts.push(_isec("refPrimary", _t("workshop.inspector.primary", "Primary"), "", '<div class="ws-info-row"><span>Ref</span><span>' + _t("workshop.inspector.refOf", "Output of Row " + (refIdx + 1), { n: refIdx + 1 }) + '</span></div><div class="ws-card-hint">' + _t("workshop.inspector.resolvedAtMerge", "Resolved at merge time") + '</div>'));
     }
     if (r && _isRefValue(r.secondary)) {
         const refIdx = _rowIndexById(_refRowId(r.secondary));
-        parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.inspector.secondary", "Secondary") + '</div><div class="ws-info-row"><span>Ref</span><span>' + _t("workshop.inspector.refOf", "Output of Row " + (refIdx + 1), { n: refIdx + 1 }) + '</span></div><div class="ws-card-hint">' + _t("workshop.inspector.resolvedAtMerge", "Resolved at merge time") + '</div></div>');
+        parts.push(_isec("refSecondary", _t("workshop.inspector.secondary", "Secondary"), "", '<div class="ws-info-row"><span>Ref</span><span>' + _t("workshop.inspector.refOf", "Output of Row " + (refIdx + 1), { n: refIdx + 1 }) + '</span></div><div class="ws-card-hint">' + _t("workshop.inspector.resolvedAtMerge", "Resolved at merge time") + '</div>'));
     }
 
-    if (WS.inspectA) parts.push(_renderModelInfo(_t("workshop.inspector.primary", "Primary"), WS.inspectA));
-    if (WS.inspectB) parts.push(_renderModelInfo(_t("workshop.inspector.secondary", "Secondary"), WS.inspectB));
-
     if (WS.compatibility) parts.push(_renderCompatibility(WS.compatibility));
-    else if (WS.inspectA && WS.inspectB && WS.inspectA.architecture?.arch !== WS.inspectB.architecture?.arch) parts.push('<div class="ws-info-warning">' + _t("workshop.inspector.archMismatch", "⚠ Architecture mismatch — merge is not possible") + '</div>');
+    else if (WS.inspectA && WS.inspectB && WS.inspectA.architecture?.arch !== WS.inspectB.architecture?.arch) parts.push('<div class="ws-info-warning">' + IC.warn + ' ' + _t("workshop.inspector.archMismatch", "⚠ Architecture mismatch — merge is not possible").replace(/^⚠\s*/, "") + '</div>');
 
     if (WS.preflight) parts.push(_renderPreflight(WS.preflight));
 
+    if (WS.inspectA) parts.push(_renderModelInfo("primary", _t("workshop.inspector.primary", "Primary"), WS.inspectA, r && r.primary));
+    if (WS.inspectB) parts.push(_renderModelInfo("secondary", _t("workshop.inspector.secondary", "Secondary"), WS.inspectB, r && r.secondary));
+
     _els.infoContent.innerHTML = parts.length ? parts.join("") : '<div class="ws-info-placeholder">' + _t("workshop.inspector.placeholder", "Select models to inspect") + '</div>';
     _renderActiveArchBadges();
+    _renderFooter();
 }
 
-function _renderModelInfo(label, info) {
+function _renderModelInfo(key, label, info, filename) {
     const dtypes = Object.entries(info.dtypes || {}).map(([k, v]) => k + ": " + v).join(", ");
-    let html = '<div class="ws-info-block"><div class="ws-info-label">' + label + '</div>'
-        + '<div class="ws-info-row"><span>' + _t("workshop.inspector.architecture", "Architecture") + '</span><span>' + (info.architecture?.details || _t("workshop.inspector.unknown", "Unknown")) + '</span></div>'
+    const name = (filename || info.filename || "").replace(/\.safetensors$/i, "");
+    let html = '<div class="ws-info-row"><span>' + _t("workshop.inspector.architecture", "Architecture") + '</span><span>' + (info.architecture?.details || _t("workshop.inspector.unknown", "Unknown")) + '</span></div>'
         + '<div class="ws-info-row"><span>' + _t("workshop.inspector.keys", "Keys") + '</span><span>' + info.key_count.toLocaleString() + '</span></div>'
         + '<div class="ws-info-row"><span>' + _t("workshop.inspector.size", "Size") + '</span><span>' + info.size_gb + ' GB</span></div>'
         + '<div class="ws-info-row"><span>' + _t("workshop.inspector.dtypes", "Dtypes") + '</span><span>' + dtypes + '</span></div>';
@@ -2792,17 +2840,18 @@ function _renderModelInfo(label, info) {
     if (mi.prediction) html += '<div class="ws-info-row"><span>Prediction</span><span>' + _esc(mi.prediction) + '</span></div>';
     if (mi.base_model) html += '<div class="ws-info-row"><span>Base</span><span>' + _esc(mi.base_model) + '</span></div>';
     if (mi.resolution) html += '<div class="ws-info-row"><span>Resolution</span><span>' + _esc(mi.resolution) + '</span></div>';
-    return html + '</div>';
+    return _isec(key, label + (name ? ' <span class="ws-isec-name">' + _esc(name) + '</span>' : ''), info.size_gb + ' GB', html);
 }
 
 function _renderPreflight(pf) {
-    return '<div class="' + (pf.safe ? "ws-info-block" : "ws-info-block ws-info-warning-block") + '">'
-        + '<div class="ws-info-label">' + _t("workshop.label.ramEstimate", "RAM Estimate") + '</div>'
+    const fill = pf.available_gb ? Math.min(100, Math.round((pf.peak_gb / pf.available_gb) * 100)) : 0;
+    return _isec("memory", _t("workshop.label.ramEstimate", "RAM Estimate"), '<span class="' + (pf.safe ? '' : 'ws-isec-bad') + '">' + _esc(_t("workshop.inspector.peak", pf.peak_gb + " GB peak", { gb: pf.peak_gb })) + '</span>',
+        '<div class="ws-ram-bar' + (pf.safe ? '' : ' ws-ram-bar-bad') + '"><span style="width:' + fill + '%"></span></div>'
         + '<div class="ws-info-row"><span>Output buffer</span><span>' + pf.output_buffer_gb + ' GB</span></div>'
         + '<div class="ws-info-row"><span>Overhead</span><span>~' + pf.overhead_gb + ' GB</span></div>'
         + '<div class="ws-info-row ws-info-row-highlight"><span>Peak estimate</span><span>' + pf.peak_gb + ' GB</span></div>'
         + '<div class="ws-info-row"><span>Available</span><span>' + pf.available_gb + ' / ' + pf.total_gb + ' GB</span></div>'
-        + (pf.warning ? '<div class="ws-ram-warning">⚠ ' + _esc(pf.warning) + '</div>' : '') + '</div>';
+        + (pf.warning ? '<div class="ws-ram-warning">' + IC.warn + ' ' + _esc(pf.warning) + '</div>' : ''));
 }
 
 function _heatColor(t) {
@@ -2819,26 +2868,45 @@ function _heatColor(t) {
 }
 
 function _renderCompatibility(compat) {
-    const icons = { incompatible: "❌", caution: "⚠", compatible: "✔" };
+    const icons = { incompatible: IC.cross, caution: IC.warn, compatible: IC.check };
     const colors = { incompatible: "var(--red)", caution: "var(--amber)", compatible: "var(--green)" };
     const labels = { incompatible: "Incompatible", caution: "Caution", compatible: "Compatible" };
     const v = compat.verdict;
-    let html = '<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.compatibility", "Compatibility") + ' <span style="color:' + colors[v] + ';font-weight:600;font-size:10px;text-transform:none;letter-spacing:0;">' + icons[v] + ' ' + labels[v] + '</span></div>';
+    const verdict = '<span class="ws-verdict" style="color:' + colors[v] + '">' + icons[v] + ' ' + labels[v] + '</span>';
+    let html = '';
     for (const issue of (compat.issues || [])) {
-        html += '<div class="ws-compat-item ws-compat-issue"><span style="color:var(--red);">✖</span> ' + _esc(issue.text) + '</div>';
+        html += '<div class="ws-compat-item ws-compat-issue"><span style="color:var(--red);">' + IC.cross + '</span> ' + _esc(issue.text) + '</div>';
         if (issue.detail) html += '<div class="ws-compat-detail">' + _esc(issue.detail) + '</div>';
     }
     for (const warn of (compat.warnings || [])) {
-        html += '<div class="ws-compat-item ws-compat-warn"><span style="color:var(--amber);">⚠</span> ' + _esc(warn.text) + '</div>';
+        html += '<div class="ws-compat-item ws-compat-warn"><span style="color:var(--amber);">' + IC.warn + '</span> ' + _esc(warn.text) + '</div>';
         if (warn.detail) html += '<div class="ws-compat-detail">' + _esc(warn.detail) + '</div>';
     }
     for (const note of (compat.info || [])) {
-        html += '<div class="ws-compat-item ws-compat-ok"><span style="color:var(--green);">✔</span> ' + _esc(note.text) + '</div>';
+        html += '<div class="ws-compat-item ws-compat-ok"><span style="color:var(--green);">' + IC.check + '</span> ' + _esc(note.text) + '</div>';
     }
-    return html + '</div>';
+    return _isec("compat", _t("workshop.label.compatibility", "Compatibility"), verdict, html);
 }
 
 function _esc(s) { if (!s) return ""; const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+function _svg(d, w, sw) {
+    return '<svg width="' + (w || 13) + '" height="' + (w || 13) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 2) + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+}
+const IC = {
+    sliders: _svg('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2.2"/><circle cx="15" cy="17" r="2.2"/>'),
+    trash: _svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>'),
+    plus: _svg('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 12, 2.4),
+    x: _svg('<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>', 11, 2.4),
+    refresh: _svg('<polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.1-9.4L23 10"/>', 12),
+    history: _svg('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>', 12),
+    merge: _svg('<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.5 6c5 0 7 2 7 6"/>', 15, 2.2),
+    chev: _svg('<polyline points="6 9 12 15 18 9"/>', 10, 2.6),
+    chevR: _svg('<polyline points="9 6 15 12 9 18"/>', 10, 2.6),
+    check: _svg('<polyline points="20 6 9 17 4 12"/>', 12, 2.6),
+    warn: _svg('<path d="M12 3 2 21h20z"/><line x1="12" y1="10" x2="12" y2="14"/><line x1="12" y1="17.5" x2="12" y2="17.51"/>', 12),
+    cross: _svg('<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>', 12, 2.6),
+};
 
 // ========================================================================
 // MODULE REGISTRATION
@@ -2846,7 +2914,7 @@ function _esc(s) { if (!s) return ""; const d = document.createElement("div"); d
 
 if (window.StudioModules) {
     StudioModules.register("workshop", {
-        label: "Workshop", icon: "⚒",
+        label: "Workshop", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z"/></svg>',
         // W1: Studio serves `/studio/workshop/*` (`workshop_service.py`) when
         // the host has model roots; a host without them answers 404 and the
         // tab stays hidden.

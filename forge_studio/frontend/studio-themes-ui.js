@@ -217,10 +217,11 @@
         reader.readAsText(file);
     }
 
-    function remove() {
+    async function remove() {
         if (!_editing || !_editing.id) return;
         var name = _editing.name;
-        if (!window.confirm(_i18n("settings.theme.custom.deleteConfirm", "Delete the theme “{name}”?", { name: name }))) return;
+        if (!(await window.studioConfirm(_i18n("settings.theme.custom.deleteConfirm", "Delete the theme “{name}”?", { name: name }),
+            { confirm: _i18n("dialog.delete", "Delete"), danger: true }))) return;
         T.deleteCustom(_editing.id);
         closeEditor();
         renderTiles();

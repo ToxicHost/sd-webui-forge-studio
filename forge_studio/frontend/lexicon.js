@@ -16,8 +16,9 @@
 // i18n helper — runtime-built strings pass their English source
 // through _t(). Markup also gets data-i18n* attrs so applyToDom()
 // keeps things in sync on locale switch.
-function _t(key, fallback) {
-  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+function _t(key, fallback, params) {
+  if (window.I18N && window.I18N.t) return window.I18N.t(key, fallback, params);
+  return params ? fallback.replace(/\{(\w+)\}/g, function (m, k) { return k in params ? params[k] : m; }) : fallback;
 }
 
 const TAG = "[Wildcards]";
@@ -230,7 +231,7 @@ function _renderNode(node, parent, depth, isRoot) {
         item.dataset.depth = depth;
         item.dataset.path = node.path;
         item.dataset.type = "folder";
-        item.innerHTML = '<span class="lex-chevron">\u25B6</span><span class="lex-icon">\uD83D\uDCC1</span><span class="lex-name">' + _esc(node.name) + '</span>';
+        item.innerHTML = '<span class="lex-chevron">' + IC.chev + '</span><span class="lex-icon">' + IC.folder + '</span><span class="lex-name">' + _esc(node.name) + '</span>';
         item.addEventListener("click", () => wrapper.classList.toggle("open"));
         item.addEventListener("contextmenu", (e) => { e.preventDefault(); _showContextMenu(e, node.path, "folder"); });
 
@@ -268,7 +269,7 @@ function _createFileItem(node, depth) {
             nameHTML = before + '<mark class="lex-hl-match">' + match + '</mark>' + after;
         }
     }
-    item.innerHTML = '<span class="lex-icon">\uD83D\uDCC4</span><span class="lex-name">' + nameHTML + '</span><span class="lex-count">' + (node.lines || 0) + '</span>';
+    item.innerHTML = '<span class="lex-icon">' + IC.file + '</span><span class="lex-name">' + nameHTML + '</span><span class="lex-count">' + (node.lines || 0) + '</span>';
     item.addEventListener("click", () => openFile(node.path));
     item.addEventListener("contextmenu", (e) => { e.preventDefault(); _showContextMenu(e, node.path, "file"); });
 
@@ -491,6 +492,7 @@ async function _moveItem(srcPath, destFolder) {
         if (LX.openFile && LX.openFile.path === srcPath) {
             LX.openFile.path = res.new_path;
             _els.fileName.textContent = res.new_path;
+            if (LX.openFile) _updateUsage();
         }
         await loadTree();
         _highlightActiveFile();
@@ -634,7 +636,8 @@ async function createFolder(parentPath) {
 async function deleteItem(path) {
     if (!path) return;
     const name = path.split("/").pop();
-    if (!confirm('Delete "' + name + '"?')) return;
+    if (!(await studioConfirm(_t("lexicon.deleteConfirm", "Delete \u201c{name}\u201d?", { name: name }),
+        { confirm: _t("dialog.delete", "Delete"), danger: true }))) return;
     try {
         const resp = await fetch(API + "/file?path=" + encodeURIComponent(path), { method: "DELETE" });
         const data = await resp.json();
@@ -642,7 +645,10 @@ async function deleteItem(path) {
             // Non-empty folder — ask for confirmation with file count
             if (data.not_empty) {
                 const count = data.file_count || "some";
-                if (!confirm(`"${name}" contains ${count} wildcard file${count !== 1 ? "s" : ""}. Delete the folder and all its contents?`)) return;
+                if (!(await studioConfirm(count === 1
+                    ? _t("lexicon.deleteFolderConfirm.one", "Delete the folder \u201c{name}\u201d and everything in it? It holds 1 wildcard file.", { name: name })
+                    : _t("lexicon.deleteFolderConfirm.other", "Delete the folder \u201c{name}\u201d and everything in it? It holds {count} wildcard files.", { name: name, count: count }),
+                    { confirm: _t("dialog.delete", "Delete"), danger: true }))) return;
                 // Retry with force=true
                 const forceResp = await fetch(API + "/file?path=" + encodeURIComponent(path) + "&force=true", { method: "DELETE" });
                 if (!forceResp.ok) {
@@ -679,7 +685,7 @@ async function renameItem(path, type) {
         if (LX.openFile && LX.openFile.path === path) LX.openFile.path = res.new_path;
         await loadTree();
         _highlightActiveFile();
-        if (LX.openFile) { _els.fileName.textContent = LX.openFile.path; _updateFooter(); }
+        if (LX.openFile) { _els.fileName.textContent = LX.openFile.path; _updateUsage(); _updateFooter(); }
     } catch (e) {
         _toast("Rename failed: " + e.message, "error");
     }
@@ -725,11 +731,11 @@ function sortEntries() {
     let label, nextMode;
     if (mode === "az") {
         entries.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-        label = "Z\u2193A"; nextMode = "za";
+        label = _t("lexicon.sort.za", "Sort Z\u2013A"); nextMode = "za";
         _toast("Sorted A\u2192Z (" + entries.length + " entries)");
     } else if (mode === "za") {
         entries.sort((a, b) => b.localeCompare(a, undefined, { sensitivity: "base" }));
-        label = "\u2702 Shuffle"; nextMode = "shuffle";
+        label = _t("lexicon.sort.shuffle", "Shuffle"); nextMode = "shuffle";
         _toast("Sorted Z\u2192A (" + entries.length + " entries)");
     } else {
         // Fisher-Yates shuffle
@@ -737,10 +743,10 @@ function sortEntries() {
             const j = Math.floor(Math.random() * (i + 1));
             [entries[i], entries[j]] = [entries[j], entries[i]];
         }
-        label = "A\u2193Z"; nextMode = "az";
+        label = _t("lexicon.sort.az", "Sort A\u2013Z"); nextMode = "az";
         _toast("Shuffled " + entries.length + " entries");
     }
-    if (btn) { btn.textContent = label; btn.dataset.sort = nextMode; }
+    if (btn) { (btn.querySelector(".lex-btn-label") || btn).textContent = label; btn.dataset.sort = nextMode; }
     // Use execCommand to preserve native undo stack
     _els.textarea.focus();
     _els.textarea.select();
@@ -814,7 +820,7 @@ function _renderContentResults() {
         if (LX.openFile && LX.openFile.path === r.path) item.classList.add("active");
         item.dataset.path = r.path;
         item.innerHTML =
-            '<span class="lex-icon">\uD83D\uDCC4</span>'
+            '<span class="lex-icon">' + IC.file + '</span>'
           + '<span class="lex-content-hit">'
           +   '<span class="lex-name">' + _esc(r.name) + '</span>'
           +   '<span class="lex-content-match">' + _esc(r.text) + '</span>'
@@ -933,6 +939,7 @@ function _togglePreview() {
     LX.previewOpen = !LX.previewOpen;
     _els.previewPanel.classList.toggle("open", LX.previewOpen);
     _els.previewToggle.classList.toggle("active", LX.previewOpen);
+    if (LX.previewOpen) _rollPreview();
 }
 
 async function _rollPreview() {
@@ -1056,8 +1063,15 @@ function _showEditor() {
     _els.empty.style.display = "none";
     _els.editorWrap.style.display = "";
     _els.fileName.textContent = LX.openFile.path;
+    _updateUsage();
     _els.textarea.value = LX.openFile.content;
     _updateGutter(); _updateHighlight(); _updateEditorState();
+}
+
+function _updateUsage() {
+    if (!_els.fileUsage || !LX.openFile) return;
+    _els.fileUsage.innerHTML = _esc(_t("lexicon.usage", "Use in a prompt as {token}", { token: "\u0000" }))
+        .replace("\u0000", '<code>' + _esc(_promptToken(LX.openFile.path)) + '</code>');
 }
 
 function _showEmpty() { _els.empty.style.display = ""; _els.editorWrap.style.display = "none"; }
@@ -1080,16 +1094,20 @@ function _updateFooter() {
     if (LX.openFile) {
         _els.footerPath.textContent = LX.openFile.path;
         const entries = _els.textarea.value.split("\n").filter(l => l.trim() && !l.trim().startsWith("#")).length;
-        _els.footerEntries.textContent = entries + " entries";
+        _els.footerEntries.textContent = entries === 1 ? _t("lexicon.footer.entries.one", "1 entry") : _t("lexicon.footer.entries.other", "{n} entries", { n: entries });
         const dirty = LX.dirtyFiles.has(LX.openFile.path);
-        _els.footerStatus.textContent = dirty ? "unsaved" : "saved";
-        _els.footerStatus.style.color = dirty ? "var(--accent)" : "var(--text-4)";
+        _els.footerStatus.textContent = dirty ? _t("lexicon.status.unsaved", "Unsaved changes") : _t("lexicon.status.saved", "Saved");
+        _els.footerStatus.classList.toggle("dirty", dirty);
     } else {
         _els.footerPath.textContent = ""; _els.footerEntries.textContent = ""; _els.footerStatus.textContent = "";
     }
 }
 
-function _updateTreeFooter() { if (_els.treeFooter) _els.treeFooter.textContent = LX.fileCount + " wildcard files"; }
+function _updateTreeFooter() {
+    if (!_els.treeFooter) return;
+    _els.treeFooter.textContent = LX.fileCount === 1 ? _t("lexicon.footer.files.one", "1 wildcard file")
+        : _t("lexicon.footer.files.other", "{n} wildcard files", { n: LX.fileCount });
+}
 
 // ========================================================================
 // ERROR / TOAST
@@ -1110,6 +1128,30 @@ function _updateDirtyIndicators() {
 }
 
 // ========================================================================
+// ICONS (WC1: line icons instead of emoji)
+// ========================================================================
+
+function _svg(d, w, sw) {
+    return '<svg width="' + (w || 13) + '" height="' + (w || 13) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 2) + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+}
+const IC = {
+    chev: _svg('<polyline points="9 6 15 12 9 18"/>', 10, 2.6),
+    folder: _svg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+    file: _svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'),
+    plus: _svg('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 12, 2.4),
+    refresh: _svg('<polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.1-9.4L23 10"/>', 12),
+    sort: _svg('<path d="M3 6h11M3 12h8M3 18h5"/><path d="M18 4v16M15 17l3 3 3-3"/>'),
+    dedup: _svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>'),
+    eye: _svg('<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>'),
+    trash: _svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>'),
+    dice: _svg('<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>'),
+    edit: _svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>', 32, 1.5),
+};
+
+// The token a prompt uses for a file: "styles/painting.txt" -> "__styles/painting__".
+function _promptToken(path) { return "__" + String(path || "").replace(/\.txt$/i, "") + "__"; }
+
+// ========================================================================
 // BUILD UI
 // ========================================================================
 
@@ -1117,38 +1159,35 @@ function _buildUI(container) {
     container.innerHTML =
         '<div class="lex-layout">'
       +   '<div class="lex-error-banner"></div>'
+      +   '<div class="lex-main">'
       +   '<div class="lex-tree-panel">'
       +     '<div class="lex-tree-header">'
-      +       '<div class="lex-tree-title" data-i18n="lexicon.title">' + _t("lexicon.title", "Wildcards") + '</div>'
-      +       '<div class="lex-tree-actions">'
-      +         '<button data-action="new-file" data-i18n="lexicon.newFile">' + _t("lexicon.newFile", "+ File") + '</button>'
-      +         '<button data-action="new-folder" data-i18n="lexicon.newFolder">' + _t("lexicon.newFolder", "+ Folder") + '</button>'
-      +         '<button data-action="refresh" data-i18n-title="lexicon.refresh.tooltip" title="' + _t("lexicon.refresh.tooltip", "Refresh file tree") + '">&#x21bb;</button>'
-      +       '</div>'
-      +       '<div class="lex-tree-actions">'
-      +       '</div>'
       +       '<div class="lex-search-row">'
       +         '<input type="text" class="lex-tree-search" data-i18n-placeholder="lexicon.search.filenames.placeholder" placeholder="' + _t("lexicon.search.filenames.placeholder", "Filter files\u2026") + '">'
       +       '</div>'
+      +       '<div class="lex-tree-actions">'
+      +         '<button data-action="new-file">' + IC.plus + '<span data-i18n="lexicon.newFileLabel">' + _t("lexicon.newFileLabel", "New file") + '</span></button>'
+      +         '<button data-action="new-folder">' + IC.plus + '<span data-i18n="lexicon.newFolderLabel">' + _t("lexicon.newFolderLabel", "New folder") + '</span></button>'
+      +         '<button data-action="refresh" class="lex-icon-btn" data-i18n-title="lexicon.refresh.tooltip" title="' + _t("lexicon.refresh.tooltip", "Refresh file tree") + '" aria-label="' + _t("lexicon.refresh.tooltip", "Refresh file tree") + '">' + IC.refresh + '</button>'
+      +       '</div>'
       +     '</div>'
       +     '<div class="lex-tree-list"></div>'
-      +     '<div class="lex-tree-footer">\u2014</div>'
       +   '</div>'
       +   '<div class="lex-editor-panel">'
       +     '<div class="lex-empty">'
-      +       '<div class="lex-empty-icon">\uD83D\uDCDD</div>'
+      +       '<div class="lex-empty-icon">' + IC.edit + '</div>'
       +       '<div data-i18n="lexicon.empty.selectFile">' + _t("lexicon.empty.selectFile", "Select a wildcard file to edit") + '</div>'
       +     '</div>'
       +     '<div class="lex-editor-wrap" style="display:none">'
       +       '<div class="lex-editor-header">'
-      +         '<span class="lex-file-name"></span>'
-      +         '<span class="lex-dirty-dot"></span>'
+      +         '<div class="lex-file-head"><div class="lex-file-line"><span class="lex-file-name"></span><span class="lex-dirty-dot"></span></div><div class="lex-file-usage"></div></div>'
+      +         '<button class="lex-sort-btn" data-sort="az" data-i18n-title="lexicon.sort.tooltip" title="' + _t("lexicon.sort.tooltip", "Sort entries (click to cycle: A→Z, Z→A, Shuffle)") + '">' + IC.sort + '<span class="lex-btn-label">' + _t("lexicon.sort.az", "Sort A\u2013Z") + '</span></button>'
+      +         '<button class="lex-dedup-btn" data-i18n-title="lexicon.dedup.tooltip" title="' + _t("lexicon.dedup.tooltip", "Remove duplicate entries") + '">' + IC.dedup + '<span data-i18n="lexicon.removeDuplicates">' + _t("lexicon.removeDuplicates", "Remove duplicates") + '</span></button>'
+      +         '<button class="lex-preview-toggle" data-i18n-title="lexicon.previewToggle.tooltip" title="' + _t("lexicon.previewToggle.tooltip", "Toggle preview panel") + '">' + IC.eye + '<span data-i18n="lexicon.previewToggle">' + _t("lexicon.previewToggle", "Preview") + '</span></button>'
+      +         '<span class="lex-header-sep"></span>'
+      +         '<button class="lex-autosave-toggle" role="switch" data-i18n-title="lexicon.autosave.off.tooltip" title="' + _t("lexicon.autosave.off.tooltip", "Autosave OFF (click to enable)") + '"><span class="lex-switch" aria-hidden="true"></span><span data-i18n="lexicon.autosave">' + _t("lexicon.autosave", "Autosave") + '</span></button>'
       +         '<button class="lex-save-btn" data-i18n="lexicon.save">' + _t("lexicon.save", "Save") + '</button>'
-      +         '<button class="lex-autosave-toggle" data-i18n="lexicon.autosave" data-i18n-title="lexicon.autosave.off.tooltip" title="' + _t("lexicon.autosave.off.tooltip", "Autosave OFF (click to enable)") + '">' + _t("lexicon.autosave", "Autosave") + '</button>'
-      +         '<button class="lex-preview-toggle" data-i18n="lexicon.previewToggle" data-i18n-title="lexicon.previewToggle.tooltip" title="' + _t("lexicon.previewToggle.tooltip", "Toggle preview panel") + '">' + _t("lexicon.previewToggle", "Preview") + '</button>'
-      +         '<button class="lex-sort-btn" data-sort="az" data-i18n-title="lexicon.sort.tooltip" title="' + _t("lexicon.sort.tooltip", "Sort entries (click to cycle: A→Z, Z→A, Shuffle)") + '">A\u2193Z</button>'
-      +         '<button class="lex-dedup-btn" data-i18n="lexicon.dedup" data-i18n-title="lexicon.dedup.tooltip" title="' + _t("lexicon.dedup.tooltip", "Remove duplicate entries") + '">' + _t("lexicon.dedup", "Dedup") + '</button>'
-      +         '<button class="lex-delete-btn" data-i18n="lexicon.delete">' + _t("lexicon.delete", "Delete") + '</button>'
+      +         '<button class="lex-delete-btn" data-i18n-title="lexicon.delete" title="' + _t("lexicon.delete", "Delete") + '" aria-label="' + _t("lexicon.delete", "Delete") + '">' + IC.trash + '</button>'
       +       '</div>'
       +       '<div class="lex-editor-body">'
       +         '<div class="lex-gutter"><div class="lex-gutter-inner"></div></div>'
@@ -1158,22 +1197,21 @@ function _buildUI(container) {
       +         '</div>'
       +       '</div>'
       +       '<div class="lex-preview-panel">'
-      +         '<div class="lex-preview-header">'
-      +           '<span class="lex-preview-title" data-i18n="lexicon.previewTitle">' + _t("lexicon.previewTitle", "Preview") + '</span>'
-      +         '</div>'
       +         '<div class="lex-preview-body">'
-      +           '<div class="lex-preview-label" data-i18n="lexicon.preview.picked">' + _t("lexicon.preview.picked", "Picked:") + '</div>'
-      +           '<div class="lex-preview-raw"></div>'
-      +           '<div class="lex-preview-label" data-i18n="lexicon.preview.resolved">' + _t("lexicon.preview.resolved", "Resolved:") + '</div>'
-      +           '<div class="lex-preview-result"></div>'
+      +           '<span class="lex-preview-title" data-i18n="lexicon.previewTitle">' + _t("lexicon.previewTitle", "Preview") + '</span>'
+      +           '<span class="lex-preview-label" data-i18n="lexicon.preview.picked">' + _t("lexicon.preview.picked", "Picked:") + '</span>'
+      +           '<span class="lex-preview-raw"></span>'
+      +           '<span class="lex-preview-label" data-i18n="lexicon.preview.resolved">' + _t("lexicon.preview.resolved", "Resolved:") + '</span>'
+      +           '<span class="lex-preview-result"></span>'
+      +           '<button class="lex-preview-roll">' + IC.dice + '<span data-i18n="lexicon.preview.again">' + _t("lexicon.preview.again", "Pick again") + '</span></button>'
       +         '</div>'
-      +       '</div>'
-      +       '<div class="lex-editor-footer">'
-      +         '<span class="lex-footer-path"></span>'
-      +         '<span class="lex-footer-entries"></span>'
-      +         '<span class="lex-footer-status" style="margin-left:auto;"></span>'
       +       '</div>'
       +     '</div>'
+      +   '</div>'
+      +   '</div>'
+      +   '<div class="lex-footer">'
+      +     '<span class="lex-tree-footer">\u2014</span>'
+      +     '<span class="lex-editor-footer"><span class="lex-footer-path"></span><span class="lex-footer-entries"></span><span class="lex-footer-status"></span></span>'
       +   '</div>'
       + '</div>'
       + '<div class="lex-context-menu"></div>';
@@ -1186,6 +1224,7 @@ function _buildUI(container) {
     _els.empty           = root.querySelector(".lex-empty");
     _els.editorWrap      = root.querySelector(".lex-editor-wrap");
     _els.fileName        = root.querySelector(".lex-file-name");
+    _els.fileUsage       = root.querySelector(".lex-file-usage");
     _els.dirtyDot        = root.querySelector(".lex-dirty-dot");
     _els.saveBtn         = root.querySelector(".lex-save-btn");
     _els.autoSaveToggle  = root.querySelector(".lex-autosave-toggle");
@@ -1210,6 +1249,7 @@ function _buildUI(container) {
     _els.deleteBtn.addEventListener("click", () => { if (LX.openFile) deleteItem(LX.openFile.path); });
     _els.autoSaveToggle.addEventListener("click", _toggleAutoSave);
     _els.previewToggle.addEventListener("click", _togglePreview);
+    root.querySelector(".lex-preview-roll").addEventListener("click", _rollPreview);
     _els.sortBtn.addEventListener("click", sortEntries);
     _els.dedupBtn.addEventListener("click", deduplicateEntries);
 
@@ -1284,7 +1324,7 @@ window.LexiconAPI = {
 
 if (window.StudioModules) {
     StudioModules.register("lexicon", {
-        label: "Wildcards", icon: "\u2731",
+        label: "Wildcards", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg>',
         // No probe, as in the Extension. One was added while `/studio/lexicon`
         // had no handler; Studio serves it now, and the probe hid the tab
         // whenever /tree refused -- no folder chosen, a folder not reachable,

@@ -49,6 +49,9 @@ var _active = null;
 
 function Tour(opts) {
   this.id = opts.id;
+  // Shown above every step ("Show me around", "Gallery tour", a tutorial's
+  // name). Optional: a tour without one shows only its step count.
+  this.title = opts.title || "";
   this.steps = (opts.steps || []).slice();
   this.persist = opts.persist !== false;
   this.onComplete = opts.onComplete || null;
@@ -62,6 +65,7 @@ function Tour(opts) {
 
   this._idx = -1;
   this._guide = null;
+  this._scrim = null;
   this._spotlight = null;
   this._cleanups = [];
   this._escHandler = null;
@@ -132,7 +136,22 @@ Tour.prototype.goTo = function (idx) {
 };
 
 Tour.prototype.cancel = function () {
-  if (this.confirmCancel && !confirm(this.cancelPrompt)) return;
+  var self = this;
+  if (!this.confirmCancel) { this._endCancelled(); return; }
+  // Escape again while the question is open must not ask twice.
+  if (this._asking) return;
+  this._asking = true;
+  var t = window.I18N && window.I18N.t;
+  var ask = window.studioConfirm
+    ? window.studioConfirm(this.cancelPrompt, { confirm: t ? t("tour.endTour", "End tour") : "End tour", cancel: t ? t("tour.keepGoing", "Keep going") : "Keep going" })
+    : Promise.resolve(confirm(this.cancelPrompt));
+  ask.then(function (ok) {
+    self._asking = false;
+    if (ok && _active === self) self._endCancelled();
+  });
+};
+
+Tour.prototype._endCancelled = function () {
   this._forceCancel();
   if (this.onCancel) this.onCancel();
 };
@@ -153,6 +172,7 @@ Tour.prototype.complete = function () {
 Tour.prototype._teardown = function () {
   this._clearStepState();
   if (this._guide) { this._guide.remove(); this._guide = null; }
+  this._removeScrim();
   if (this._escHandler) {
     document.removeEventListener("keydown", this._escHandler);
     this._escHandler = null;
@@ -200,9 +220,10 @@ Tour.prototype._showStep = function (idx) {
       if (el) {
         self._spotlight = el;
         el.classList.add("st-spotlight");
-        if (el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        _centreInScroller(el);
       }
     }
+    self._placeScrim();
 
     self._renderGuide(step, idx);
     self._bindAdvance(step, idx);
@@ -236,6 +257,9 @@ Tour.prototype._showStep = function (idx) {
 
 // ── Guide Rendering ──────────────────────────────────────────────────────
 
+var _CHEV_L = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg>';
+var _CHEV_R = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>';
+
 Tour.prototype._renderGuide = function (step, idx) {
   if (this._guide) this._guide.remove();
 
@@ -245,22 +269,36 @@ Tour.prototype._renderGuide = function (step, idx) {
 
   var el = document.createElement("div");
   el.className = "st-guide";
+  el.setAttribute("role", "dialog");
 
   // i18n helper — framework chrome translates; per-step content
   // (text, step.btn) stays in whatever language the tour author wrote.
   var _t = (key, fallback) => (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
-  var html = '<div class="st-guide-text">' + text + "</div>";
+  var counter = _t("tour.stepOf", "Step {n} of {total}")
+    .replace("{n}", '<b>' + (idx + 1) + '</b>').replace("{total}", total);
+  var html = '<div class="st-guide-head"><span class="st-guide-name">' + this.title + '</span>'
+    + '<span class="st-guide-step">' + counter + '</span></div>';
+  // One segment per step; a long walkthrough gets a plain bar instead.
+  html += '<div class="st-guide-progress" aria-hidden="true">';
+  if (total <= 12) {
+    for (var s = 0; s < total; s++) html += '<span class="' + (s < idx ? "done" : s === idx ? "now" : "") + '"></span>';
+  } else {
+    html += '<span class="bar" style="width:' + Math.round(((idx + 1) / total) * 100) + '%"></span>';
+  }
+  html += '</div>';
+  if (step.title) html += '<div class="st-guide-title">' + step.title + '</div>';
+  html += '<div class="st-guide-text">' + text + "</div>";
   html += '<div class="st-guide-actions">';
-  html += '<span class="st-guide-step">' + (idx + 1) + " / " + total + "</span>";
-  if (prevIdx >= 0) html += '<button class="st-guide-prev" data-action="prev" data-i18n="tour.back">' + _t("tour.back", "Back") + '</button>';
-  if (step.btn) html += '<button class="st-guide-btn" data-action="next">' + step.btn + "</button>";
-  html += '<button class="st-guide-skip" data-action="cancel" data-i18n="tour.endTour">' + _t("tour.endTour", "End tour") + '</button>';
+  html += '<button class="st-guide-skip" data-action="cancel"><span data-i18n="tour.endTour">' + _t("tour.endTour", "End tour") + '</span><span class="st-kbd">Esc</span></button>';
+  if (prevIdx >= 0) html += '<button class="st-guide-prev" data-action="prev">' + _CHEV_L + '<span data-i18n="tour.back">' + _t("tour.back", "Back") + '</span></button>';
+  if (step.btn) html += '<button class="st-guide-btn" data-action="next"><span>' + step.btn + '</span>' + _CHEV_R + "</button>";
   html += "</div>";
   el.innerHTML = html;
 
   this._positionGuide(el, step);
   document.body.appendChild(el);
   this._guide = el;
+  this._fitGuide(el);
 
   // Wire static buttons
   var self = this;
@@ -281,13 +319,17 @@ Tour.prototype._positionGuide = function (el, step) {
     return;
   }
 
-  // Near spotlight target
+  // Near spotlight target, with a caret pointing at it
   if (step.spotlight && this._spotlight) {
     var r = this._spotlight.getBoundingClientRect();
     var l = r.left - 396;
     var t = r.top;
-    if (l < 16) { l = Math.max(16, r.left); t = r.bottom + 16; }
-    if (t + 200 > window.innerHeight) t = Math.max(16, window.innerHeight - 260);
+    var caret = "right";
+    if (l < 16) { l = Math.max(16, r.left); t = r.bottom + 16; caret = "up"; }
+    if (t + 200 > window.innerHeight) { t = Math.max(16, window.innerHeight - 260); caret = caret === "up" ? "" : caret; }
+    if (caret === "right") el.style.setProperty("--caret-y", Math.max(18, Math.min(r.top + r.height / 2 - t, 140)) + "px");
+    if (caret === "up") el.style.setProperty("--caret-x", Math.max(18, Math.min(r.left + 24 - l, 340)) + "px");
+    if (caret) el.dataset.caret = caret;
     el.style.position = "fixed";
     el.style.left = l + "px";
     el.style.top = t + "px";
@@ -300,6 +342,75 @@ Tour.prototype._positionGuide = function (el, step) {
     el.style.left = "60px";
     el.style.top = "auto";
     el.style.right = "auto";
+  }
+};
+
+// Centre the target in the panel that scrolls it, at once. Instant, because
+// the guide and the scrim are placed from its position right after this;
+// centred, because "nearest" can leave it under the Generate panel's pinned
+// footer. Not scrollIntoView: that also scrolls the page itself, which the
+// app shell never does, and leaves a band of nothing at the bottom.
+function _centreInScroller(el) {
+  for (var p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    var oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight) {
+      var pr = p.getBoundingClientRect(), r = el.getBoundingClientRect();
+      p.scrollTop += (r.top + r.height / 2) - (pr.top + pr.height / 2);
+      return;
+    }
+  }
+}
+
+// Keep the whole guide on screen now that its height is known, and point
+// the caret at the target from wherever the guide ended up.
+Tour.prototype._fitGuide = function (el) {
+  var top = parseFloat(el.style.top);
+  if (isNaN(top)) return;
+  var h = el.offsetHeight;
+  if (top + h > window.innerHeight - 16) {
+    top = Math.max(16, window.innerHeight - 16 - h);
+    el.style.top = top + "px";
+  }
+  if (el.dataset.caret === "right" && this._spotlight) {
+    var r = this._spotlight.getBoundingClientRect();
+    var y = r.top + Math.min(r.height, 120) / 2 - top;
+    if (y < 18 || y > h - 18) delete el.dataset.caret;
+    else el.style.setProperty("--caret-y", (y - 6) + "px");
+  }
+};
+
+// A light scrim over everything but the spotlight. It takes no clicks: the
+// tour points, it does not block, so the owner can still try the thing.
+Tour.prototype._placeScrim = function () {
+  if (!this._spotlight) { this._removeScrim(); return; }
+  if (!this._scrim) {
+    this._scrim = document.createElement("div");
+    this._scrim.className = "st-scrim";
+    document.body.appendChild(this._scrim);
+    var self = this;
+    this._scrimResize = function () { self._cutScrim(); };
+    window.addEventListener("resize", this._scrimResize);
+    // Panels scroll on their own; capture catches every one of them.
+    window.addEventListener("scroll", this._scrimResize, true);
+  }
+  this._cutScrim();
+};
+
+Tour.prototype._cutScrim = function () {
+  if (!this._scrim || !this._spotlight) return;
+  var r = this._spotlight.getBoundingClientRect(), pad = 6;
+  var x1 = Math.max(0, r.left - pad), y1 = Math.max(0, r.top - pad);
+  var x2 = r.right + pad, y2 = r.bottom + pad;
+  this._scrim.style.clipPath = "polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 " + y1 + "px, " + x1 + "px " + y1 + "px, "
+    + x1 + "px " + y2 + "px, " + x2 + "px " + y2 + "px, " + x2 + "px " + y1 + "px, 0 " + y1 + "px)";
+};
+
+Tour.prototype._removeScrim = function () {
+  if (this._scrim) { this._scrim.remove(); this._scrim = null; }
+  if (this._scrimResize) {
+    window.removeEventListener("resize", this._scrimResize);
+    window.removeEventListener("scroll", this._scrimResize, true);
+    this._scrimResize = null;
   }
 };
 

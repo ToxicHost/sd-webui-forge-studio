@@ -59,6 +59,9 @@ const IC = {
     copy:       _s('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
     cut:        _s('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>'),
     paste:      _s('<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>'),
+    grid:       _s('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', 2),
+    close:      _s('<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>', 2.4),
+    chevDown:   _s('<polyline points="6 9 12 15 18 9"/>', 2.4),
     convert:    _s('<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'),
 };
 
@@ -78,8 +81,9 @@ const G = {
     dragIds: null, undoStack: [], _container: null, _imgIndexMap: null,
     watcherActive: false,
     clipboard: { ids: [], mode: null },
-    folderColW: parseInt(localStorage.getItem("gal_folderColW")) || 200,
-    tagColW: parseInt(localStorage.getItem("gal_tagColW")) || 200,
+    sideW: parseInt(localStorage.getItem("gal_sideW")) || 240,
+    thumbSize: Math.min(320, Math.max(120, parseInt(localStorage.getItem("gal_thumbSize")) || 170)),
+    closedSections: new Set(JSON.parse(localStorage.getItem("gal_closedSections") || "[]")),
     selectedFolders: new Set(),
     lastSelectedFolderIdx: -1,
     navContext: null,
@@ -230,7 +234,11 @@ function updateWatcherIndicator() {
     // The server sends the reason it is in this state; showing it beats a
     // two-word label that cannot distinguish "nothing is watching your folders"
     // from "the Gallery is off entirely".
-    if (el) { el.className = "gal-watcher-dot" + (G.watcherActive ? " active" : ""); el.title = G.watcherReason || (G.watcherActive ? _t("gallery.autoSync.active", "Auto-sync active") : _t("gallery.autoSync.inactive", "Auto-sync inactive")); }
+    if (el) el.className = "gal-watcher-dot" + (G.watcherActive ? " active" : "");
+    const box = G._container?.querySelector("#gal-sync");
+    if (box) box.title = G.watcherReason || (G.watcherActive ? _t("gallery.autoSync.active", "Auto-sync active") : _t("gallery.autoSync.inactive", "Auto-sync inactive"));
+    const label = G._container?.querySelector("#gal-watcher-label");
+    if (label) label.textContent = G.watcherActive ? _t("gallery.autoSync.on", "Auto-sync on") : _t("gallery.autoSync.off", "Auto-sync off");
 }
 
 async function pickAndAddFolder() {
@@ -332,7 +340,13 @@ function filterByCharacter(n) { G.filter.character = G.filter.character === n ? 
 function filterByRating(n) { G.filter.rating = G.filter.rating === n ? 0 : n; G.filter.character = ""; G.selectedImages.clear(); loadImagesReset().then(() => { renderMain(); updateTagActive(); updateFolderActive(); }); }
 async function filterByFolder(f) { G.filter.folder = G.filter.folder === f ? "" : f; G.filter.rating = 0; G.selectedImages.clear(); await Promise.all([loadCharacters(), loadImagesReset()]); renderMain(); renderTagList(); updateFolderActive(); updateTagActive(); }
 function setSort(s) { if (G.sort === s) G.order = G.order === "asc" ? "desc" : "asc"; else { G.sort = s; G.order = s === "newest" ? "desc" : "asc"; } updateSortButtons(); loadImagesReset().then(renderMain); }
-function updateSortButtons() { G._container.querySelectorAll(".gal-sort-btn").forEach(b => { const s = b.dataset.sort; b.classList.toggle("active", s === G.sort); if (s === "filename") b.textContent = G.sort === "filename" ? (G.order === "asc" ? _t("gallery.sort.az", "A\u2013Z") : _t("gallery.sort.za", "Z\u2013A")) : "A\u2013Z"; if (s === "newest") b.textContent = G.sort === "newest" ? (G.order === "desc" ? _t("gallery.sort.newest", "Newest") : _t("gallery.sort.oldest", "Oldest")) : "Newest"; }); }
+function sortSegLabel(s) {
+    const on = G.sort === s;
+    if (s === "newest") return on && G.order === "asc" ? _t("gallery.sort.oldest", "Oldest") : _t("gallery.sort.newest", "Newest");
+    const name = s === "filename" ? _t("gallery.sort.name", "Name") : _t("gallery.sort.folder", "Folder");
+    return on ? name + '<span class="gal-seg-dir">' + (G.order === "asc" ? _t("gallery.sort.az", "A\u2013Z") : _t("gallery.sort.za", "Z\u2013A")) + '</span>' : name;
+}
+function updateSortButtons() { G._container.querySelectorAll(".gal-seg").forEach(b => { const on = b.dataset.sort === G.sort; b.classList.toggle("active", on); b.setAttribute("aria-pressed", String(on)); b.innerHTML = sortSegLabel(b.dataset.sort); }); }
 let _searchTimeout;
 function onSearch(v) { clearTimeout(_searchTimeout); _searchTimeout = setTimeout(() => { G.filter.search = v; G.selectedImages.clear(); loadImagesReset().then(renderMain); }, 300); }
 
@@ -546,7 +560,7 @@ function onItemClick(imgId, e) {
 }
 function updateSelectionDiff(prev) { const all = new Set([...prev, ...G.selectedImages]); all.forEach(id => { const w = prev.has(id), n = G.selectedImages.has(id); if (w !== n) { const el = G._container.querySelector('.gal-card[data-id="' + id + '"]'); if (el) el.classList.toggle("selected", n); } }); updateSelectionBar(); }
 function updateSelectionUI() { G._container.querySelectorAll(".gal-card").forEach(el => { el.classList.toggle("selected", G.selectedImages.has(parseInt(el.dataset.id))); }); updateSelectionBar(); }
-function updateSelectionBar() { const si = G._container.querySelector("#gal-sel-info"); if (si) { if (G.selectedImages.size > 0) { si.style.display = "flex"; si.querySelector(".sel-count").textContent = G.selectedImages.size + " selected"; } else si.style.display = "none"; } ["gal-btn-explorer","gal-btn-move","gal-btn-rename","gal-btn-tags","gal-btn-convert","gal-btn-strip","gal-btn-delete"].forEach(id => { const b = G._container.querySelector("#" + id); if (b) b.disabled = G.selectedImages.size === 0; }); updateClipboardUI(); }
+function updateSelectionBar() { const n = G.selectedImages.size; const bar = G._container.querySelector("#gal-sel-bar"); if (bar) { bar.hidden = n === 0; const cnt = bar.querySelector(".sel-count"); if (cnt) cnt.textContent = _t("gallery.selection.count", n + " selected", { n: n }); } ["gal-btn-explorer","gal-btn-move","gal-btn-rename","gal-btn-tags","gal-btn-convert","gal-btn-strip","gal-btn-delete"].forEach(id => { const b = G._container.querySelector("#" + id); if (b) b.disabled = n === 0; }); updateClipboardUI(); }
 function clearSelection() { G.selectedImages.clear(); updateSelectionUI(); }
 
 // ========================================================================
@@ -700,6 +714,14 @@ async function bulkStripMetadataSelected() {
 //   - With input:    {key, value}, or null on cancel/escape/backdrop
 // Escape always cancels; Enter triggers the "primary" button (if any).
 
+// A message written "Title?<br><br>detail" reads as a title line over body
+// text; anything else is body text alone.
+function _galMessageHtml(html) {
+  const parts = String(html).split(/<br\s*\/?>\s*<br\s*\/?>/);
+  if (parts.length < 2) return '<div class="gal-confirm-text">' + html + "</div>";
+  return '<div class="gal-confirm-title">' + parts[0] + '</div><div class="gal-confirm-text">' + parts.slice(1).join("<br><br>") + "</div>";
+}
+
 function showConfirmMulti(htmlMsg, buttons, opts) {
     opts = opts || {};
     return new Promise(resolve => {
@@ -717,7 +739,7 @@ function showConfirmMulti(htmlMsg, buttons, opts) {
             inputHtml = '<input class="gal-confirm-input"' + ph + ' value="' + dv + '">';
             if (opts.hint) inputHtml += '<div class="gal-confirm-hint">' + opts.hint + '</div>';
         }
-        bg.innerHTML = '<div class="gal-confirm-box"><div class="gal-confirm-msg">' + htmlMsg + inputHtml + '</div><div class="gal-confirm-actions">' + btnHtml + '</div></div>';
+        bg.innerHTML = '<div class="gal-confirm-box"><div class="gal-confirm-msg">' + _galMessageHtml(htmlMsg) + inputHtml + '</div><div class="gal-confirm-actions">' + btnHtml + '</div></div>';
         function cleanup(result) {
             document.removeEventListener("keydown", onKey, true);
             bg.remove();
@@ -1319,7 +1341,7 @@ function showFolderMoveModal(disabledSet) {
     }
     let h = '<div class="gal-move-modal"><h3>Move ' + disabledSet.size + " folder" + (disabledSet.size > 1 ? "s" : "") + ' into\u2026</h3><div class="mm-list">';
     h += buildMoveTree(tree, 0);
-    h += '</div><div class="mm-footer"><button class="gal-btn" id="gal-move-cancel">Cancel</button></div></div>';
+    h += '</div><div class="mm-footer"><span class="mm-hint">' + _t("gallery.move.hint", "Click a folder to move the files there.") + '</span><button class="gal-btn" id="gal-move-cancel">' + _t("dialog.cancel", "Cancel") + '</button></div></div>';
     bg.innerHTML = h;
     bg.addEventListener("click", e => {
         const toggle = e.target.closest(".mm-toggle");
@@ -1509,10 +1531,10 @@ function showMoveModal() {
             const uid = "mm-" + n.fullPath.replace(/[\\\/\s]/g, "_");
             h += '<div class="mm-node">';
             h += '<div class="mm-item' + (isCur ? " current" : "") + '" style="padding-left:' + (depth * 16 + 12) + 'px" ' + (isCur ? "" : 'data-folder="' + esc(n.fullPath) + '"') + '>';
-            if (hasKids) h += '<span class="mm-toggle" data-mm-toggle="' + uid + '">\u25B6</span>';
-            else h += '<span style="width:14px;display:inline-block"></span>';
-            h += '<span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(k);
-            if (isCur) h += ' <span style="color:var(--text-4);font-size:10px;margin-left:auto">(current)</span>';
+            if (hasKids) h += '<span class="mm-toggle" data-mm-toggle="' + uid + '">' + IC.chevRight + '</span>';
+            else h += '<span class="mm-toggle-space"></span>';
+            h += '<span class="gal-tree-icon">' + IC.folder + '</span> <span class="mm-name">' + esc(k) + '</span>';
+            if (isCur) h += '<span class="mm-current">' + _t("gallery.move.current", "Current") + '</span>';
             h += '</div>';
             if (hasKids) h += '<div class="mm-children" id="' + uid + '" style="display:none">' + buildMoveTree(n, depth + 1) + '</div>';
             h += '</div>';
@@ -1521,7 +1543,7 @@ function showMoveModal() {
     }
     let h = '<div class="gal-move-modal"><h3>Move ' + G.selectedImages.size + " file" + (G.selectedImages.size > 1 ? "s" : "") + '</h3><div class="mm-list">';
     h += buildMoveTree(tree, 0);
-    h += '</div><div class="mm-footer"><button class="gal-btn" id="gal-move-cancel">Cancel</button></div></div>';
+    h += '</div><div class="mm-footer"><span class="mm-hint">' + _t("gallery.move.hint", "Click a folder to move the files there.") + '</span><button class="gal-btn" id="gal-move-cancel">' + _t("dialog.cancel", "Cancel") + '</button></div></div>';
     bg.innerHTML = h;
     bg.addEventListener("click", e => {
         // Toggle collapse
@@ -1907,15 +1929,13 @@ function toggleFolderIdx(idx) { const key = _folderPaths[idx]; G.openFolders[key
 // ========================================================================
 
 function getFolderTotal() { if (!G.filter.folder) return G.stats.total_images || 0; let c = 0; G.folders.forEach(f => { if (f.folder === G.filter.folder || f.folder.indexOf(G.filter.folder + "\\") === 0) c += f.image_count; }); return c || G.filteredTotal; }
+// Rating pseudo-tags (negative ids from server)
+function buildRatingHtml() {
+    return G.characters.filter(c => c.id < 0).map(c => '<div class="gal-tag-item' + (G.filter.character === c.name ? " active" : "") + ' gal-rating-tag" data-tag="' + esc(c.name) + '" data-rating="' + (-c.id) + '"><span>' + esc(c.name) + '</span><span class="count">' + c.image_count + '</span></div>').join("");
+}
 function buildTagsHtml(allCount) {
-    let h = '<div class="gal-tag-item' + (G.filter.character === "" ? " active" : "") + '" data-tag="__all"><span>All</span><span class="count">' + allCount + '</span></div>';
-    // Rating pseudo-tags (negative ids from server)
-    const ratingTags = G.characters.filter(c => c.id < 0);
+    let h = '<div class="gal-tag-item' + (G.filter.character === "" ? " active" : "") + '" data-tag="__all"><span>' + _t("gallery.sidebar.all", "All") + '</span><span class="count">' + allCount + '</span></div>';
     const charTags = G.characters.filter(c => c.id >= 0);
-    if (ratingTags.length) {
-        h += '<div class="gal-tag-letter" style="opacity:0.7">\u2605 Ratings</div>';
-        ratingTags.forEach(c => { h += '<div class="gal-tag-item' + (G.filter.character === c.name ? " active" : "") + ' gal-rating-tag" data-tag="' + esc(c.name) + '" data-rating="' + (-c.id) + '"><span>' + esc(c.name) + '</span><span class="count">' + c.image_count + '</span></div>'; });
-    }
     const unknowns = [], grouped = {};
     charTags.forEach(c => { if (c.name.toLowerCase() === "unknown") { unknowns.push(c); return; } let first = c.name.charAt(0).toUpperCase(); if (!/[A-Z]/.test(first)) first = "#"; if (!grouped[first]) grouped[first] = []; grouped[first].push(c); });
     unknowns.forEach(c => { h += '<div class="gal-tag-item' + (G.filter.character === c.name ? " active" : "") + '" data-tag="' + esc(c.name) + '"><span>' + esc(c.name) + '</span><span class="count">' + c.image_count + '</span></div>'; });
@@ -1926,7 +1946,10 @@ function buildTagsHtml(allCount) {
         h += '</div>'; });
     return h;
 }
-function renderTagList() { const el = G._container.querySelector("#gal-tag-list"); if (el) el.innerHTML = buildTagsHtml(getFolderTotal()); }
+function renderTagList() {
+    const el = G._container.querySelector("#gal-tag-list"); if (el) el.innerHTML = buildTagsHtml(getFolderTotal());
+    const rl = G._container.querySelector("#gal-rating-list"); if (rl) { rl.innerHTML = buildRatingHtml(); rl.closest(".gal-side-section").hidden = !rl.innerHTML; }
+}
 function updateTagActive() { G._container.querySelectorAll(".gal-tag-item").forEach(el => { if (el.dataset.rating) { el.classList.toggle("active", parseInt(el.dataset.rating) === G.filter.rating); } else { el.classList.toggle("active", el.dataset.tag === (G.filter.character || "__all")); } }); }
 function updateFolderActive() { G._container.querySelectorAll(".gal-tree-toggle").forEach(el => { const idx = el.dataset.fidx; if (idx !== undefined) el.classList.toggle("active", _folderPaths[parseInt(idx)] === G.filter.folder); }); }
 function clickFolder(idx, e) {
@@ -1961,13 +1984,11 @@ function updateFolderSelection() {
     });
 }
 function renderFolderSidebar() {
-    const col = G._container?.querySelector(".gal-sidebar-col");
-    if (!col) return;
+    const body = G._container?.querySelector("#gal-folder-tree");
+    if (!body) return;
     _folderPaths = [];
-    const tree = buildFolderTree();
-    const titleHtml = '<div class="gal-sidebar-title"><span data-i18n="gallery.sidebar.folders">' + _t('gallery.sidebar.folders', 'Folders') + '</span></div>';
-    col.innerHTML = titleHtml + renderFolderNode(tree, 0) + '<div class="gal-link-folder-btn" id="gal-link-folder">' + IC.folderPlus + ' ' + _t("gallery.linkFolder", "Link new folder") + '</div>';
-    col.querySelector("#gal-link-folder")?.addEventListener("click", pickAndAddFolder);
+    body.innerHTML = folderTreeHtml(buildFolderTree());
+    body.querySelector("#gal-link-folder")?.addEventListener("click", pickAndAddFolder);
     updateFolderActive();
 }
 
@@ -2876,21 +2897,80 @@ function setupInfiniteScroll() { if (_scrollObs) _scrollObs.disconnect(); const 
 // MAIN RENDER
 // ========================================================================
 
-function renderMain() { const m = G._container.querySelector("#gal-main-area"); if (!m) { render(); return; } m.innerHTML = renderMainContent(); requestAnimationFrame(setupInfiniteScroll); updateTagActive(); updateFolderActive(); updateSelectionUI(); }
+function renderMain() { const m = G._container.querySelector("#gal-main-area"); if (!m) { render(); return; } m.innerHTML = renderMainContent(); requestAnimationFrame(setupInfiniteScroll); updateTagActive(); updateFolderActive(); updateSelectionUI(); updateFooterCount(); }
 function renderTopbar() {
-    return '<div class="gal-topbar"><div class="gal-search-box">' + IC.search + '<input type="text" placeholder="' + _t('gallery.search.placeholder', 'Search tags, filenames, metadata...') + '" value="' + esc(G.filter.search) + '" id="gal-search-input" autocomplete="off" /><div class="gal-suggest" id="gal-suggest"></div></div><div class="gal-sort-controls"><button class="gal-sort-btn' + (G.sort === "filename" ? " active" : "") + '" data-sort="filename">' + (G.sort === "filename" ? (G.order === "asc" ? "A\u2013Z" : "Z\u2013A") : "A\u2013Z") + '</button><button class="gal-sort-btn' + (G.sort === "folder" ? " active" : "") + '" data-sort="folder">' + _t('gallery.sort.folder', 'Folder') + '</button><button class="gal-sort-btn' + (G.sort === "newest" ? " active" : "") + '" data-sort="newest">' + (G.sort === "newest" ? (G.order === "desc" ? "Newest" : "Oldest") : "Newest") + '</button><button class="gal-sort-btn" data-sort="duplicates" title="' + _t('gallery.toolbar.findDuplicates', 'Find duplicates') + '">' + IC.duplicate + '</button><button class="gal-sort-btn" data-sort="rescan" title="' + _t('gallery.toolbar.scanFolders', 'Scan folders') + '"' + (G.loading ? " disabled" : "") + '>' + IC.refresh + '</button></div><div class="gal-sel-info" id="gal-sel-info" style="display:none"><span class="sel-count">0</span></div><div class="gal-cb-info" id="gal-cb-info" style="display:none"><span class="gal-cb-chip" id="gal-cb-chip"></span></div><div style="display:flex;gap:3px;align-items:center;margin-left:auto"><span class="gal-watcher-dot' + (G.watcherActive ? " active" : "") + '" id="gal-watcher-dot" title="' + (G.watcherActive ? "Auto-sync active" : "Auto-sync inactive") + '"></span><button class="gal-btn" id="gal-btn-explorer" disabled title="' + _t('gallery.toolbar.openExplorer', 'Open in Explorer') + '">' + IC.explorer + '</button><button class="gal-btn" id="gal-btn-move" disabled title="' + _t('gallery.toolbar.move', 'Move') + '">' + IC.move + '</button><button class="gal-btn" id="gal-btn-rename" disabled title="' + _t('gallery.toolbar.rename', 'Rename') + '">' + IC.edit + '</button><button class="gal-btn" id="gal-btn-tags" disabled title="' + _t('gallery.toolbar.editTags', 'Edit tags') + '">' + IC.tag + '</button><button class="gal-btn" id="gal-btn-convert" disabled title="' + _t('gallery.toolbar.convertFormat', 'Convert format') + '">' + IC.convert + '</button><button class="gal-btn" id="gal-btn-strip" disabled title="' + _t('gallery.toolbar.stripMetadata', 'Strip metadata') + '">' + IC.stripMeta + '</button><button class="gal-btn danger" id="gal-btn-delete" disabled title="' + _t('gallery.toolbar.delete', 'Delete') + '">' + IC.trash + '</button><button class="gal-btn settings' + (G.page === "settings" ? " active" : "") + '" id="gal-btn-settings" title="' + _t('gallery.toolbar.settings', 'Settings') + '">' + IC.settings + '</button></div></div>';
+    const seg = s => '<button type="button" class="gal-sort-btn gal-seg' + (G.sort === s ? " active" : "") + '" data-sort="' + s + '" aria-pressed="' + (G.sort === s) + '">' + sortSegLabel(s) + '</button>';
+    const tool = (s, icon, key, label, extra) => '<button type="button" class="gal-sort-btn gal-tool-btn" data-sort="' + s + '"' + (extra || "") + '>' + icon + '<span>' + _t(key, label) + '</span></button>';
+    return '<div class="gal-topbar">'
+        + '<div class="gal-search-box">' + IC.search + '<input type="text" placeholder="' + _t('gallery.search.placeholder', 'Search tags, file names, metadata…') + '" aria-label="' + _t('gallery.search.label', 'Search the Gallery') + '" value="' + esc(G.filter.search) + '" id="gal-search-input" autocomplete="off" /><div class="gal-suggest" id="gal-suggest"></div></div>'
+        + '<div class="gal-sort-controls" role="group" aria-label="' + _t('gallery.sort.label', 'Sort') + '">' + seg("filename") + seg("folder") + seg("newest") + '</div>'
+        + tool("duplicates", IC.duplicate, 'gallery.toolbar.duplicates', 'Duplicates', ' title="' + _t('gallery.toolbar.findDuplicates', 'Find duplicates') + '"')
+        + tool("rescan", IC.refresh, 'gallery.toolbar.rescan', 'Rescan', ' title="' + _t('gallery.toolbar.scanFolders', 'Scan folders') + '"' + (G.loading ? " disabled" : ""))
+        + '<div class="gal-cb-info" id="gal-cb-info" style="display:none"><span class="gal-cb-chip" id="gal-cb-chip"></span></div>'
+        + '<div class="gal-topbar-end">'
+        + '<label class="gal-size">' + IC.grid + '<input type="range" id="gal-thumb-size" min="120" max="320" step="10" value="' + G.thumbSize + '" aria-label="' + _t('gallery.toolbar.thumbSize', 'Thumbnail size') + '"></label>'
+        + '<span class="gal-topbar-sep"></span>'
+        + '<span class="gal-sync" id="gal-sync"><span class="gal-watcher-dot' + (G.watcherActive ? " active" : "") + '" id="gal-watcher-dot"></span><span id="gal-watcher-label">' + (G.watcherActive ? _t("gallery.autoSync.on", "Auto-sync on") : _t("gallery.autoSync.off", "Auto-sync off")) + '</span></span>'
+        + '<button class="gal-btn settings' + (G.page === "settings" ? " active" : "") + '" id="gal-btn-settings" title="' + _t('gallery.toolbar.settings', 'Settings') + '" aria-label="' + _t('gallery.toolbar.settings', 'Settings') + '">' + IC.settings + '</button>'
+        + '</div></div>';
 }
+function renderSelectionBar() {
+    const act = (id, icon, key, label, cls) => '<button type="button" class="gal-btn gal-selbar-btn' + (cls || "") + '" id="' + id + '" disabled title="' + _t(key, label) + '">' + icon + '<span>' + _t(key, label) + '</span></button>';
+    return '<div class="gal-selbar" id="gal-sel-bar" role="toolbar" aria-label="' + _t('gallery.selection.label', 'Selected pictures') + '" hidden>'
+        + '<div class="gal-sel-info" id="gal-sel-info"><span class="sel-count"></span></div><span class="gal-selbar-sep"></span>'
+        + act("gal-btn-explorer", IC.explorer, 'gallery.toolbar.openExplorer', 'Open in Explorer')
+        + act("gal-btn-move", IC.move, 'gallery.toolbar.move', 'Move')
+        + act("gal-btn-rename", IC.edit, 'gallery.toolbar.rename', 'Rename')
+        + act("gal-btn-tags", IC.tag, 'gallery.toolbar.editTags', 'Edit tags')
+        + act("gal-btn-convert", IC.convert, 'gallery.toolbar.convertFormat', 'Convert format')
+        + act("gal-btn-strip", IC.stripMeta, 'gallery.toolbar.stripMetadata', 'Strip metadata')
+        + act("gal-btn-delete", IC.trash, 'gallery.toolbar.delete', 'Delete', " danger")
+        + '<span class="gal-selbar-sep"></span><button type="button" class="gal-btn gal-selbar-clear" id="gal-btn-clear-sel" title="' + _t('gallery.selection.clear', 'Clear selection') + '" aria-label="' + _t('gallery.selection.clear', 'Clear selection') + '">' + IC.close + '</button>'
+        + '</div>';
+}
+function sideSection(key, titleKey, title, bodyId, body, hidden) {
+    const closed = G.closedSections.has(key);
+    return '<div class="gal-side-section' + (closed ? " collapsed" : "") + '" data-section="' + key + '"' + (hidden ? " hidden" : "") + '><button type="button" class="gal-sidebar-title gal-side-toggle" aria-expanded="' + !closed + '" aria-controls="' + bodyId + '">' + IC.chevDown + '<span data-i18n="' + titleKey + '">' + _t(titleKey, title) + '</span></button><div class="gal-side-body" id="' + bodyId + '">' + body + '</div></div>';
+}
+function folderTreeHtml(tree) { return renderFolderNode(tree, 0) + '<div class="gal-link-folder-btn" id="gal-link-folder">' + IC.folderPlus + ' ' + _t("gallery.linkFolder", "Link new folder") + '</div>'; }
+function toggleSideSection(key) {
+    if (G.closedSections.has(key)) G.closedSections.delete(key); else G.closedSections.add(key);
+    localStorage.setItem("gal_closedSections", JSON.stringify([...G.closedSections]));
+    const sec = G._container.querySelector('.gal-side-section[data-section="' + key + '"]'); if (!sec) return;
+    const closed = G.closedSections.has(key);
+    sec.classList.toggle("collapsed", closed);
+    sec.querySelector(".gal-side-toggle")?.setAttribute("aria-expanded", String(!closed));
+}
+function updateFooterCount() {
+    const el = G._container?.querySelector("#gal-footer-count"); if (!el) return;
+    const n = G.filteredTotal || 0;
+    const folder = G.filter.folder ? G.filter.folder.split(/[\\/]/).filter(Boolean).pop() : "";
+    el.textContent = folder
+        ? _tp("gallery.footer.countIn", n, n + (n === 1 ? " picture in " : " pictures in ") + folder, { n: n, folder: folder })
+        : _tp("gallery.footer.count", n, n + (n === 1 ? " picture" : " pictures"), { n: n });
+}
+function applyThumbSize() { G._container?.querySelector(".gal-layout")?.style.setProperty("--gal-thumb", G.thumbSize + "px"); }
 function renderSetup() { return '<div class="gal-setup"><div class="gal-setup-card"><h2>Gallery</h2><p data-i18n="gallery.setup.text">' + _t("gallery.setup.text", "Add a folder containing your images to get started.") + '</p><button class="gal-btn-primary" id="gal-setup-btn">' + IC.folderPlus + " " + _t("gallery.setup.button", "Choose folder & scan") + '</button></div></div>'; }
 
 async function render() {
     const c = G._container; if (!c) return;
     if (!G.initialized) { c.innerHTML = renderSetup(); c.querySelector("#gal-setup-btn")?.addEventListener("click", pickAndAddFolder); return; }
     _folderPaths = []; const tree = buildFolderTree(); const allCount = getFolderTotal();
-    const sb = '<div class="gal-sidebar" style="--folder-col-w:' + G.folderColW + 'px;--tag-col-w:' + G.tagColW + 'px"><div class="gal-sidebar-col-wrap folders-wrap"><div class="gal-sidebar-col"><div class="gal-sidebar-title"><span>Folders</span></div>' + renderFolderNode(tree, 0) + '<div class="gal-link-folder-btn" id="gal-link-folder">' + IC.folderPlus + ' Link new folder</div></div><div class="gal-col-resizer" data-resize="folder"></div></div><div class="gal-sidebar-col-wrap tags-wrap"><div class="gal-sidebar-col"><div class="gal-sidebar-title" data-i18n="gallery.sidebar.tags">' + _t('gallery.sidebar.tags', 'Tags') + '</div><div class="gal-tag-list" id="gal-tag-list">' + buildTagsHtml(allCount) + '</div></div><div class="gal-col-resizer" data-resize="tag"></div></div></div>';
+    const ratingHtml = buildRatingHtml();
+    const sb = '<div class="gal-sidebar" style="--side-w:' + G.sideW + 'px"><div class="gal-sidebar-col">'
+        + sideSection("folders", "gallery.sidebar.folders", "Folders", "gal-folder-tree", folderTreeHtml(tree))
+        + sideSection("rating", "gallery.sidebar.rating", "Rating", "gal-rating-list", ratingHtml, !ratingHtml)
+        + sideSection("tags", "gallery.sidebar.tags", "Tags", "gal-tag-list", buildTagsHtml(allCount))
+        + '</div><div class="gal-col-resizer" data-resize="side"></div></div>';
     const mc = G.page === "settings" ? await renderSettingsView() : renderMainContent();
-    c.innerHTML = '<div class="gal-layout">' + renderTopbar() + sb + '<div class="gal-main" id="gal-main-area">' + mc + '</div><div class="gal-credit">Powered by <strong>TrackImage</strong> by Moritz</div></div>';
+    // The selection bar sits beside .gal-main, not in it: a click on empty
+    // grid space clears the selection, and the bar must not count as one.
+    c.innerHTML = '<div class="gal-layout">' + renderTopbar() + sb + '<div class="gal-main-wrap"><div class="gal-main" id="gal-main-area">' + mc + '</div>' + renderSelectionBar() + '</div><div class="gal-footer"><span id="gal-footer-count"></span><span class="gal-credit">Powered by <strong>TrackImage</strong> by Moritz</span></div></div>';
+    applyThumbSize();
     if (G.page !== "settings") requestAnimationFrame(setupInfiniteScroll);
     wireGlobalEvents();
+    updateSelectionBar();
+    updateFooterCount();
 }
 
 // ========================================================================
@@ -2899,34 +2979,28 @@ async function render() {
 
 function setupResizers() {
     const c = G._container;
-    c.querySelectorAll(".gal-col-resizer").forEach(handle => {
-        handle.addEventListener("mousedown", e => {
-            e.preventDefault();
-            const which = handle.dataset.resize; // "folder" or "tag"
-            const wrap = handle.closest(".gal-sidebar-col-wrap");
-            if (!wrap) return;
-            const startX = e.clientX;
-            const startW = wrap.getBoundingClientRect().width;
-            const sidebar = c.querySelector(".gal-sidebar");
-            const onMove = ev => {
-                const delta = ev.clientX - startX;
-                const newW = Math.max(120, Math.min(500, startW + delta));
-                if (which === "folder") { G.folderColW = newW; sidebar.style.setProperty("--folder-col-w", newW + "px"); }
-                else { G.tagColW = newW; sidebar.style.setProperty("--tag-col-w", newW + "px"); }
-            };
-            const onUp = () => {
-                document.removeEventListener("mousemove", onMove);
-                document.removeEventListener("mouseup", onUp);
-                document.body.style.cursor = "";
-                document.body.style.userSelect = "";
-                localStorage.setItem("gal_folderColW", G.folderColW);
-                localStorage.setItem("gal_tagColW", G.tagColW);
-            };
-            document.body.style.cursor = "col-resize";
-            document.body.style.userSelect = "none";
-            document.addEventListener("mousemove", onMove);
-            document.addEventListener("mouseup", onUp);
-        });
+    const handle = c.querySelector(".gal-col-resizer");
+    const sidebar = c.querySelector(".gal-sidebar");
+    if (!handle || !sidebar) return;
+    handle.addEventListener("mousedown", e => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startW = sidebar.getBoundingClientRect().width;
+        const onMove = ev => {
+            G.sideW = Math.max(180, Math.min(480, startW + ev.clientX - startX));
+            sidebar.style.setProperty("--side-w", G.sideW + "px");
+        };
+        const onUp = () => {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            localStorage.setItem("gal_sideW", G.sideW);
+        };
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
     });
 }
 
@@ -2944,6 +3018,10 @@ function wireGlobalEvents() {
     c.querySelector("#gal-btn-convert")?.addEventListener("click", convertSelected);
     c.querySelector("#gal-btn-strip")?.addEventListener("click", bulkStripMetadataSelected);
     c.querySelector("#gal-btn-delete")?.addEventListener("click", bulkDeleteSelected);
+    c.querySelector("#gal-btn-clear-sel")?.addEventListener("click", clearSelection);
+    const size = c.querySelector("#gal-thumb-size");
+    size?.addEventListener("input", () => { G.thumbSize = parseInt(size.value); applyThumbSize(); });
+    size?.addEventListener("change", () => localStorage.setItem("gal_thumbSize", G.thumbSize));
     c.querySelector("#gal-btn-settings")?.addEventListener("click", () => { G.page = G.page === "settings" ? "gallery" : "settings"; render(); });
     c.querySelector("#gal-link-folder")?.addEventListener("click", pickAndAddFolder);
     const igInp = c.querySelector("#gal-ignore-input");
@@ -2952,7 +3030,7 @@ function wireGlobalEvents() {
     if (_evtController) _evtController.abort();
     _evtController = new AbortController();
     const sig = { signal: _evtController.signal };
-    c.addEventListener("click", e => { const ti = e.target.closest(".gal-tag-item"); if (ti) { if (ti.dataset.rating) { filterByRating(parseInt(ti.dataset.rating)); } else { filterByCharacter(ti.dataset.tag === "__all" ? "" : ti.dataset.tag); } return; } const tl = e.target.closest(".gal-tag-letter"); if (tl) { const l = tl.dataset.letter; G.openTagGroups[l] = G.openTagGroups[l] === false; const grp = c.querySelector('.gal-tag-group[data-tag-group="' + l + '"]'); const arr = c.querySelector('[data-tga="' + l + '"]'); if (grp) grp.classList.toggle("open", G.openTagGroups[l] !== false); if (arr) arr.classList.toggle("open", G.openTagGroups[l] !== false); } }, sig);
+    c.addEventListener("click", e => { const st = e.target.closest(".gal-side-toggle"); if (st) { toggleSideSection(st.closest(".gal-side-section").dataset.section); return; } const ti = e.target.closest(".gal-tag-item"); if (ti) { if (ti.dataset.rating) { filterByRating(parseInt(ti.dataset.rating)); } else { filterByCharacter(ti.dataset.tag === "__all" ? "" : ti.dataset.tag); } return; } const tl = e.target.closest(".gal-tag-letter"); if (tl) { const l = tl.dataset.letter; G.openTagGroups[l] = G.openTagGroups[l] === false; const grp = c.querySelector('.gal-tag-group[data-tag-group="' + l + '"]'); const arr = c.querySelector('[data-tga="' + l + '"]'); if (grp) grp.classList.toggle("open", G.openTagGroups[l] !== false); if (arr) arr.classList.toggle("open", G.openTagGroups[l] !== false); } }, sig);
     c.addEventListener("click", e => { const ar = e.target.closest("[data-toggle-folder]"); if (ar) { e.stopPropagation(); toggleFolderIdx(parseInt(ar.dataset.toggleFolder)); return; } const fc = e.target.closest("[data-click-folder]"); if (fc) { clickFolder(parseInt(fc.dataset.clickFolder), e); return; } const t = e.target.closest(".gal-tree-toggle"); if (t && !ar && !fc) { const idx = parseInt(t.dataset.fidx); if (!isNaN(idx)) clickFolder(idx, e); } }, sig);
     c.addEventListener("dblclick", e => { const t = e.target.closest(".gal-tree-toggle"); if (!t) return; const idx = parseInt(t.dataset.fidx); if (isNaN(idx)) return; const fp = _folderPaths[idx]; if (!fp) return; const node = findFolderNode(fp); if (node && Object.keys(node.children).length > 0) { e.preventDefault(); toggleFolderIdx(idx); } }, sig);
     c.addEventListener("contextmenu", e => { const t = e.target.closest(".gal-tree-toggle"); if (t) { const idx = parseInt(t.dataset.fidx); if (!isNaN(idx)) showFolderCtx(e, idx); } }, sig);

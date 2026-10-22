@@ -797,3 +797,103 @@ body.develop-active #canvasArea canvas {
 .develop-local-missing, .develop-local-empty { font-size: 11px; color: var(--text-3); margin: 2px 0 6px; }
 .develop-local-missing { color: var(--yellow); }
 .develop-local-add { margin-top: 8px; width: 100%; }
+
+
+/* ═══════════════════════════════════════════
+   DEVELOP REFRESH (DR1) — direction B, board DevelopRefined
+   A labelled switch, presets on top, Gallery-voice section headers with a
+   "N changed" count, caption groups, changed values in the accent, local
+   cards that show what moved.
+   ═══════════════════════════════════════════ */
+
+.develop-panel-header { height: 44px; gap: 8px; padding: 0 12px 0 14px; }
+.develop-panel-title { font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; flex: none; }
+.develop-toggle { width: 30px; height: 18px; border-radius: 9px; margin-left: 4px; }
+.develop-toggle::after { top: 2px; left: 2px; width: 12px; height: 12px; }
+.develop-toggle.on::after { transform: translateX(12px); background: var(--on-accent); }
+.develop-toggle-label { font-size: 11.5px; color: var(--text-2); }
+.develop-toggle-label .when-on { display: none; }
+.develop-toggle.on + .develop-toggle-label .when-on { display: inline; }
+.develop-toggle.on + .develop-toggle-label .when-off { display: none; }
+.develop-header-spacer { flex: 1; }
+.develop-header-btn.develop-compare-btn, .develop-header-btn.develop-reset-btn {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 6px;
+    font-size: 11.5px; white-space: nowrap; color: var(--text-2);
+}
+.develop-header-btn.develop-compare-btn { background: var(--bg-raised); border: 1px solid var(--border-subtle); }
+.develop-header-btn.develop-reset-btn { background: none; border: none; color: var(--text-3); padding: 0 6px; }
+.develop-header-btn.develop-reset-btn:hover { color: var(--text-1); }
+
+/* Presets on top: a row, no header. */
+.develop-presets-top { border-bottom: 1px solid var(--border-subtle); }
+.develop-presets-top > .develop-section-header { display: none; }
+.develop-presets-top > .develop-section-body { display: block; padding: 10px 14px; }
+.develop-presets-top .develop-presets-row { gap: 6px; }
+.develop-presets-top .develop-presets-select { height: 28px; border-radius: 6px; font-size: 12px; background: var(--bg-input); border-color: var(--border-subtle); color: var(--text-2); }
+.develop-presets-top .develop-preset-save { height: 28px; padding: 0 9px; border-radius: 6px; font-size: 11.5px; }
+
+.develop-histogram-wrap { padding: 10px 14px 8px; border-bottom-color: var(--border-subtle); }
+
+/* Section headers in the Gallery sidebar's voice. */
+.develop-section + .develop-section { border-top: 1px solid var(--border-subtle); }
+.develop-section-header {
+    height: auto; padding: 10px 14px; font-family: var(--mono); font-size: 10px; font-weight: 600;
+    letter-spacing: 1px; color: var(--text-3); gap: 6px;
+}
+.develop-section:not(.collapsed) > .develop-section-header { color: var(--text-2); }
+.develop-section-arrow { display: inline-flex; width: auto; font-size: 0; transition: transform 0.15s ease; }
+.develop-section.collapsed > .develop-section-header .develop-section-arrow { transform: rotate(-90deg); }
+.develop-section-count { margin-left: auto; font-family: var(--font); font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-3); }
+.develop-section.has-changes > .develop-section-header > span:nth-child(2)::after {
+    content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 3px; background: var(--accent); vertical-align: middle;
+}
+.develop-section-body { padding: 0 14px 12px; }
+.develop-section-heading { font-family: var(--font); font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-3); margin: 10px 0 2px; }
+
+/* The three pickers, one row. */
+.develop-calib-caption { margin-top: 2px; }
+.develop-calib-block { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 4px; padding: 0; border-bottom: none; }
+.develop-calib-row {
+    position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 6px;
+    border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-input);
+}
+.develop-calib-row .develop-calib-pick { position: absolute; inset: 0; width: auto; height: auto; border: none; background: none; opacity: 0; cursor: pointer; }
+.develop-calib-row .develop-calib-label { font-size: 11px; color: var(--text-2); white-space: nowrap; pointer-events: none; }
+.develop-calib-row .develop-calib-status { display: none; }
+.develop-calib-row.calibrated { border-color: var(--accent); background: var(--accent-dim); }
+.develop-calib-row.calibrated .develop-calib-label { color: var(--accent); }
+.develop-calib-row .develop-calib-clear { position: relative; z-index: 1; display: none; }
+.develop-calib-row.calibrated .develop-calib-clear { display: inline-flex; }
+.develop-calib-row .develop-calib-pick.armed { opacity: 0.25; background: var(--accent); }
+
+/* Slider rows: readable labels, quiet values, the accent when changed. */
+.develop-row { height: 26px; gap: 10px; }
+.develop-row-label { width: 84px; font-size: 12px; color: var(--text-2); }
+.develop-row input[type="range"]::-webkit-slider-runnable-track { background: var(--border-hover); }
+.develop-row input[type="range"]::-moz-range-track { background: var(--border-hover); }
+.develop-row input[type="number"] {
+    width: 40px; border: 1px solid transparent; background: none; font-size: 11px; color: var(--text-3); -moz-appearance: textfield;
+}
+.develop-row input[type="number"]:hover, .develop-row input[type="number"]:focus { border-color: var(--border-subtle); background: var(--bg-input); color: var(--text-1); }
+.develop-row.modified input[type="number"] { color: var(--accent); }
+
+/* Local adjustment cards. */
+.develop-local-card { border-color: var(--border); border-radius: 8px; background: var(--bg-raised); padding: 8px 10px 6px; }
+.develop-local-head { gap: 8px; margin-bottom: 6px; }
+.develop-local-mask { height: 28px; border-radius: 6px; font-size: 12px; border: 1px solid var(--border-subtle); padding: 0 8px; }
+.develop-local-on {
+    appearance: none; -webkit-appearance: none; position: relative; width: 28px; height: 16px; margin: 0; flex-shrink: 0;
+    border-radius: 8px; border: 1px solid var(--border-hover); background: var(--bg-input); cursor: pointer;
+}
+.develop-local-on::after { content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 5px; background: var(--text-3); transition: transform 0.15s ease; }
+.develop-local-on:checked { background: var(--accent); border-color: var(--accent); }
+.develop-local-on:checked::after { transform: translateX(12px); background: var(--on-accent); }
+.develop-header-btn.develop-local-remove { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; background: none; color: var(--text-3); }
+.develop-header-btn.develop-local-remove:hover { color: var(--red); }
+.develop-local-card:not(.show-all) .develop-local-idle { display: none; }
+.develop-local-more {
+    display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 4px 0; border: none; background: none;
+    font-family: var(--font); font-size: 11.5px; color: var(--text-3); cursor: pointer;
+}
+.develop-local-more:hover { color: var(--text-1); }
+.develop-local-add { height: 28px; border-radius: 6px; font-size: 12px; }

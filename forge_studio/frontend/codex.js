@@ -48,6 +48,17 @@ var CATEGORIES = [
 
 // Translate a category label via its i18nKey, falling back to the
 // English label embedded in the CATEGORIES table.
+function _svg(d, w) {
+  return '<svg width="' + (w || 12) + '" height="' + (w || 12) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+}
+var IC = {
+  chev: _svg('<polyline points="9 6 15 12 9 18"/>', 10),
+  home: _svg('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>', 13),
+  play: '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="7 4 20 12 7 20"/></svg>',
+};
+
+function _esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
 function _catLabel(cat) {
   return cat ? _t(cat.i18nKey || "", cat.label) : "";
 }
@@ -193,16 +204,39 @@ function _search(q) {
 }
 
 function _buildUI(c) {
-  c.innerHTML = '<div class="cx-layout"><div class="cx-nav"><div class="cx-search-wrap"><input type="text" class="cx-search" id="cxSearch" data-i18n-placeholder="codex.search.placeholder" placeholder="' + _t("codex.search.placeholder", "Search docs...") + '" autocomplete="off"></div><div class="cx-tree" id="cxTree"></div></div><div class="cx-content" id="cxContent"></div></div>';
+  c.innerHTML = '<div class="cx-layout"><div class="cx-main"><div class="cx-nav"><div class="cx-search-wrap"><input type="text" class="cx-search" id="cxSearch" data-i18n-placeholder="codex.search.placeholder" placeholder="' + _t("codex.search.placeholder", "Search tools, settings, shortcuts\u2026") + '" autocomplete="off"></div>'
+    + '<button type="button" class="cx-home" id="cxHome">' + IC.home + '<span data-i18n="codex.nav.home">' + _t("codex.nav.home", "Codex home") + '</span></button>'
+    + '<div class="cx-tree" id="cxTree"></div></div><div class="cx-content" id="cxContent"></div></div>'
+    + '<div class="cx-footer"><span class="cx-footer-count" id="cxFooterCount"></span><span id="cxFooterQuick"></span></div></div>';
   _els.search = c.querySelector("#cxSearch");
   _els.tree = c.querySelector("#cxTree");
   _els.content = c.querySelector("#cxContent");
+  _els.footerCount = c.querySelector("#cxFooterCount");
+  _els.footerQuick = c.querySelector("#cxFooterQuick");
+  c.querySelector("#cxHome").addEventListener("click", _goHome);
+  _renderFooter();
+  window.addEventListener("i18n:change", _renderFooter);
   _renderTree(ENTRIES);
   _els.search.addEventListener("input", function () {
     var q = _els.search.value;
     _renderTree(_search(q), q.trim().length > 0);
   });
   _renderWelcome();
+}
+
+function _goHome() {
+  _selectedEntry = null;
+  _els.tree.querySelectorAll(".cx-entry.active").forEach(function (b) { b.classList.remove("active"); });
+  _renderWelcome();
+  _els.content.scrollTop = 0;
+}
+
+function _renderFooter() {
+  if (!_els.footerCount) return;
+  _els.footerCount.textContent = _t("codex.footer.count", "{entries} entries \u00b7 {categories} categories")
+    .replace("{entries}", ENTRIES.length).replace("{categories}", CATEGORIES.length);
+  _els.footerQuick.innerHTML = _esc(_t("codex.footer.quickRef", "On Canvas, press {key} for Quick Reference"))
+    .replace("{key}", '<span class="cx-kbd">?</span>');
 }
 
 function _renderTree(entries, forceOpen) {
@@ -216,11 +250,11 @@ function _renderTree(entries, forceOpen) {
     html += '<div class="cx-category' + (open ? ' open' : '') + '" data-cat="' + cat.id + '">';
     // Label gets its own span so applyToDom() can re-translate just the
     // text without clobbering the leading arrow span on locale switch.
-    html += '<div class="cx-cat-title" data-cat-toggle="' + cat.id + '"><span class="cx-cat-arrow">\u25b6</span><span data-i18n="' + (cat.i18nKey || "") + '">' + _catLabel(cat) + '</span></div>';
+    html += '<button type="button" class="cx-cat-title" data-cat-toggle="' + cat.id + '" aria-expanded="' + open + '"><span class="cx-cat-arrow">' + IC.chev + '</span><span data-i18n="' + (cat.i18nKey || "") + '">' + _catLabel(cat) + '</span><span class="cx-cat-count">' + ce.length + '</span></button>';
     html += '<div class="cx-cat-entries">';
     ce.forEach(function (e) {
       var a = (_selectedEntry && _selectedEntry.id === e.id) ? " active" : "";
-      var sc = e.shortcut ? ' <span style="float:right;color:var(--text-4);font-family:var(--mono);font-size:9px;">' + e.shortcut + '</span>' : "";
+      var sc = e.shortcut ? '<span class="cx-entry-key">' + e.shortcut + '</span>' : "";
       // Title in its own data-i18n span so applyToDom() retranslates on
       // locale switch without clobbering the trailing shortcut hint.
       html += '<button class="cx-entry' + a + '" data-id="' + e.id + '"><span data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</span>' + sc + '</button>';
@@ -233,7 +267,7 @@ function _renderTree(entries, forceOpen) {
   _els.tree.querySelectorAll(".cx-cat-title").forEach(function (t) {
     t.addEventListener("click", function () {
       var cat = t.closest(".cx-category");
-      if (cat) cat.classList.toggle("open");
+      if (cat) t.setAttribute("aria-expanded", String(cat.classList.toggle("open")));
     });
   });
   // Entry click
@@ -249,19 +283,19 @@ function _selectEntry(e) {
   _selectedEntry = e;
   // Auto-expand the selected entry's category, collapse others
   _els.tree.querySelectorAll(".cx-category").forEach(function (cat) {
-    if (cat.dataset.cat === e.category) cat.classList.add("open");
+    if (cat.dataset.cat === e.category) { cat.classList.add("open"); cat.querySelector(".cx-cat-title").setAttribute("aria-expanded", "true"); }
   });
   _els.tree.querySelectorAll(".cx-entry").forEach(function (b) { b.classList.toggle("active", b.dataset.id === e.id); });
   var cat = CATEGORIES.find(function (c) { return c.id === e.category; });
   var content = _t("codex.entry." + e.id + ".content", e.content || "");
-  var sc = e.shortcut ? '<p style="margin-bottom:12px;"><span class="cx-kbd">' + e.shortcut + '</span></p>' : "";
+  var sc = e.shortcut ? '<span class="cx-article-shortcut"><span data-i18n="codex.shortcut">' + _t("codex.shortcut", "Shortcut") + '</span><span class="cx-kbd">' + e.shortcut + '</span></span>' : "";
 
   var deepHtml = "";
   // The bodies moved to the locales (CX1), so `e.deep` is unset and the
   // section never showed; the locale decides now (RG4).
   var deep = _t("codex.entry." + e.id + ".deep", e.deep || "");
   if (deep) {
-    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + deep + '</div></div>';
+    deepHtml = _deepHtml(deep);
   }
 
   var showMeHtml = "";
@@ -269,16 +303,33 @@ function _selectEntry(e) {
     var variants = StudioShowMe.forEntry(e.id);
     showMeHtml = '<div class="cx-showme">';
     variants.forEach(function (v) {
-      showMeHtml += '<button class="cx-showme-btn" data-showme="' + v.id + '">' + v.label + '</button>';
+      showMeHtml += '<button type="button" class="cx-showme-btn" data-showme="' + v.id + '">' + IC.play + '<span>' + v.label + '</span></button>';
     });
     showMeHtml += '</div>';
   }
 
-  _els.content.innerHTML = '<div class="cx-article"><div class="cx-article-category" data-i18n="' + (cat ? (cat.i18nKey || "") : "") + '">' + _catLabel(cat) + '</div><div class="cx-article-title" data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + content + '</div>' + deepHtml + '</div>';
+  var meta = (sc || showMeHtml) ? '<div class="cx-article-meta">' + sc + (sc && showMeHtml ? '<span class="cx-article-sep"></span>' : "") + showMeHtml + '</div>' : "";
+  _els.content.innerHTML = '<div class="cx-article"><div class="cx-article-category" data-i18n="' + (cat ? (cat.i18nKey || "") : "") + '">' + _catLabel(cat) + '</div><h1 class="cx-article-title" data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</h1>' + meta + '<div class="cx-article-body">' + content + '</div>' + deepHtml + '</div>';
+  _els.content.scrollTop = 0;
+  _wireDeep(_els.content);
 
   // Wire Show Me buttons
   _els.content.querySelectorAll("[data-showme]").forEach(function (btn) {
     btn.addEventListener("click", function () { StudioShowMe.run(btn.dataset.showme); });
+  });
+}
+
+// "Under the Hood" opens with a listener: the page's CSP allows no inline
+// handlers, so the onclick this used to carry never ran.
+function _deepHtml(deep) {
+  return '<div class="cx-deep"><button type="button" class="cx-deep-toggle" aria-expanded="false">' + IC.chev + '<span data-i18n="codex.deepToggle">' + _t("codex.deepToggle", "Under the Hood") + '</span><span class="cx-deep-hint" data-i18n="codex.deepToggle.hint">' + _t("codex.deepToggle.hint", "technical detail") + '</span></button><div class="cx-deep-body">' + deep + '</div></div>';
+}
+
+function _wireDeep(root) {
+  root.querySelectorAll(".cx-deep-toggle").forEach(function (b) {
+    b.addEventListener("click", function () {
+      b.setAttribute("aria-expanded", String(b.parentElement.classList.toggle("open")));
+    });
   });
 }
 
@@ -345,7 +396,7 @@ function _buildPopover() {
     var btn = document.createElement("button");
     btn.className = "tool-btn cx-pop-toggle";
     btn.id = "cxPopToggle";
-    btn.textContent = "?";
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6"/><line x1="12" y1="17" x2="12" y2="17.01"/></svg>';
     btn.addEventListener("click", function (ev) { ev.preventDefault(); _togglePopover(); });
     if (spacer) toolstrip.insertBefore(btn, spacer);
     else toolstrip.appendChild(btn);
@@ -483,14 +534,14 @@ function _popSelectEntry(e) {
   // section never showed; the locale decides now (RG4).
   var deep = _t("codex.entry." + e.id + ".deep", e.deep || "");
   if (deep) {
-    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + deep + '</div></div>';
+    deepHtml = _deepHtml(deep);
   }
   var showMeHtml = "";
   if (window.StudioShowMe && StudioShowMe.has(e.id)) {
     var variants = StudioShowMe.forEntry(e.id);
     showMeHtml = '<div class="cx-showme">';
     variants.forEach(function (v) {
-      showMeHtml += '<button class="cx-showme-btn" data-showme="' + v.id + '">' + v.label + '</button>';
+      showMeHtml += '<button type="button" class="cx-showme-btn" data-showme="' + v.id + '">' + IC.play + '<span>' + v.label + '</span></button>';
     });
     showMeHtml += '</div>';
   }
@@ -499,6 +550,7 @@ function _popSelectEntry(e) {
   _popEls.results.style.display = "none";
   _popEls.article.style.display = "block";
   _popEls.article.scrollTop = 0;
+  _wireDeep(_popEls.article);
 
   // Wire Show Me buttons
   _popEls.article.querySelectorAll("[data-showme]").forEach(function (btn) {
@@ -526,7 +578,7 @@ function _popSelectEntry(e) {
 
 if (window.StudioModules) {
   StudioModules.register("codex", {
-    label: "Codex", icon: "\u229e",
+    label: "Codex", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4z"/><path d="M20 4h-6a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h6z"/></svg>',
     init: function (container) {
       console.log(TAG, "Initializing Codex v" + VERSION);
       if (!document.querySelector('link[href*="codex.css"]')) {

@@ -968,11 +968,11 @@
     // Rough estimate: ~2-4s per LoRA cold (hash + HTTP + preview), ~1s warm.
     const estSec = Math.round(missing.length * 2.5);
     const estLabel = estSec >= 60 ? `~${Math.ceil(estSec / 60)} min` : `~${estSec} s`;
-    const ok = window.confirm(_t("lora.civitai.confirmFetch",
+    const ok = await studioConfirm(_t("lora.civitai.confirmFetch",
       "Fetch Civitai metadata for {count} LoRA(s) in “{folder}”?\n\n" +
       "This sends file hashes (not filenames or prompts) to civitai.com.\n" +
       "Estimated time: {time}. You can cancel mid-way.",
-      { count: missing.length, folder: label, time: estLabel }));
+      { count: missing.length, folder: label, time: estLabel }), { confirm: _t("dialog.fetch", "Fetch") });
     if (!ok) return;
 
     // Per-LoRA loop with live progress + cancel, so 100+ LoRAs feels

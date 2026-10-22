@@ -22,30 +22,53 @@ function _t(key, fallback) {
 // WORKSHOP TOUR
 // ========================================================================
 
+// A module whose tab is hidden (its service is absent) has nothing to tour.
+function _available(id) {
+  var tab = document.querySelector('button[data-module="' + id + '"]');
+  return !!(window.StudioModules && StudioModules.has(id) && tab && !tab.hidden);
+}
+
 if (window.StudioModules) {
 
   StudioModules.onInit("workshop", function () {
     if (_seen("workshop") || !window.StudioTour) return;
     _markSeen("workshop");
+    _runWorkshop();
+  });
 
+  StudioModules.onInit("gallery", function () {
+    if (_seen("gallery") || !window.StudioTour) return;
+    _markSeen("gallery");
+    _runGallery();
+  });
+
+} else {
+  console.warn(TAG, "StudioModules not available");
+}
+
+function _runWorkshop() {
     setTimeout(function () {
       StudioTour.create({
         id: "tour-workshop",
+        title: _t("moduleTour.workshop.name", "Workshop tour"),
         steps: [
           {
             id: "ws_merge",
+            title: _t("moduleTour.workshop.merge.title", "Merge board"),
             text: _t("moduleTour.workshop.merge.text", "This is the <em>Workshop</em> — where you merge and combine AI models.\n\nThe <em>merge board</em> has one row per step: pick a <em>Primary</em> and a <em>Secondary</em> model, a <em>Method</em> (Weighted Sum, SLERP or Add Difference) and a blend weight. Add rows to chain steps."),
             spotlight: ".ws-board",
             advance: "click", btn: _t("moduleTour.workshop.merge.btn", "Next")
           },
           {
             id: "ws_actions",
+            title: _t("moduleTour.workshop.actions.title", "Begin merge"),
             text: _t("moduleTour.workshop.actions.text", "<em>Begin Merge</em> writes the result as a new checkpoint in your first checkpoint folder. An existing file is never overwritten.\n\nYou can also bake a LoRA or a VAE into the result from the same recipe."),
             spotlight: ".ws-action-row",
             advance: "click", btn: _t("moduleTour.workshop.actions.btn", "Next")
           },
           {
             id: "ws_history",
+            title: _t("moduleTour.workshop.history.title", "History"),
             text: _t("moduleTour.workshop.history.text", "The <em>History</em> tab keeps a journal of every merge you’ve done — recipe, settings, and notes. You can rate, tag, and search your experiments.\n\nCheck the <em>Codex</em> for details on each merge method."),
             spotlight: ".ws-tabs",
             advance: "click", btn: _t("moduleTour.workshop.history.btn", "Got it")
@@ -57,16 +80,13 @@ if (window.StudioModules) {
         confirmCancel: false,
       }).start(0);
     }, 600);
-  });
+}
 
-  // ========================================================================
-  // GALLERY TOUR
-  // ========================================================================
+// ========================================================================
+// GALLERY TOUR
+// ========================================================================
 
-  StudioModules.onInit("gallery", function () {
-    if (_seen("gallery") || !window.StudioTour) return;
-    _markSeen("gallery");
-
+function _runGallery() {
     // The Gallery draws itself after its first request, so wait for it to show
     // either its sidebar or its setup card (at most ~4 s) before choosing steps.
     var waited = 0;
@@ -81,18 +101,21 @@ if (window.StudioModules) {
       var steps = populated ? [
         {
           id: "gal_layout",
+          title: _t("moduleTour.gallery.layout.title", "Browsing"),
           text: _t("moduleTour.gallery.layout.text", "This is the <em>Gallery</em> — a browser for all your generated images.\n\n<em>Sidebar</em> has folders and character tags for filtering. <em>Search</em> at the top matches filenames and metadata."),
           spotlight: ".gal-sidebar",
           advance: "click", btn: _t("moduleTour.gallery.layout.btn", "Next")
         },
         {
           id: "gal_interact",
+          title: _t("moduleTour.gallery.interact.title", "Working with pictures"),
           text: _t("moduleTour.gallery.interact.text", "Click any image for a detail view with full metadata. Right-click for a context menu (rename, move, delete, send to canvas).\n\nDrag images between folders in the sidebar to organize."),
           spotlight: ".gal-main",
           advance: "click", btn: _t("moduleTour.gallery.interact.btn", "Next")
         },
         {
           id: "gal_live",
+          title: _t("moduleTour.gallery.live.title", "Staying in sync"),
           text: _t("moduleTour.gallery.live.text", "Pictures Studio saves appear here on their own. The dot in the topbar shows whether Studio is also watching your folders for files added outside Studio.\n\n<em>Send to Canvas</em> loads any image into Studio for editing."),
           spotlight: null,
           advance: "click", btn: _t("moduleTour.gallery.live.btn", "Got it"),
@@ -101,6 +124,7 @@ if (window.StudioModules) {
       ] : [
         {
           id: "gal_empty",
+          title: _t("moduleTour.gallery.empty.title", "Linking a folder"),
           text: _t("moduleTour.gallery.empty.text", "This is the <em>Gallery</em> — a browser for your generated images.\n\nIt shows the folders you link. Press <em>Choose folder & scan</em> to link your Studio results folder, or any folder of pictures; the sidebar, search and grid appear once it has images."),
           spotlight: null,
           advance: "click", btn: _t("moduleTour.gallery.empty.btn", "Got it"),
@@ -109,6 +133,7 @@ if (window.StudioModules) {
       ];
       StudioTour.create({
         id: "tour-gallery",
+        title: _t("moduleTour.gallery.name", "Gallery tour"),
         steps: steps,
         persist: false,
         onComplete: function () { console.log(TAG, "Gallery tour complete"); },
@@ -116,11 +141,19 @@ if (window.StudioModules) {
         confirmCancel: false,
       }).start(0);
     }, 200);
-  });
-
-} else {
-  console.warn(TAG, "StudioModules not available");
 }
+
+// Settings > Getting started replays a tour: open its tab, then run it.
+// False when the tab is not available here, so the caller can say so.
+window.StudioModuleTours = {
+  replay: function (id) {
+    var run = { gallery: _runGallery, workshop: _runWorkshop }[id];
+    if (!run || !window.StudioTour || !_available(id)) return false;
+    StudioModules.activate(id);
+    run();
+    return true;
+  },
+};
 
 console.log(TAG, "Module tours loaded");
 })();

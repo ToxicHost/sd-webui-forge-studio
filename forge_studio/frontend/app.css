@@ -548,24 +548,25 @@ body {
 }
 
 .brand {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  display: flex; align-items: center; flex-shrink: 0;
   font-size: 11px;
-  letter-spacing: 2px;
-  color: var(--text-4);
-  font-weight: 500;
+  letter-spacing: 1.6px;
+  color: var(--text-3);
+  font-weight: 600;
   pointer-events: none;
+  white-space: nowrap;
 }
 .brand-mark {
   height: 18px;
   width: 18px;
-  vertical-align: middle;
   margin-right: 8px;
 }
+/* WS1. The flame takes the theme's accent; its core is a pale tint of it. */
+.brand-flame { fill: var(--accent); }
+.brand-flame-core { fill: color-mix(in srgb, var(--accent) 16%, #ffffff); }
 .brand em {
   font-style: normal;
-  color: var(--text-3);
+  color: var(--text-2);
   letter-spacing: 1px;
 }
 .brand-studio {
@@ -579,35 +580,38 @@ body {
   opacity: 0.6;
 }
 
+/* WS1. Module tabs read like the panel tabs: underlined, not a pill group,
+   from the brand to Settings at the far right. */
 .tab-bar {
   display: flex;
-  gap: 1px;
-  background: var(--bg-input);
-  border-radius: 6px;
-  padding: 2px;
-  margin-left: auto;
+  align-self: stretch;
+  flex: 1;
+  gap: 2px;
+  margin-left: 6px;
   position: relative;
   z-index: 1;
 }
 .tab-bar button {
   font-family: var(--font);
-  font-size: var(--ui-font-small);
-  padding: 6px 14px;
+  font-size: 12px;
+  padding: 0 12px;
   border: none;
-  border-radius: 4px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s, border-color 0.15s;
   font-weight: 500;
-  letter-spacing: 0.3px;
-  color: var(--text-4);
+  letter-spacing: 0.2px;
+  color: var(--text-3);
   background: transparent;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 .tab-bar button.active {
-  background: var(--bg-raised);
-  color: var(--text-2);
-  box-shadow: 0 1px 3px #0004;
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
 }
-.tab-bar button:hover:not(.active) { color: var(--text-3); }
+.tab-bar button:hover:not(.active) { color: var(--text-2); }
+#appTabs > button[data-app="settings"] { margin-left: auto; }
 /* Inline SVG tab icons (emoji-free): align the glyph with the label. */
 .tab-bar button .tab-icon { display: inline-flex; vertical-align: -2px; }
 .tab-bar button .tab-icon svg { width: 13px; height: 13px; }
@@ -643,6 +647,7 @@ body {
 }
 
 .tool-btn {
+  position: relative;
   width: 30px; height: 30px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 6px;
@@ -654,6 +659,10 @@ body {
 }
 .tool-btn:hover { color: var(--text-1); background: var(--bg-raised); }
 .tool-btn.active { color: var(--accent); background: var(--accent-dim); }
+.tool-btn.active::before {
+  content: ""; position: absolute; left: -6px; top: 7px; bottom: 7px;
+  width: 2px; border-radius: 2px; background: var(--accent);
+}
 .tool-sep { width: 22px; height: 1px; background: var(--border); margin: 4px 0; }
 .tool-spacer { flex: 1; }
 
@@ -688,6 +697,7 @@ body {
 #studio-viewport {
   position: absolute;
   inset: 0;
+  top: var(--options-dock-h, 0px);
   overflow: hidden;
   contain: strict;
 }
@@ -752,6 +762,50 @@ body {
   max-width: calc(100% - 20px);
 }
 .ctx-bar-wrap.dragging { opacity: 0.85; }
+
+/* ═══════════════════════════════════════════
+   WS1 — THE DOCKED OPTIONS BAR (owner, 2026-10-21: direction B)
+   The context bar and the brush presets used to float over the canvas;
+   they now sit in one bar across its top, after the active tool's name.
+   The viewport and the document strip start below it: app.js writes the
+   bar's height to --options-dock-h on the canvas area.
+   ═══════════════════════════════════════════ */
+.options-dock {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 8;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  min-height: 40px; box-sizing: border-box; padding: 4px 12px;
+  background: var(--bg-surface); border-bottom: 1px solid var(--border);
+  cursor: default;
+}
+.dock-tool {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding-right: 10px; border-right: 1px solid var(--border-subtle);
+  color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.dock-tool-icon { display: inline-flex; }
+.dock-tool-icon svg { width: 15px; height: 15px; }
+.options-dock .brush-presets {
+  position: static; transform: none; z-index: auto;
+  background: none; border: none; border-radius: 0;
+  padding: 0 10px 0 0; border-right: 1px solid var(--border-subtle);
+  align-items: center;
+}
+/* The wrap and the context bar dissolve into the dock (display: contents),
+   so their items flow on the same rows as the tool name and the presets
+   instead of starting a block of their own. The inpaint settings bar stays
+   a row of its own, shown only in mask mode. */
+.options-dock .ctx-bar-wrap,
+.options-dock #contextBar { display: contents; }
+.options-dock .context-bar { font-size: 11px; }
+.options-dock .inpaint-bar {
+  flex-basis: 100%; background: none; border: none; border-radius: 0;
+  border-top: 1px solid var(--border-subtle); padding: 4px 0 0;
+}
+.options-dock .ctx-drag-handle { display: none; }
+/* The dynamics flyout opens below the bar now that the presets are up here. */
+#canvasArea #dynamicsPanel {
+  top: calc(var(--options-dock-h, 40px) + 8px) !important; bottom: auto !important;
+}
 .context-bar {
   position: relative;
   display: flex; gap: 8px; align-items: center;
@@ -776,11 +830,15 @@ body {
 .ctx-drag-handle:active { cursor: grabbing; color: var(--accent); }
 .ctx-scrub {
   position: relative; cursor: ew-resize; user-select: none; -webkit-user-select: none;
-  padding: 2px 6px; border-radius: 4px; font-size: 10px; color: var(--text-2);
+  padding: 3px 7px; border-radius: 5px; font-size: 10px; color: var(--text-2);
   font-variant-numeric: tabular-nums; white-space: nowrap;
   transition: background 0.12s, color 0.12s;
 }
 .ctx-scrub:hover { background: var(--border); color: var(--text-1); }
+.ctx-scrub .ctx-k { color: var(--text-3); margin-right: 5px; }
+.ctx-scrub .ctx-v { color: var(--text-1); font-family: var(--mono); font-size: 11px; }
+.ctx-scrub .ctx-u { color: var(--text-3); margin-left: 4px; }
+.ctx-scrub.scrubbing .ctx-v { color: var(--accent); }
 .ctx-scrub.scrubbing { background: var(--accent-dim); color: var(--accent); }
 .ctx-scrub input {
   all: unset; width: 3em; text-align: center; font-size: 10px; color: var(--accent);
@@ -797,9 +855,10 @@ body {
   background: var(--text-1); border: 2px solid var(--bg-surface); cursor: pointer;
 }
 .ctx-mode-btn {
-  border: 1px solid var(--border); background: none; color: var(--text-4);
+  border: 1px solid var(--border); background: none; color: var(--text-3);
   border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 11px;
   transition: all 0.12s; font-family: var(--font);
+  display: inline-flex; align-items: center; gap: 4px; min-height: 22px;
 }
 .ctx-mode-btn:hover { color: var(--text-1); border-color: var(--text-3); }
 .ctx-mode-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
@@ -833,7 +892,7 @@ body {
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 6px; cursor: pointer; border: none; background: none;
-  color: var(--text-4); font-size: 14px; transition: all 0.12s;
+  color: var(--text-2); font-size: 14px; transition: all 0.12s;
 }
 .brush-preset-btn:hover { color: var(--text-1); background: var(--bg-raised); }
 .brush-preset-btn.active { color: var(--accent); background: var(--accent-dim); }
@@ -2110,7 +2169,7 @@ label[data-help] {
    automatically. --bg-base does NOT exist (legacy bug) — use --bg-void.
    ═══════════════════════════════════════════ */
 #app-settings {
-  --settings-sidebar-width: 224px;
+  --settings-sidebar-width: 240px;
   --settings-page-bg: var(--bg-void);
   --settings-sidebar-bg: var(--bg-surface);
   --settings-card-bg: var(--bg-surface);
@@ -2118,7 +2177,7 @@ label[data-help] {
   --settings-card-radius: var(--radius-lg, 12px);
   --settings-row-min-h: 46px;
   --settings-nav-active-bg: var(--accent-dim);
-  --settings-nav-active-text: var(--accent-bright);
+  --settings-nav-active-text: var(--text-1);
   --settings-nav-active-bar: var(--accent);
   --settings-item-border: var(--border-subtle);
 }
@@ -2156,8 +2215,8 @@ label[data-help] {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 0 1 300px;
-  min-width: 180px;
+  /* ST1: at the top of the side navigation. */
+  margin-bottom: 12px;
 }
 .settings-search-icon {
   position: absolute; left: 10px; color: var(--text-4); pointer-events: none;
@@ -2174,7 +2233,7 @@ label[data-help] {
   font-size: 12.5px;
 }
 .settings-search-input:focus { outline: none; border-color: var(--accent); }
-.settings-search-input::placeholder { color: var(--text-4); }
+.settings-search-input::placeholder { color: var(--text-3); }
 .settings-search-clear {
   position: absolute; right: 6px;
   width: 22px; height: 22px;
@@ -2220,7 +2279,7 @@ label[data-help] {
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
-.settings-nav-button .settings-nav-icon { flex: 0 0 auto; color: var(--text-4); transition: color 0.12s; }
+.settings-nav-button .settings-nav-icon { flex: 0 0 auto; color: var(--text-3); transition: color 0.12s; }
 .settings-nav-button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-nav-button:hover { background: var(--bg-raised); color: var(--text-1); }
 .settings-nav-button:hover .settings-nav-icon { color: var(--text-2); }
@@ -2230,7 +2289,24 @@ label[data-help] {
   color: var(--settings-nav-active-text);
   box-shadow: inset 2px 0 0 var(--settings-nav-active-bar);
 }
-.settings-nav-button.active .settings-nav-icon { color: var(--settings-nav-active-text); }
+.settings-nav-button.active .settings-nav-icon { color: var(--accent); }
+
+/* ST1. The active category's sections, under its button: one click to any
+   card, and the one in view is marked (settings-page.js). */
+.settings-nav-sections {
+  display: flex; flex-direction: column; gap: 1px;
+  margin: 2px 0 6px 18px; padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+.settings-nav-sections[hidden] { display: none; }
+.settings-nav-section {
+  display: block; padding: 5px 8px; border-radius: 5px;
+  font-size: 12px; color: var(--text-2); text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.settings-nav-section:hover { color: var(--text-1); background: var(--bg-raised); }
+.settings-nav-section[aria-current="location"] { color: var(--accent); background: var(--bg-raised); }
+.settings-nav-section:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .settings-nav-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Main column */
@@ -2241,8 +2317,8 @@ label[data-help] {
   margin: 0 0 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.8px;
   text-transform: uppercase; color: var(--text-4);
 }
-.settings-category-header h2 { margin: 0; font-size: 21px; line-height: 1.2; color: var(--text-1); }
-.settings-category-sub { margin: 6px 0 0; font-size: 12px; color: var(--text-3); line-height: 1.45; max-width: 62ch; }
+.settings-category-header h2 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.2; color: var(--text-1); }
+.settings-category-sub { margin: 6px 0 0; font-size: 12.5px; color: var(--text-3); line-height: 1.45; max-width: 62ch; }
 
 .settings-section-stack { display: flex; flex-direction: column; gap: 14px; }
 
@@ -2270,9 +2346,9 @@ button.settings-card-head { cursor: pointer; }
 button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised) 55%, transparent); }
 .settings-card-head-bespoke { cursor: pointer; }
 .settings-card-head-bespoke:hover { background: color-mix(in srgb, var(--bg-raised) 55%, transparent); }
-.settings-card-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.settings-card-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
-.settings-card-summary { font-size: 11px; color: var(--text-4); line-height: 1.4; }
+.settings-card-titles { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 2px; min-width: 0; }
+.settings-card-title { font-size: 14px; font-weight: 600; color: var(--text-1); }
+.settings-card-summary { font-size: 12px; color: var(--text-3); line-height: 1.4; }
 .settings-chevron { flex: 0 0 auto; color: var(--text-3); transition: transform 0.2s ease; }
 .settings-card[data-collapsible] .settings-card-head[aria-expanded="true"] .settings-chevron,
 .settings-card-head-bespoke[aria-expanded="true"] .settings-chevron,
@@ -2319,8 +2395,8 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
 .settings-card-body > .settings-item:first-child,
 .settings-card-head-static + .settings-card-body > .settings-item:first-child { border-top: none; }
 .settings-item-copy { min-width: 0; }
-.settings-item-title { display: block; font-size: 12.5px; color: var(--text-1); }
-.settings-item-description { margin: 3px 0 0; font-size: 11px; line-height: 1.45; color: var(--text-4); max-width: 60ch; }
+.settings-item-title { display: block; font-size: 13px; color: var(--text-1); }
+.settings-item-description { margin: 3px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--text-3); max-width: 62ch; }
 .settings-item-control { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 
 /* Stacked (full-width control below copy) — for paths, selectors, button groups */
@@ -2361,13 +2437,13 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
 .settings-card-body > .settings-action-row:first-child { border-top: none; }
 .settings-action-row .settings-item-copy strong,
 .settings-action-row > div:first-child strong { display: block; font-size: 12.5px; color: var(--text-1); font-weight: 600; }
-.settings-action-row p { margin: 3px 0 0; font-size: 11px; color: var(--text-4); line-height: 1.45; }
+.settings-action-row p { margin: 3px 0 0; font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
 .defaults-btn-danger {
-  flex: 0 0 auto; background: var(--red-dim, var(--bg-raised));
-  color: var(--red, var(--text-2)); border: 1px solid var(--border-subtle);
+  flex: 0 0 auto; background: none;
+  color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
   padding: 6px 12px; white-space: nowrap;
 }
-.defaults-btn-danger:hover { background: color-mix(in srgb, var(--red-dim, var(--bg-raised)) 70%, var(--red, transparent) 30%); }
+.defaults-btn-danger:hover { background: var(--red-dim); }
 
 .settings-updates-control { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .settings-update-status { font-size: 11px; color: var(--text-4); }
@@ -2476,17 +2552,17 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
 .setting-label { font-size: 12px; color: var(--text-2); }
 
 .toggle-track {
-  width: 32px; height: 18px;
-  background: var(--border); border-radius: 9px;
+  width: 34px; height: 20px; flex-shrink: 0;
+  background: var(--border-hover); border-radius: 10px;
   cursor: pointer; position: relative; transition: background 0.2s;
 }
 .toggle-track.on { background: var(--accent); }
 .toggle-knob {
-  position: absolute; top: 2px; left: 2px;
-  width: 14px; height: 14px; background: #fff; border-radius: 50%;
-  transition: transform 0.2s;
+  position: absolute; top: 3px; left: 3px;
+  width: 14px; height: 14px; background: var(--text-2); border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
 }
-.toggle-track.on .toggle-knob { transform: translateX(14px); }
+.toggle-track.on .toggle-knob { transform: translateX(14px); background: var(--on-accent); }
 
 /* Defaults buttons */
 .defaults-btn {
@@ -2497,6 +2573,12 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   transition: all 0.12s;
 }
 .defaults-btn:hover { background: var(--accent-mid); }
+/* ST1. The one main action of a row (Add folder). */
+.defaults-btn-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.defaults-btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
+.settings-add-row { display: flex; gap: 6px; align-items: center; }
+.settings-add-row .settings-text-input { flex: 1; height: 30px; }
+.settings-add-row .defaults-btn { flex: 0 0 auto; height: 30px; padding: 0 12px; font-size: 12px; }
 .defaults-btn-reset {
   flex: 0; padding: 7px 12px;
   background: var(--bg-raised); color: var(--text-3);
@@ -2980,7 +3062,7 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   padding: 0 14px; gap: 16px;
   flex-shrink: 0; font-family: var(--mono);
 }
-.statusbar span { font-size: 10px; color: var(--text-4); }
+.statusbar span { font-size: 10px; color: var(--text-3); }
 .status-dot {
   width: 6px; height: 6px; border-radius: 50%;
   display: inline-block; margin-right: 4px;
@@ -3858,10 +3940,22 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
 .studio-root-btn:disabled { opacity: .25; cursor: default; }
 /* ON1b: library folder rows -- a folder, what it holds, its Unrecognized panel. */
 .settings-model-library { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.studio-library-folder > .studio-root-row {
+  padding: 10px 12px; gap: 10px;
+  background: var(--bg-input); border-color: var(--border-subtle); border-radius: var(--radius);
+}
+.studio-root-folder-icon { display: inline-flex; color: var(--accent); flex-shrink: 0; }
+.studio-library-folder .studio-root-path { font-family: var(--mono); font-size: 12px; color: var(--text-1); }
+.studio-library-chips { order: 3; flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 5px; padding-left: 26px; }
+.studio-library-chip {
+  font-size: 11px; padding: 2px 7px; border-radius: 10px; white-space: nowrap;
+  background: var(--bg-raised); border: 1px solid var(--border-subtle); color: var(--text-2);
+}
+.studio-library-chip b { font-family: var(--mono); font-weight: 600; color: var(--text-1); margin-right: 4px; }
 .studio-library-folder { display: flex; flex-direction: column; gap: 4px; }
 /* The path keeps the first line; what the folder holds wraps beneath it. */
 .studio-library-folder > .studio-root-row { flex-wrap: wrap; row-gap: 2px; }
-.studio-library-folder > .studio-root-row > .studio-root-status { order: 3; flex: 1 1 100%; }
+.studio-library-folder > .studio-root-row > .studio-root-status { order: 3; flex: 1 1 100%; padding-left: 26px; }
 .studio-library-toggle { font-size: 11px; text-decoration: underline; }
 .studio-library-toggle[aria-expanded="true"] { opacity: 1; }
 .studio-library-unrecognized { display: flex; flex-direction: column; gap: 4px; margin-left: 16px; }

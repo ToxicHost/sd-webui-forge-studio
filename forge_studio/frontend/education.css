@@ -12,9 +12,9 @@
 
 .edu-modal-overlay {
   position: fixed; inset: 0; z-index: 9999;
-  background: rgba(5, 5, 8, 0.92); display: flex;
+  background: rgba(5, 5, 8, 0.9); display: flex;
   align-items: center; justify-content: center;
-  backdrop-filter: blur(8px); animation: eduFadeIn 0.3s ease;
+  animation: eduFadeIn 0.3s ease;
 }
 @keyframes eduFadeIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -28,10 +28,12 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.edu-modal-brand { text-align: center; margin-bottom: 6px; }
-.edu-modal-brand em { font-size: 13px; font-style: normal; color: var(--text-2); letter-spacing: 2px; font-weight: 300; }
-.edu-modal-brand .edu-brand-studio { font-weight: 600; color: var(--text-1); }
-.edu-modal-subtitle { text-align: center; font-size: 11px; color: var(--text-4); margin-bottom: 24px; }
+.edu-modal-brand { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 10px; font-size: 11px; font-weight: 600; letter-spacing: 1.6px; }
+.edu-modal-brand .edu-brand-flame { display: inline-flex; color: var(--accent); }
+.edu-modal-brand .edu-brand-flame svg { width: 16px; height: 16px; }
+.edu-modal-brand em { font-style: normal; color: var(--text-2); }
+.edu-modal-brand .edu-brand-studio { color: var(--accent); margin-left: -3px; }
+.edu-modal-subtitle { text-align: center; font-size: 13px; color: var(--text-2); margin-bottom: 24px; }
 
 .edu-cards { display: flex; flex-direction: column; gap: 8px; }
 
@@ -43,17 +45,21 @@
 .edu-card:hover { border-color: var(--accent); background: var(--accent-dim); }
 .edu-card:active { transform: scale(0.99); }
 
-.edu-card-icon { font-size: 20px; line-height: 1; flex-shrink: 0; margin-top: 1px; }
+.edu-card-icon {
+  width: 32px; height: 32px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; background: var(--accent-dim); color: var(--accent); font-size: 16px; line-height: 1;
+}
+.edu-card-icon svg { width: 16px; height: 16px; }
 .edu-card-body { flex: 1; min-width: 0; }
-.edu-card-title { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 3px; }
-.edu-card-desc { font-size: 10px; color: var(--text-3); line-height: 1.5; }
+.edu-card-title { font-size: 13px; font-weight: 600; color: var(--text-1); margin-bottom: 3px; }
+.edu-card-desc { font-size: 12px; color: var(--text-3); line-height: 1.5; }
 
 .edu-skip-link {
-  display: block; text-align: center; margin: 16px auto 0; font-size: 10px;
-  color: var(--text-4); cursor: pointer; transition: color 0.12s;
+  display: block; text-align: center; margin: 18px auto 0; font-size: 12px;
+  color: var(--text-2); cursor: pointer; transition: color 0.12s;
   background: none; border: none; font-family: var(--font);
 }
-.edu-skip-link:hover { color: var(--text-3); }
+.edu-skip-link:hover { color: var(--text-1); }
 
 
 /* ═══════════════════════════════════════════
@@ -64,7 +70,7 @@
 button.edu-card { width: 100%; text-align: left; font-family: var(--font); color: inherit; }
 .edu-welcome { width: 620px; max-height: 88vh; overflow-y: auto; }
 .edu-welcome .edu-modal-subtitle { font-size: 14px; font-weight: 600; color: var(--text-1); margin-bottom: 10px; }
-.edu-welcome-text { font-size: 11px; color: var(--text-2); line-height: 1.6; margin: 0 0 12px; }
+.edu-welcome-text { font-size: 13px; color: var(--text-2); line-height: 1.6; margin: 0 0 14px; text-align: center; }
 .edu-welcome-note { color: var(--accent-bright); min-height: 1em; }
 .edu-welcome-library { max-height: 40vh; overflow-y: auto; }
 .edu-welcome-add { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
@@ -85,32 +91,51 @@ button.edu-card { width: 100%; text-align: left; font-family: var(--font); color
    ═══════════════════════════════════════════ */
 
 .edu-checklist {
-  position: fixed; left: 16px; bottom: 44px; z-index: 9000; width: 260px;
-  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); padding: 8px 10px; font-size: var(--ui-font-small);
+  /* In the canvas corner, clear of the toolstrip and its colour swatches. */
+  position: fixed; left: 56px; bottom: 36px; z-index: 9000; width: 284px; box-sizing: border-box;
+  background: var(--bg-surface); border: 1px solid var(--border-hover); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); padding: 14px 14px 12px; font-size: 13px;
   color: var(--text-2); animation: eduTipIn 0.25s ease;
 }
-.edu-checklist-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.edu-checklist-title { flex: 1; font-weight: 600; color: var(--text-1); }
-.edu-checklist-count { color: var(--text-4); font-size: 10px; }
-.edu-checklist-close { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 14px; padding: 0 2px; }
+.edu-checklist-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.edu-checklist-title { flex: 1; font-size: 13.5px; font-weight: 600; color: var(--text-1); }
+.edu-checklist-count { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.edu-checklist-close {
+  display: inline-flex; align-items: center; gap: 4px; background: none; border: none; color: var(--text-2);
+  cursor: pointer; font-size: 12px; font-family: var(--font); padding: 2px 0;
+}
+.edu-checklist-close::before { content: "\00d7"; font-size: 14px; line-height: 1; }
+.edu-checklist-close:hover { color: var(--text-1); }
+.edu-checklist-progress { height: 3px; border-radius: 2px; background: var(--border-hover); margin-bottom: 10px; overflow: hidden; }
+.edu-checklist-progress span { display: block; height: 100%; background: var(--accent); }
 .edu-checklist-items { list-style: none; margin: 0; padding: 0; }
-.edu-checklist-item { display: flex; align-items: center; gap: 6px; }
+.edu-checklist-item { display: flex; align-items: center; gap: 8px; }
 .edu-checklist-go {
   display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: none; border: none;
-  color: inherit; font-family: var(--font); font-size: inherit; text-align: left; padding: 4px 2px;
-  cursor: pointer; border-radius: var(--radius-sm);
+  color: inherit; font-family: var(--font); font-size: inherit; text-align: left; padding: 6px 4px;
+  cursor: pointer; border-radius: 6px;
 }
-.edu-checklist-go:hover { background: var(--accent-dim); }
+.edu-checklist-go:hover { background: var(--bg-raised); color: var(--text-1); }
+.edu-checklist-text { flex: 1; min-width: 0; }
+.edu-checklist-chev {
+  width: 6px; height: 6px; flex-shrink: 0; margin-right: 4px; border-top: 1.5px solid var(--text-3); border-right: 1.5px solid var(--text-3);
+  transform: rotate(45deg);
+}
+.edu-checklist-item.done .edu-checklist-chev { visibility: hidden; }
 .edu-checklist-mark {
-  width: 14px; height: 14px; flex-shrink: 0; border: 1px solid var(--border-hover); border-radius: 3px;
-  display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: var(--on-accent);
+  width: 16px; height: 16px; flex-shrink: 0; border: 1px solid var(--border-hover); border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center; position: relative;
   /* A button of its own: it ticks by hand. */
-  background: none; padding: 0; cursor: pointer; font-family: var(--font); margin-left: 2px;
+  background: var(--bg-input); padding: 0; cursor: pointer; margin-left: 2px;
 }
 .edu-checklist-mark:hover { border-color: var(--accent); }
 .edu-checklist-item.done .edu-checklist-mark { background: var(--accent); border-color: var(--accent); }
-.edu-checklist-item.done .edu-checklist-text { color: var(--text-4); text-decoration: line-through; }
+.edu-checklist-item.done .edu-checklist-mark::after {
+  content: ""; width: 8px; height: 4px; margin-top: -2px; border-left: 2px solid var(--on-accent); border-bottom: 2px solid var(--on-accent);
+  transform: rotate(-45deg);
+}
+.edu-checklist-item.done .edu-checklist-text { color: var(--text-3); text-decoration: line-through; }
+.edu-checklist-hint { margin-top: 8px; font-size: 11.5px; color: var(--text-3); }
 .edu-checklist-flash { outline: 2px solid var(--accent-bright) !important; outline-offset: 2px; }
 
 

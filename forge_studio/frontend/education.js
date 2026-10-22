@@ -121,6 +121,7 @@ var Education = (function () {
     return [
       {
         id: "exp_layout",
+        title: _t("education.tour.experienced.layout.title", "Layout"),
         text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools plus the Inpaint Mask). <em>Canvas</em> in the center — scroll to zoom, Space+drag to pan, right-click for the canvas menu. <em>Panel</em> on the right (Generate and Extensions tabs). <span class=\"cx-kbd\">\\</span> collapses it. <em>Settings</em> is its own tab at the top.\n\nContext bar above the canvas shows controls for the active tool."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.layout.btn", "Next"),
@@ -128,6 +129,7 @@ var Education = (function () {
       },
       {
         id: "exp_canvas_routing",
+        title: _t("education.tour.experienced.canvasRouting.title", "Canvas routing"),
         text: _t("education.tour.experienced.canvasRouting.text", "No separate txt2img/img2img tabs. Studio checks the canvas and routes automatically:\n\n• <strong>Blank canvas</strong> → txt2img\n• <strong>Content on canvas</strong> → img2img\n• <strong>Mask painted</strong> → inpainting\n\nThe pixels are the source of truth. Paint something, erase it all, generate — that’s txt2img because the canvas is blank. No mode toggles."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.canvasRouting.btn", "Next"),
@@ -135,6 +137,7 @@ var Education = (function () {
       },
       {
         id: "exp_canvas_ux",
+        title: _t("education.tour.experienced.canvasUx.title", "Canvas tips"),
         text: _t("education.tour.experienced.canvasUx.text", "A few things that work differently here:\n\n• Context bar values are <em>scrub labels</em> — drag horizontally to adjust, click to type a number.\n• Each tool <em>remembers its own settings</em> independently. Switch tools and back — settings preserved.\n• <span class=\"cx-kbd\">Shift+Drag</span> on the canvas changes the brush size: drag right for bigger, left for smaller.\n• <span class=\"cx-kbd\">Ctrl+Click</span> eyedrops from any tool without switching.\n• Zoomed in, pixels show crisp, not blurry: from 100% with the GPU canvas preview, from 800% without it."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.canvasUx.btn", "Next"),
@@ -142,6 +145,7 @@ var Education = (function () {
       },
       {
         id: "exp_mask_regions",
+        title: _t("education.tour.experienced.maskRegions.title", "Masks"),
         text: _t("education.tour.experienced.maskRegions.text", "The <em>Inpaint Mask</em> tool (<span class=\"cx-kbd\">Q</span>) paints a hard-edged generation mask. Beside it, the <em>Masks panel</em> (inside Layers) holds named masks — from a brush, a selection, tones, a colour or a prompt word — with their own opacity and hardness. The mask selected there is the one Generate inpaints with.\n\nThere are no separate txt2img/img2img/inpaint tabs: the canvas and the selected mask decide."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.maskRegions.btn", "Next"),
@@ -149,6 +153,7 @@ var Education = (function () {
       },
       {
         id: "exp_layers",
+        title: _t("education.tour.experienced.layers.title", "Layers"),
         text: _t("education.tour.experienced.layers.text", "Real layer stack with blend modes, opacity, and reordering. Sending results to canvas creates a <em>new layer</em> — never overwrites your work.\n\nGeneration results go to a reusable \"Gen Result\" layer. Your painted edits on other layers are always safe. Export the full stack as PSD."),
         spotlight: "#layersList", reveal: [], advance: "click",
         btn: _t("education.tour.experienced.layers.btn", "Next"),
@@ -166,6 +171,7 @@ var Education = (function () {
       },
       {
         id: "exp_extras",
+        title: _t("education.tour.experienced.extras.title", "Extras"),
         text: _t("education.tour.experienced.extras.text", "<em>Auto Detail</em> (3 slots, including a Words detector) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it — resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> — persists server-side across sessions — or as named <em>workflows</em>. Model folders, save folders and the file-name pattern are in <em>Settings</em>."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.extras.btn", "Next"),
@@ -173,6 +179,7 @@ var Education = (function () {
       },
       {
         id: "exp_shortcuts",
+        title: _t("education.tour.experienced.shortcuts.title", "Shortcuts"),
         text: _t("education.tour.experienced.shortcuts.text", "Key shortcuts to know:\n\n<span class=\"cx-kbd\">Q</span> Mask mode • <span class=\"cx-kbd\">B</span> Brush • <span class=\"cx-kbd\">E</span> Eraser • <span class=\"cx-kbd\">V</span> Transform\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Brush size • <span class=\"cx-kbd\">Shift+Drag</span> Brush size (drag sideways)\n<span class=\"cx-kbd\">Ctrl+Enter</span> Generate • <span class=\"cx-kbd\">\\</span> Toggle panel\n<span class=\"cx-kbd\">Ctrl+Z</span> Undo • <span class=\"cx-kbd\">Space+Drag</span> Pan • <span class=\"cx-kbd\">Scroll</span> Zoom\n\nFull list in the <em>Codex</em> tab (highlighted above) under Keyboard Shortcuts.\n\nYou’re set. Go make something."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.shortcuts.btn", "Let’s go"),
@@ -201,6 +208,7 @@ var Education = (function () {
     if (canvasTab) canvasTab.click();
     _tour = StudioTour.create({
       id: "experienced-tour",
+      title: _t("education.tour.name", "Show me around"),
       steps: getTourSteps(),
       persist: false,
       bodyClass: null,
@@ -223,11 +231,25 @@ var Education = (function () {
     return node;
   }
 
+  // Line icons for the choice cards (they were text glyphs).
+  var _CARD_ICONS = {
+    have: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+    fresh: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+    tour: '<circle cx="12" cy="12" r="9"/><polygon points="16 8 10.5 10.5 8 16 13.5 13.5 16 8"/>',
+    skip: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
+  };
+
+  function _svgEl(inner, viewBox, cls) {
+    var span = _el("span", cls || "");
+    span.innerHTML = '<svg viewBox="' + (viewBox || "0 0 24 24") + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + "</svg>";
+    return span;
+  }
+
   function _card(choice, icon, title, desc) {
     var card = _el("button", "edu-card");
     card.type = "button";
     card.dataset.choice = choice;
-    card.appendChild(_el("div", "edu-card-icon", icon));
+    card.appendChild(_CARD_ICONS[choice] ? _svgEl(_CARD_ICONS[choice], null, "edu-card-icon") : _el("div", "edu-card-icon", icon));
     var body = _el("div", "edu-card-body");
     body.appendChild(_el("div", "edu-card-title", title));
     body.appendChild(_el("div", "edu-card-desc", desc));
@@ -262,11 +284,11 @@ var Education = (function () {
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
+    // The title bar's wordmark: the flame in the accent, FORGE STUDIO.
     function brand() {
       var b = _el("div", "edu-modal-brand");
-      var em = _el("em", "", "FORGE");
-      b.appendChild(em);
-      b.appendChild(document.createTextNode(" "));
+      b.appendChild(_svgEl('<path d="M278 37C340 101 371 172 371 246C371 357 302 436 207 436C132 436 76 384 76 312C76 258 108 224 139 192C165 165 172 137 181 105C192 68 225 46 278 37Z" fill="currentColor"/>', "0 0 512 512", "edu-brand-flame"));
+      b.appendChild(_el("em", "", "FORGE"));
       b.appendChild(_el("span", "edu-brand-studio", "STUDIO"));
       return b;
     }
@@ -509,19 +531,25 @@ var Education = (function () {
     head.appendChild(_el("span", "edu-checklist-title", all
       ? _t("education.checklist.allDone", "That’s your first picture. Enjoy!")
       : _t("education.checklist.title", "Your first picture")));
-    head.appendChild(_el("span", "edu-checklist-count", count + "/" + CHECKLIST.length));
-    var close = _el("button", "edu-checklist-close", "×");
+    head.appendChild(_el("span", "edu-checklist-count", _t("education.checklist.count", "{n} of {total}")
+      .replace("{n}", count).replace("{total}", CHECKLIST.length)));
+    var close = _el("button", "edu-checklist-close", _t("education.checklist.hideLabel", "Hide"));
     close.type = "button";
     close.title = _t("education.checklist.hide", "Hide the checklist (it stays in Settings)");
     close.addEventListener("click", function () { _setChecklistOpen(false); });
     head.appendChild(close);
     _checklistEl.appendChild(head);
+    var bar = _el("div", "edu-checklist-progress");
+    var fill = _el("span", "");
+    fill.style.width = Math.round((count / CHECKLIST.length) * 100) + "%";
+    bar.appendChild(fill);
+    _checklistEl.appendChild(bar);
     var list = _el("ul", "edu-checklist-items");
     CHECKLIST.forEach(function (item) {
       var li = _el("li", done[item.id] ? "edu-checklist-item done" : "edu-checklist-item");
       // The box ticks by hand too (owner, 2026-10-21): the checklist is a
       // guide, not a test -- someone who did a step another way is not stuck.
-      var mark = _el("button", "edu-checklist-mark", done[item.id] ? "✓" : "");
+      var mark = _el("button", "edu-checklist-mark", "");
       mark.type = "button";
       mark.setAttribute("role", "checkbox");
       mark.setAttribute("aria-checked", done[item.id] ? "true" : "false");
@@ -533,11 +561,13 @@ var Education = (function () {
       var button = _el("button", "edu-checklist-go");
       button.type = "button";
       button.appendChild(_el("span", "edu-checklist-text", _t(item.key, item.fallback)));
+      button.appendChild(_el("span", "edu-checklist-chev", ""));
       button.addEventListener("click", item.go);
       li.appendChild(button);
       list.appendChild(li);
     });
     _checklistEl.appendChild(list);
+    if (!all) _checklistEl.appendChild(_el("div", "edu-checklist-hint", _t("education.checklist.hint", "Ticks itself as you go. Click a step to go there.")));
     if (all) setTimeout(function () { if (_checklistEl) _setChecklistOpen(false); }, 6000);
   }
 
@@ -632,6 +662,16 @@ var Education = (function () {
       "eduRestartTour", "education.settings.tour.button", "Start the tour", function () { _restartTour(); });
     item("education.settings.checklist.title", "First-picture checklist", "education.settings.checklist.desc", "Ticks itself off as you make your first picture.",
       "eduShowChecklist", "education.settings.checklist.button", "Show the checklist", function () { _setChecklistOpen(true); });
+    // The Gallery and Workshop tours run once, on a first visit; these bring
+    // them back. A module that is not available here says so instead.
+    function replay(id) {
+      if (window.StudioModuleTours && StudioModuleTours.replay(id)) return;
+      if (window.showToast) window.showToast(_t("education.settings.replay.unavailable", "That tab isn’t available here."), "info");
+    }
+    item("education.settings.galleryTour.title", "Gallery tour", "education.settings.galleryTour.desc", "Three steps around the Gallery.",
+      "eduReplayGalleryTour", "education.settings.replay.button", "Replay", function () { replay("gallery"); });
+    item("education.settings.workshopTour.title", "Workshop tour", "education.settings.workshopTour.desc", "Three steps around the Workshop.",
+      "eduReplayWorkshopTour", "education.settings.replay.button", "Replay", function () { replay("workshop"); });
     item("education.settings.welcome.title", "Welcome screen", "education.settings.welcome.desc", "The first-run screen, with model folders and the tour.",
       "eduShowWelcome", "education.settings.welcome.button", "Show it again", function () { _showFirstRun(); });
     if (anchor && anchor.parentNode === host) host.insertBefore(g, anchor); else host.appendChild(g);

@@ -2159,7 +2159,7 @@ function _clearMagLasso() {
     S._magLivePath = null; S._magLastPreview = 0;
 }
 
-function _finalizeCrop() {
+async function _finalizeCrop() {
     // CT4: the crop box is a draft; the selection's own bounds are left alone.
     const r = S.selection.draft;
     S.selection.draft = null;
@@ -2167,7 +2167,8 @@ function _finalizeCrop() {
     const cx = Math.max(0, Math.round(r.x)), cy = Math.max(0, Math.round(r.y));
     const cw = Math.min(S.W - cx, Math.round(r.w)), ch = Math.min(S.H - cy, Math.round(r.h));
     if (cw < 8 || ch < 8) { _redraw(); return; }
-    if (!confirm(`Crop to ${cw}×${ch}?`)) { _redraw(); return; }
+    if (!(await studioConfirm(_i18n("canvas.crop.confirm", "Crop to {w}×{h}?", { w: cw, h: ch }),
+        { confirm: _i18n("dialog.crop", "Crop") }))) { _redraw(); return; }
     C.saveStructuralUndo("Crop");
     // Extract crop from each layer
     const croppedLayers = S.layers.map(L => {
@@ -5598,7 +5599,26 @@ function _scrubDisplay(el) {
                 : " (" + C.brushPx() + " px)";
         } catch (_) { trailing = ""; }
     }
-    el.textContent = label + ": " + m.get() + suffix + trailing;
+    // WS1. Built as name / value / unit spans so the bar reads as a quiet
+    // label and a bright value ("Size 20 69 px") rather than one run of text.
+    // The parentheses of the pixel width are only punctuation for the old
+    // single-string form, so they are dropped here.
+    const name = document.createElement("span");
+    name.className = "ctx-k";
+    name.textContent = label;
+    const value = document.createElement("span");
+    value.className = "ctx-v";
+    value.textContent = m.get() + suffix;
+    el.textContent = "";
+    el.append(name, value);
+    const unit = trailing.replace(/^\s*\(|\)\s*$/g, "").trim();
+    if (unit) {
+        const u = document.createElement("span");
+        u.className = "ctx-u";
+        u.textContent = unit;
+        el.append(u);
+    }
+    el.setAttribute("aria-label", label + ": " + m.get() + suffix + trailing);
 }
 
 function _syncCtxBar() {
@@ -6232,9 +6252,10 @@ function bindToolbar() {
         C.addRegion("Region " + S._nextRegionId);
         renderRegionPanel(); _redraw();
     });
-    document.getElementById("regionClearAll")?.addEventListener("click", () => {
+    document.getElementById("regionClearAll")?.addEventListener("click", async () => {
         if (!S.regions.length) return;
-        if (!confirm(_i18n("canvas.regions.removeAllConfirm", "Remove all regions?"))) return;
+        if (!(await studioConfirm(_i18n("canvas.regions.removeAllConfirm", "Remove all regions?"),
+            { confirm: _i18n("dialog.removeAll", "Remove all"), danger: true }))) return;
         S.regions = []; S.activeRegionId = null; S._nextRegionId = 1; S.regionMode = false;
         renderRegionPanel(); _redraw();
     });

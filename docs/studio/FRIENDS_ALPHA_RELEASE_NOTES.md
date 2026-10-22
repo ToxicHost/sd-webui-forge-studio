@@ -4,6 +4,104 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.5: Refreshed screens — 2026-10-22
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+Every screen now follows the refreshed Generate panel from 0.9.4. Nothing was
+removed: each control is where it was or has moved to the place named below.
+
+- **Workspace.**
+  - The tool's name, its brush presets and its options sit in one bar across
+    the top of the canvas.
+  - The flame in the title bar takes your theme's accent colour.
+  - Tabs have drawn icons, and Settings sits at the right end of the tab row.
+  - Option values read as name, value and unit (for example "Size 20 px").
+- **Settings.**
+  - The search box heads the side menu.
+  - The open category lists its sections under it and marks the one you are
+    reading.
+  - Each category has one heading. Descriptions are larger and easier to read.
+  - Model folders: Browse and Add folder sit beside the path box, and each
+    folder shows its counts as small labels.
+- **Gallery.**
+  - Folders, Rating and Tags are folding sections of one sidebar.
+  - Sort is one control: Name / Folder / Newest. Click the active one again
+    to reverse it.
+  - Duplicates and Rescan have labels. A slider sets the thumbnail size, and
+    Studio remembers it.
+  - The actions for selected pictures (Explorer, Move, Rename, Tags, Convert,
+    Strip metadata, Delete) are on a bar that appears at the bottom of the
+    grid while pictures are selected.
+  - The footer counts the pictures in view.
+- **Codex.**
+  - Categories fold like the Gallery sidebar and show how many entries they
+    hold. A **Codex home** row returns to the start page.
+  - Articles have a larger title, the shortcut and Show me in one row, and
+    larger text. A footer points to Quick Reference.
+  - **Under the Hood** now opens. Before, clicking it did nothing.
+  - "Not in Studio Yet" no longer lists Batch, which came back in 0.9.4.
+- **Tour.**
+  - Each step names its tour, shows "Step n of N" with a progress bar and has
+    a short title.
+  - End tour is on the left; Back and Next are on the right. A pointer marks
+    the highlighted area, and the rest of the screen is dimmed slightly. You
+    can still click everything.
+  - The step box always fits on screen, and the highlighted area is no longer
+    hidden behind the Generate panel's buttons.
+  - The first-picture checklist moved off the toolstrip into the corner of the
+    canvas, with a progress bar and a **Hide** button.
+  - Settings > Accessibility > Getting started has **Replay** buttons for the
+    Gallery and Workshop tours. Before, they ran once and could not be seen
+    again.
+- **Workshop.**
+  - Recipe and History are one switch at the top, with **Rescan models**
+    beside them.
+  - The active row has a coloured bar at its edge. Row options and delete are
+    icon buttons.
+  - **Add row** is right under the rows. The final composition is one bar
+    with a legend.
+  - LoRA and VAE bakes sit side by side; each LoRA is one line.
+  - The output settings and **Begin merge** stay at the bottom. The button
+    shows the number of steps, and it no longer drops the count when you
+    change the language.
+  - Inspector sections (Method, Compatibility, RAM estimate, each model) fold.
+    The model details start closed.
+  - A footer shows the model family, the merges, the LoRA bakes and the
+    estimated peak memory.
+- **Dialogs.**
+  - Every yes/no question uses Studio's own dialog instead of the browser's.
+    This covers deleting layouts, themes, workflows, wildcard files and
+    history entries, closing tabs with unsaved work, cropping, removing all
+    regions, ending the tour, the Civitai fetch, and the heatmap clean-up and
+    move.
+  - Dialogs have one look: the question as a title, Cancel first, the action
+    last and named. Destructive actions are outlined in red, and Enter does
+    not pick them.
+  - The Gallery's Move dialog has a hint and a readable "Current" label. The
+    first-run screen has the Studio wordmark and larger text.
+- **Wildcards.**
+  - The filter heads the sidebar, with New file and New folder under it.
+    Files and folders have drawn icons.
+  - The editor shows how to use the file in a prompt, for example
+    `__colors__`.
+  - Sort, Remove duplicates and Preview have labels. Autosave is a switch.
+  - **Preview now picks an entry**, shows it and what it resolves to, and
+    **Pick again** draws another. Before, it showed nothing.
+  - A footer shows the file count, the entries and whether the file is saved.
+- **Develop.**
+  - The switch says On or Off. B/A is now **Compare**.
+  - Presets are at the top.
+  - The first section is now **Basic** (it was "Calibrate", next to a
+    separate "Calibration"). Its three pickers share one row, and its sliders
+    are grouped under White balance, Tone and Presence.
+  - A section with changes shows a dot and "N changed". Changed values are
+    shown in the accent colour.
+  - A local adjustment shows Amount and the sliders you moved. **All
+    sliders** shows the rest.
+- All new text is in English, German, Spanish and French.
+
 ## 0.9.4: Batch mode, refreshed themes, your own themes — 2026-10-21
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

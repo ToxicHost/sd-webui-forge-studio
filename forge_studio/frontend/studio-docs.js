@@ -560,7 +560,14 @@ function _isDirty(idx) {
   return !!(_docs[idx] && _docs[idx]._canvasDirty);
 }
 
-function closeDoc(idx) {
+// Studio's own confirm in the app; the plain one where app.js is not loaded
+// (the recovery probe runs this file on its own).
+function _ask(message, opts) {
+  if (window.studioConfirm) return window.studioConfirm(message, opts);
+  return Promise.resolve(confirm(message));
+}
+
+async function closeDoc(idx) {
   if (_docs.length <= 1) {
     if (window.showToast) window.showToast(_t("docs.cantCloseLast", "Can\u2019t close the last document"), "info");
     return;
@@ -569,7 +576,8 @@ function closeDoc(idx) {
 
   // Confirm if doc has content
   if (_isDirty(idx)) {
-    if (!confirm(_t("docs.closeConfirm", "Close \"{name}\"? Unsaved changes will be lost.", { name: _docs[idx].name }))) return;
+    if (!(await _ask(_t("docs.closeConfirm", "Close \"{name}\"? Unsaved changes will be lost.", { name: _docs[idx].name }),
+        { confirm: _t("dialog.close", "Close"), danger: true }))) return;
   }
 
   _removeDocs([idx]);
@@ -579,12 +587,12 @@ function closeDoc(idx) {
 // CA1. Close every tab, or every tab but one. One question for the lot, and
 // only when one of them has unsaved changes -- the rule a single close
 // follows, asked once rather than once per tab. True if they were closed.
-function _closeMany(indices) {
+async function _closeMany(indices) {
   if (!indices.length) return false;
   var dirty = indices.filter(_isDirty).length;
-  if (dirty && !confirm(_t("docs.closeManyConfirm",
+  if (dirty && !(await _ask(_t("docs.closeManyConfirm",
       "Close {count} tabs? Unsaved changes in {dirty} of them will be lost.",
-      { count: indices.length, dirty: dirty }))) return false;
+      { count: indices.length, dirty: dirty }), { confirm: _t("dialog.close", "Close"), danger: true }))) return false;
   _removeDocs(indices);
   console.log(TAG, "Closed", indices.length, "documents");
   return true;

@@ -52,8 +52,9 @@ var VERSION = "1.1.0";   // M4: local adjustments (busts develop.css)
 // sync when the user switches locales without us needing per-site
 // re-render logic.
 // ========================================================================
-function _t(key, fallback) {
-    return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+function _t(key, fallback, params) {
+    if (window.I18N && window.I18N.t) return window.I18N.t(key, fallback, params);
+    return params ? fallback.replace(/\{(\w+)\}/g, function (m, k) { return k in params ? params[k] : m; }) : fallback;
 }
 
 // ========================================================================
@@ -228,24 +229,26 @@ function _migrateParams(p) {
 // (Hoisted by the JS engine since they're function declarations below.)
 var SECTIONS = [
     {
-        id: "basic", label: "Calibrate", open: true,
+        id: "basic", label: "Basic", open: true,
         // Calibration eyedroppers (WB / White / Black) sit in their own
         // block at the top of the section — see _buildCalibrationBlock.
         // The sliders below are pure adjustments that apply *on top of*
         // whatever the eyedroppers calibrated.
         customBuild: _buildCalibrationBlock,
+        // DR1: captions name the groups the dividers used to separate.
         rows: [
+            { heading: "White balance", i18nKey: "develop.group.whiteBalance" },
             { key: "temperature", label: "Temperature", min: -100, max: 100, step: 1, def: 0,
               track: "temperature" },
             { key: "tint",        label: "Tint",        min: -100, max: 100, step: 1, def: 0, track: "tint" },
-            { divider: true },
+            { heading: "Tone", i18nKey: "develop.group.tone" },
             { key: "exposure",    label: "Exposure",    min: -100, max: 100, step: 1, def: 0 },
             { key: "contrast",    label: "Contrast",    min: -100, max: 100, step: 1, def: 0 },
             { key: "highlights",  label: "Highlights",  min: -100, max: 100, step: 1, def: 0 },
             { key: "shadows",     label: "Shadows",     min: -100, max: 100, step: 1, def: 0 },
             { key: "whites",      label: "Whites",      min: -100, max: 100, step: 1, def: 0 },
             { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1, def: 0 },
-            { divider: true },
+            { heading: "Presence", i18nKey: "develop.group.presence" },
             { key: "vibrance",   label: "Vibrance",   min: -100, max: 100, step: 1, def: 0 },
             { key: "saturation", label: "Saturation", min: -100, max: 100, step: 1, def: 0 },
         ]
@@ -2675,21 +2678,30 @@ function _buildPanel() {
         _scheduleFullRedraw();
     });
     header.appendChild(_enableToggleEl);
+    // Says On / Off beside the switch; CSS picks the word from the switch's
+    // .on, so every place that sets it keeps the label right.
+    var toggleLabel = document.createElement("span");
+    toggleLabel.className = "develop-toggle-label";
+    toggleLabel.innerHTML = '<span class="when-on" data-i18n="develop.toggle.on">' + _t("develop.toggle.on", "On")
+        + '</span><span class="when-off" data-i18n="develop.toggle.off">' + _t("develop.toggle.off", "Off") + '</span>';
+    header.appendChild(toggleLabel);
+    var spacer = document.createElement("span");
+    spacer.className = "develop-header-spacer";
+    header.appendChild(spacer);
 
     // "B/A" button label stays English — it's a UI shorthand like B/W,
     // not a translatable phrase. Tooltip translates.
     _beforeAfterBtn = document.createElement("button");
-    _beforeAfterBtn.className = "develop-header-btn";
-    _beforeAfterBtn.textContent = "B/A";
+    _beforeAfterBtn.className = "develop-header-btn develop-compare-btn";
+    _beforeAfterBtn.innerHTML = _DV_ICON.split + '<span data-i18n="develop.compare">' + _t("develop.compare", "Compare") + "</span>";
     _beforeAfterBtn.dataset.i18nTitle = "develop.beforeAfter.tooltip";
     _beforeAfterBtn.title = _t("develop.beforeAfter.tooltip", "Before / After split");
     _beforeAfterBtn.addEventListener("click", _toggleBeforeAfter);
     header.appendChild(_beforeAfterBtn);
 
     var resetBtn = document.createElement("button");
-    resetBtn.className = "develop-header-btn";
-    resetBtn.dataset.i18n = "develop.reset";
-    resetBtn.textContent = _t("develop.reset", "Reset");
+    resetBtn.className = "develop-header-btn develop-reset-btn";
+    resetBtn.innerHTML = _DV_ICON.reset + '<span data-i18n="develop.reset">' + _t("develop.reset", "Reset") + "</span>";
     resetBtn.dataset.i18nTitle = "develop.reset.tooltip";
     resetBtn.title = _t("develop.reset.tooltip", "Reset all sliders");
     resetBtn.addEventListener("click", _resetAll);
@@ -2700,6 +2712,14 @@ function _buildPanel() {
     // ---- Body (scrollable) ----
     var body = document.createElement("div");
     body.className = "develop-panel-body";
+
+    // Presets sit at the top (DR1): picking one is often the first move.
+    if (typeof _buildPresetSection === "function") {
+        var presets = _buildPresetSection();
+        presets.classList.remove("collapsed");
+        presets.classList.add("develop-presets-top");
+        body.appendChild(presets);
+    }
 
     // Histogram — RGB only, log scale, with clipping-warning triangles.
     // Toggles for L / linear were removed at the maintainer's request; only
@@ -2730,13 +2750,29 @@ function _buildPanel() {
     // Sections
     SECTIONS.forEach(function (sec) { body.appendChild(_buildSection(sec)); });
 
-    // Presets section (chunk 5 fills _buildPresetSection)
-    if (typeof _buildPresetSection === "function") {
-        body.appendChild(_buildPresetSection());
-    }
-
     _panel.appendChild(body);
     document.body.appendChild(_panel);
+}
+
+var _DV_ICON = {
+    chev: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
+    split: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>',
+    reset: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>',
+    trash: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+};
+
+// "N changed" on each section header: changed sliders, or for Local
+// adjustments the number of adjustments.
+function _updateSectionCounts() {
+    if (!_panel) return;
+    _panel.querySelectorAll(".develop-section[data-section]").forEach(function (s) {
+        var el = s.querySelector(".develop-section-count"); if (!el) return;
+        var n = s.dataset.section === "local"
+            ? s.querySelectorAll(".develop-local-card").length
+            : s.querySelectorAll(".develop-section-body .develop-row.modified").length;
+        el.textContent = !n ? "" : s.dataset.section === "local" ? String(n) : _t("develop.section.changed", n + " changed", { n: n });
+        s.classList.toggle("has-changes", n > 0);
+    });
 }
 
 function _buildSection(sec) {
@@ -2746,13 +2782,17 @@ function _buildSection(sec) {
     var head = document.createElement("div");
     head.className = "develop-section-header";
     var arrow = document.createElement("span");
-    arrow.className = "develop-section-arrow"; arrow.textContent = "▾";
+    arrow.className = "develop-section-arrow"; arrow.innerHTML = _DV_ICON.chev;
     head.appendChild(arrow);
     var name = document.createElement("span");
     var secKey = "develop.section." + sec.id;
     name.dataset.i18n = secKey;
     name.textContent = _t(secKey, sec.label);
     head.appendChild(name);
+    // A dot and "N changed" when anything in the section moved (DR1).
+    var count = document.createElement("span");
+    count.className = "develop-section-count";
+    head.appendChild(count);
     head.addEventListener("click", function () { s.classList.toggle("collapsed"); });
     s.appendChild(head);
     var body = document.createElement("div");
@@ -3594,6 +3634,11 @@ var _CALIB_KEYS = {
 var _calibBlockEls = {};
 
 function _buildCalibrationBlock(body) {
+    var caption = document.createElement("div");
+    caption.className = "develop-section-heading develop-calib-caption";
+    caption.dataset.i18n = "develop.calib.caption";
+    caption.textContent = _t("develop.calib.caption", "Pick from the picture");
+    body.appendChild(caption);
     var wrap = document.createElement("div");
     wrap.className = "develop-calib-block";
     body.appendChild(wrap);
@@ -3758,6 +3803,7 @@ function _buildSliderRow(field) {
         }
         range.value = v; num.value = v;
         row.classList.toggle("modified", v !== field.def);
+        _updateSectionCounts();
         // Keep the WB calibration row's "set" badge in sync when the user
         // drags Temperature or Tint directly — those are the WB picker's
         // backing fields. Cheap (3 DOM nodes), safe to call on every commit.
@@ -3902,9 +3948,12 @@ function _renderLocal() {
             card.classList.toggle("off", !on.checked);
             _localChanged(false, "Develop: Local on/off");
         });
+        on.className = "develop-local-on";
+        on.setAttribute("role", "switch");
         var remove = document.createElement("button");
         remove.type = "button"; remove.className = "develop-header-btn develop-local-remove";
-        remove.textContent = "×"; remove.title = _t("develop.local.remove", "Remove this adjustment");
+        remove.innerHTML = _DV_ICON.trash; remove.title = _t("develop.local.remove", "Remove this adjustment");
+        remove.setAttribute("aria-label", remove.title);
         remove.addEventListener("click", function () {
             p.local.splice(index, 1);
             _localChanged(false, "Develop: Remove local adjustment");
@@ -3922,13 +3971,39 @@ function _renderLocal() {
         }
         card.appendChild(_localSlider(_t("develop.local.amount", "Amount"), adj.amount == null ? 100 : adj.amount, 0, 100,
             function (v, live) { adj.amount = v; _localChanged(live, "Develop: Local amount"); }));
+        // Only the sliders this adjustment moved show; "All sliders" opens
+        // the rest. A slider moved back to 0 stays until the card redraws.
+        var idle = 0;
         LOCAL_ROWS.forEach(function (r) {
-            card.appendChild(_localSlider(_t("develop.slider." + r.key, r.label), adj.settings[r.key] | 0, -100, 100,
-                function (v, live) { adj.settings[r.key] = v; _localChanged(live); }));
+            var row = _localSlider(_t("develop.slider." + r.key, r.label), adj.settings[r.key] | 0, -100, 100,
+                function (v, live) { adj.settings[r.key] = v; _localChanged(live); });
+            if (!(adj.settings[r.key] | 0)) { row.classList.add("develop-local-idle"); idle++; }
+            card.appendChild(row);
         });
+        if (_localShowAll.has(adj)) card.classList.add("show-all");
+        if (idle) {
+            var more = document.createElement("button");
+            more.type = "button"; more.className = "develop-local-more";
+            var label = function () {
+                more.textContent = card.classList.contains("show-all")
+                    ? _t("develop.local.fewerSliders", "Changed sliders only")
+                    : _t("develop.local.allSliders", "All sliders (" + idle + " more)", { n: idle });
+            };
+            label();
+            more.addEventListener("click", function () {
+                var open = card.classList.toggle("show-all");
+                if (open) _localShowAll.add(adj); else _localShowAll.delete(adj);
+                label();
+            });
+            card.appendChild(more);
+        }
         _localListEl.appendChild(card);
     });
+    _updateSectionCounts();
 }
+
+// Which local adjustments have every slider open (per session, not saved).
+var _localShowAll = new WeakSet();
 
 function _buildLocalSection(body) {
     _localListEl = document.createElement("div");
@@ -3979,6 +4054,7 @@ function syncPanel() {
     for (var ci = 0; ci < _customSyncs.length; ci++) {
         try { _customSyncs[ci](p); } catch (e) { console.error("[Develop] custom sync:", e); }
     }
+    _updateSectionCounts();
 }
 
 // ========================================================================
@@ -4910,7 +4986,7 @@ function _toggleBeforeAfter() {
 //
 if (window.StudioModules) {
     window.StudioModules.register("develop", {
-        label: "Develop", icon: "◑",
+        label: "Develop", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>',
         init: function (container, services) {
             console.log(TAG, "Initializing Develop module v" + VERSION);
             // Hide the auto-created module container — we render as a fixed overlay.

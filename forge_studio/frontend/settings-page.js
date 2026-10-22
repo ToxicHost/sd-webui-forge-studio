@@ -173,8 +173,12 @@
     });
     var sel = $("settingsNavSelect");
     if (sel && sel.value !== slug) sel.value = slug;
+    qsa(".settings-nav-sections").forEach(function (list) {
+      list.hidden = list.getAttribute("data-sections-for") !== slug;
+    });
 
     _activeCategory = slug;
+    requestAnimationFrame(spySections);
     if (opts.persist !== false) lsSet(LS_CATEGORY, slug);
     // Only reflect into the URL while the Settings page is actually visible,
     // so boot-time restore doesn't stamp #settings/... onto another tab.
@@ -182,6 +186,82 @@
     if (opts.scrollTop && r) r.scrollTop = 0;
 
     announce(t("settings.nav.announce", "{title}", { title: categoryTitle(slug) }));
+  }
+
+  // ST1 (owner, 2026-10-22: direction B). Under the active category's button,
+  // a link to each of its sections, built from the cards themselves so the
+  // index cannot drift from the page; the one in view is marked as the page
+  // scrolls. Categories with a single card get no index.
+  function buildSectionIndex() {
+    qsa(".settings-nav-sections").forEach(function (list) { list.remove(); });
+    qsa(".settings-nav-button").forEach(function (btn) {
+      var slug = btn.getAttribute("data-settings-nav");
+      var panel = document.querySelector('[data-settings-category="' + slug + '"]');
+      if (!panel) return;
+      var cards = qsa(".settings-card[data-settings-section]", panel);
+      if (cards.length < 2) return;
+      var list = document.createElement("div");
+      list.className = "settings-nav-sections";
+      list.setAttribute("data-sections-for", slug);
+      list.setAttribute("role", "list");
+      list.setAttribute("aria-label", t("settings.nav.sectionsOf", "Sections of {title}", { title: categoryTitle(slug) }));
+      cards.forEach(function (card) {
+        var section = cardSection(card);
+        var title = card.querySelector(".settings-card-title");
+        var link = document.createElement("a");
+        link.className = "settings-nav-section";
+        link.setAttribute("role", "listitem");
+        link.setAttribute("data-section", section);
+        link.href = HASH_PREFIX + slug;
+        link.textContent = title ? title.textContent.trim() : section;
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          expandCardForSection(slug, section);
+          try { card.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (err) { card.scrollIntoView(); }
+          _clickedSection = { slug: slug, section: section, card: card };
+          markSection(slug, section);
+        });
+        list.appendChild(link);
+      });
+      list.hidden = slug !== _activeCategory;
+      btn.insertAdjacentElement("afterend", list);
+    });
+    spySections();
+  }
+
+  function markSection(slug, section) {
+    qsa('.settings-nav-sections[data-sections-for="' + slug + '"] .settings-nav-section').forEach(function (link) {
+      if (link.getAttribute("data-section") === section) link.setAttribute("aria-current", "location");
+      else link.removeAttribute("aria-current");
+    });
+  }
+
+  // The section in view: the last card whose top has passed just below the
+  // top of the scrolling page. A section picked in the index stays marked
+  // while it is on screen: the last cards of a category cannot scroll up to
+  // that line, so near the bottom the line alone would name an earlier one.
+  var _clickedSection = null;
+  function spySections() {
+    var r = root();
+    var panel = _activeCategory && document.querySelector('[data-settings-category="' + _activeCategory + '"]');
+    if (!r || !panel) return;
+    if (_clickedSection) {
+      var box = _clickedSection.card.getBoundingClientRect();
+      var view = r.getBoundingClientRect();
+      if (_clickedSection.slug === _activeCategory && box.top < view.bottom && box.bottom > view.top) {
+        markSection(_activeCategory, _clickedSection.section);
+        return;
+      }
+      _clickedSection = null;
+    }
+    var line = r.getBoundingClientRect().top + 90;
+    var current = null;
+    qsa(".settings-card[data-settings-section]", panel).forEach(function (card) {
+      if (!card.offsetParent) return;           // hidden (search, collapsed category)
+      // The first visible card until a later one reaches the line.
+      if (current === null || card.getBoundingClientRect().top <= line) current = cardSection(card);
+    });
+    if (current) markSection(_activeCategory, current);
   }
 
   function categoryTitle(slug) {
@@ -693,6 +773,17 @@
     initExtensions();
     initShortcuts();
     initAbout();
+    buildSectionIndex();
+    var spyFrame = 0;
+    root().addEventListener("scroll", function () {
+      if (spyFrame) return;
+      spyFrame = requestAnimationFrame(function () { spyFrame = 0; spySections(); });
+    }, { passive: true });
+    // Scrolling by hand hands the marker back to the scroll position.
+    ["wheel", "touchmove"].forEach(function (type) {
+      root().addEventListener(type, function () { _clickedSection = null; }, { passive: true });
+    });
+    window.addEventListener("i18n:change", buildSectionIndex);
 
     // Deep-link API override (this file loads after app.js, so we win).
     window.openStudioSettings = openStudioSettings;
