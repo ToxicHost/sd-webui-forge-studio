@@ -889,18 +889,40 @@
                 <div class="param-cell" data-help="help.hires.steps"><label data-i18n="ui.hires.steps">Steps</label><input class="param-val" id="paramHrSteps" data-min="0" data-step="1" value="0"></div>
                 <div class="param-cell" data-help="help.hires.denoise"><label data-i18n="ui.hires.denoise">Denoise</label><input class="param-val" id="paramHrDenoise" data-min="0" data-max="1" data-step="0.01" value="0.30"></div>
               </div>
+              <!-- MH1. Hires on another model: the base pass on the main model,
+                   then Hires and Auto Detail on this one (owner, 2026-10-22).
+                   Its own Text Encoder and VAE, because another family needs
+                   its own. Hidden until a model is chosen. -->
+              <div class="param-grid cols-1 field-group">
+                <div class="param-cell" data-help="help.hires.checkpoint"><label data-i18n="ui.hires.model">Model</label><select class="param-select" id="paramHrCheckpoint"><option value="Same" data-i18n="ui.hires.sameAsBase">Same as base</option></select></div>
+              </div>
+              <div class="param-grid cols-2" id="hrModelComponents" style="margin-top:4px;display:none;">
+                <div class="param-cell" id="hrTextEncoderCell"><label data-i18n="ui.model.textEncoder">Text Encoder</label><select class="param-select" id="paramHrTextEncoder"><option value="None" data-i18n="ui.model.bundled">None (bundled)</option></select></div>
+                <div class="param-cell"><label data-i18n="ui.model.vae">VAE</label><select class="param-select" id="paramHrVAE"><option value="Automatic" data-i18n="ui.model.automatic">Automatic</option></select></div>
+              </div>
               <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
               <div class="param-grid cols-2 field-group secondary param-advanced">
                 <div class="param-cell" data-help="help.hires.cfg"><label data-i18n="ui.hires.cfg">CFG</label><input class="param-val" id="paramHrCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
-                <!-- Hires checkpoint override. HIDDEN: this select is filled
-                     from the REAL model list, so it looks more functional than
-                     anything else on this panel, and choosing a checkpoint here
-                     changes nothing. `_hiresGroup` in app.js sends six of the
-                     ten fields the server accepts, and this is not among them.
-                     TO RESTORE: Hires needs temporary checkpoint/component
-                     override and restoration -- open P0.7 scope, per the
-                     planner handoff's P0.7 correction. -->
-                <div class="param-cell" data-help="help.hires.checkpoint" hidden><label data-i18n="ui.hires.checkpoint">Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option data-i18n="ui.hires.same">Same</option></select></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Refiner (MH2; owner, 2026-10-22). A second checkpoint of the
+               SAME family takes over the sampling at a step; Hires and Auto
+               Detail then run on it. Neo's Refiner, its fast path. -->
+          <div class="collapse-section" data-block="refiner">
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkRefiner"></div>
+              <span class="collapse-title" data-i18n="ui.refiner.title">Refiner</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelRefiner">
+              <div class="param-grid cols-1" style="margin-top:4px;">
+                <div class="param-cell" data-help="help.refiner.checkpoint"><label data-i18n="ui.refiner.checkpoint">Checkpoint</label><select class="param-select" id="paramRefinerCheckpoint"><option value="" data-i18n="ui.refiner.choose">Choose a checkpoint</option></select></div>
+              </div>
+              <div class="param-grid cols-2 field-group">
+                <div class="param-cell" data-help="help.refiner.switch"><label data-i18n="ui.refiner.switch">Switch at step</label><input class="param-val" id="paramRefinerSwitch" data-min="1" data-step="1" value="15"></div>
+                <div class="param-cell" data-help="help.refiner.cfg"><label data-i18n="ui.refiner.cfg">CFG</label><input class="param-val" id="paramRefinerCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
               </div>
             </div>
           </div>
@@ -2330,6 +2352,13 @@
                       <p class="settings-item-description" data-i18n="settings.vram.gpuTileComposite.description">Uses GPU memory to composite tiled upscales faster. Studio automatically falls back to CPU compositing when there is not enough safe GPU memory. Turn this off to always use CPU compositing.</p>
                     </div>
                     <div class="settings-item-control"><div class="toggle-track" id="toggleGpuTileComposite"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleUpscalerHalf" data-setting-search="upscaler half precision fp16 remacri esrgan faster speed hires">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.vram.upscalerHalf">Faster upscaler (half precision)</span>
+                      <p class="settings-item-description" data-i18n="settings.vram.upscalerHalf.description">Runs upscalers such as Remacri in half precision. On recent NVIDIA cards the upscale takes about 40% less time. Fine detail in the result can differ slightly. Off by default.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleUpscalerHalf"><div class="toggle-knob"></div></div></div>
                   </div>
                 </div>
               </section>

@@ -189,6 +189,21 @@ MAX_CONTROLNET_UNITS = 3
 
 
 @dataclass(frozen=True)
+class RefinerOptions:
+    """MH2. The Refiner, resolved: its checkpoint file and the job's own (whose
+    weights come back after the job), both from the catalogue; the name its
+    pictures record; the fraction of the main pass after which it samples
+    (Neo's `CFGDenoiser.step / total_steps` test); its CFG (0 keeps the base
+    CFG). Paths stay here and never reach a log."""
+
+    path: str
+    base_path: str
+    label: str
+    switch_at: float
+    cfg: float = 0.0
+
+
+@dataclass(frozen=True)
 class ControlNetUnitOptions:
     """One ControlNet unit, ready for the port. CN1.
 
@@ -495,6 +510,11 @@ class FirstImageRequest:
     #: owner's setting, snapshotted server-side). Consumed by
     #: `live_generation_port._generate_in_scope`.
     attention_capture_requested: bool = True
+    #: SP1. Whether the job's upscaler runs in half precision (the owner's
+    #: setting, snapshotted server-side). Consumed by
+    #: `live_generation_port.generate`, which scopes it as Neo's
+    #: `prefer_fp16_upscalers` for this job only.
+    upscaler_half_precision_requested: bool = False
     #: BM1. How many pictures this job makes: Batch count x Batch size in
     #: Batch mode, 1 otherwise. `batch_size` above stays 1 on the JOB: the
     #: port sets it per sampling pass, from `pass_size`.
@@ -545,6 +565,24 @@ class FirstImageRequest:
     #: Empty while Auto Detail is off, so an off job is byte-identical to one
     #: from before the field existed, exactly as `hr_*` are inert.
     ad_slots: tuple[Any, ...] = ()
+    #: MH1. Which half of a model handoff this is: "" for every ordinary job,
+    #: "base" for the base half (kept in memory, never saved), "hires" for the
+    #: Hires half, whose main pass is replaced by `handoff_images` -- one
+    #: decoded picture per picture of the job, in order. `handoff_base_model`
+    #: and `handoff_base_family` name the base half's model for the saved
+    #: parameters and the cross-family LoRA rule. Pixels: never in `to_dict`.
+    handoff_stage: str = ""
+    handoff_images: tuple[Any, ...] = ()
+    handoff_base_model: str = ""
+    handoff_base_family: str = ""
+    #: The base pass's own engine record (for its base-only settings) and the
+    #: seconds the base half and the switch took (for `Time taken`).
+    handoff_base_infotext: str = ""
+    handoff_base_seconds: float = 0.0
+    #: MH2. The Refiner, as ONE group (`RefinerOptions`), or None for every
+    #: job without one. Its files ride inside the group, as a ControlNet
+    #: unit's `model_path` does, never as a request field of their own.
+    refiner: "RefinerOptions | None" = None
 
     def to_dict(self) -> dict[str, Any]:
         """A loggable view. Prompt text is deliberately excluded."""

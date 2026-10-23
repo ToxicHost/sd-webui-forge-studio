@@ -212,6 +212,8 @@ function _applyInfotextToUI(infotext, opts = {}) {
   AnimaEmphasis.fromReusedInfotext(p);
   // KR1. Made with Klein references: say so, and bring the max side back.
   KleinReferences.fromReusedInfotext(p);
+  // MH2. Made with a Refiner: bring it back, with its switch step.
+  Refiner.fromReusedInfotext(p);
 
   console.log("[Studio] Applied infotext params:", Object.keys(p).join(", "));
 }
@@ -1954,6 +1956,171 @@ function _jobModelSelection() {
   } : null;
 }
 
+// MH1. Hires -> Model: the model the Hires pass and Auto Detail run on
+// (owner, 2026-10-22). "Same" is the base model. Another model brings its own
+// Text Encoder and VAE, chosen the way the main Model box chooses them: this
+// checkpoint's own memory, then the main box's when the architecture is the
+// same, then the architecture's memory. Never a guess.
+const HiresModel = {
+  _ids: { model: "paramHrCheckpoint", te: "paramHrTextEncoder", vae: "paramHrVAE" },
+  _el(key) { return document.getElementById(this._ids[key]); },
+  _arch: "unknown",
+
+  chosen() {
+    const value = this._el("model")?.value || "";
+    return value && value !== "Same" ? value : "";
+  },
+
+  // The main box's option lists, current value kept where it still exists.
+  _copyOptions(fromId, select, fallback) {
+    const from = document.getElementById(fromId);
+    if (!from || !select) return;
+    const keep = select.dataset.pendingValue || select.value;
+    select.innerHTML = from.innerHTML;
+    select.value = _optionExists(select, keep) ? keep : fallback;
+    if (select.value === keep) delete select.dataset.pendingValue;
+    _syncSelectUI(select);
+  },
+
+  // reason: "model-change" picks components; anything else keeps them.
+  async refresh(reason = "populate") {
+    const row = document.getElementById("hrModelComponents");
+    const te = this._el("te");
+    const vae = this._el("vae");
+    const id = this.chosen();
+    if (!row || !te || !vae) return;
+    this._copyOptions("paramTextEncoder", te, "None");
+    this._copyOptions("paramVAE", vae, "Automatic");
+    if (!id) {
+      row.style.display = "none";
+      return;
+    }
+    row.style.display = "";
+    const check = await checkModelTE(id);
+    if (id !== this.chosen()) return;      // changed again while we asked
+    this._arch = check.arch || "unknown";
+    const teCell = document.getElementById("hrTextEncoderCell");
+    if (teCell) teCell.style.display = check.needs_te ? "" : "none";
+    if (!check.needs_te) te.value = "None";
+    if (reason !== "model-change") {
+      _syncSelectUI(te);
+      return;
+    }
+    const mem = _readComponentMemory();
+    const entry = mem.by_model?.[id] || {};
+    const baseArch = State._currentModelCheck?.arch;
+    const sameArch = _isUsableArch(this._arch) && baseArch === this._arch;
+    const pick = (select, own, main, byArch, fallback) => {
+      const found = [own, sameArch ? main : "", _isUsableArch(this._arch) ? byArch : ""]
+        .find(v => v && v !== fallback && _optionExists(select, v));
+      select.value = found || fallback;
+      _syncSelectUI(select);
+    };
+    if (check.needs_te) {
+      pick(te, entry.te, document.getElementById("paramTextEncoder")?.value,
+           mem.by_arch?.[this._arch]?.te, "None");
+    }
+    if (Object.prototype.hasOwnProperty.call(entry, "vae") && entry.vae === null) {
+      vae.value = "Automatic";
+      _syncSelectUI(vae);
+    } else {
+      pick(vae, entry.vae, document.getElementById("paramVAE")?.value,
+           mem.by_arch?.[this._arch]?.vae, "Automatic");
+    }
+    if (check.needs_te && te.value === "None") {
+      showToast(_i18n("toast.hires.teNeeded",
+        "The Hires model needs a text encoder: choose one under Hires Fix"), "info");
+    }
+  },
+
+  // The three ids the job sends as `hires.model`, or null for "Same".
+  selection() {
+    const id = this.chosen();
+    if (!id) return null;
+    const value = (key, sentinels) => {
+      const v = (this._el(key)?.value || "").trim();
+      return sentinels.includes(v) ? "" : v;
+    };
+    return {
+      checkpoint_model_id: id,
+      text_encoder_model_id: value("te", ["", "None"]),
+      vae_model_id: value("vae", ["", "None", "Automatic"]),
+    };
+  },
+
+  bind() {
+    this._el("model")?.addEventListener("change", () => this.refresh("model-change"));
+    this._el("te")?.addEventListener("change", () =>
+      rememberExternalTE(this.chosen(), this._arch, this._el("te").value));
+    this._el("vae")?.addEventListener("change", () => {
+      const v = this._el("vae").value;
+      rememberVAE(this.chosen(), this._arch,
+                  v && v !== "Automatic" && v !== "None" ? v : null);
+    });
+  },
+};
+
+// MH2. The Refiner (owner, 2026-10-22): a second checkpoint of the SAME
+// family takes over the sampling at a step, then Hires and Auto Detail run on
+// it. Only its checkpoint travels: it keeps the main model's Text Encoder and
+// VAE, as Neo's Refiner keeps the prompt's encoding.
+const Refiner = {
+  _el(id) { return document.getElementById(id); },
+
+  // The `refiner` group a job sends, or null when the section is off.
+  group() {
+    if (!this._el("checkRefiner")?.classList.contains("checked")) return null;
+    return {
+      enabled: true,
+      checkpoint_model_id: (this._el("paramRefinerCheckpoint")?.value || "").trim(),
+      switch_at_step: parseInt(this._el("paramRefinerSwitch")?.value, 10) || 0,
+      cfg: parseFloat(this._el("paramRefinerCFG")?.value) || 0,
+    };
+  },
+
+  // A checkpoint of another architecture is said at once, here, rather than
+  // when the job is refused; the server's header check is the authority.
+  async _checkFamily() {
+    const id = this._el("paramRefinerCheckpoint")?.value || "";
+    const base = State._currentModelCheck?.arch;
+    if (!id || !_isUsableArch(base)) return;
+    const arch = (await checkModelTE(id)).arch;
+    if (_isUsableArch(arch) && arch !== base) {
+      showToast(_i18n("toast.refiner.family",
+        "The Refiner must be the same kind of model as the main one; for another family, use Hires Fix > Model"),
+        "info");
+    }
+  },
+
+  // Reusing a picture brings its Refiner back, or turns the Refiner off when
+  // the picture had none -- Neo's own paste fields (`refiner.py`:
+  // `enable_refiner` is "Refiner" in the parameters). The step comes back
+  // from Neo's fraction and the picture's Steps.
+  fromReusedInfotext(p) {
+    const check = this._el("checkRefiner");
+    const select = this._el("paramRefinerCheckpoint");
+    if (!check || !select) return;
+    if (!p || !p.refiner) { check.classList.remove("checked"); return; }
+    const option = [...select.options].find(o => o.value && (o.textContent === p.refiner || o.value === p.refiner));
+    if (!option) {
+      check.classList.remove("checked");
+      showToast(_i18n("toast.refiner.missing", "This picture's Refiner, {name}, is not in your checkpoints",
+                      { name: p.refiner }), "info");
+      return;
+    }
+    select.value = option.value;
+    _syncSelectUI(select);
+    check.classList.add("checked");
+    const at = parseFloat(p.refinerSwitchAt);
+    const steps = parseInt(p.steps, 10);
+    if (isFinite(at) && steps > 0) this._el("paramRefinerSwitch").value = String(Math.round(at * steps));
+  },
+
+  bind() {
+    this._el("paramRefinerCheckpoint")?.addEventListener("change", () => this._checkFamily());
+  },
+};
+
 const Live = {
   // State
   // This page's id for itself. Live events reach every open tab; each tab
@@ -3295,11 +3462,12 @@ async function populateDropdowns() {
 
     // Hires Fix checkpoint dropdown — same hash-stripping treatment
     // as the main model selector. Value retains Forge's full title.
+    // MH1: it reaches the engine now, as `hires.model` (HiresModel).
     const hrCheckpoint = document.getElementById("paramHrCheckpoint");
     if (hrCheckpoint) {
       const prev = _pickPrev(hrCheckpoint);
       hrCheckpoint.innerHTML =
-        '<option value="Same">Same</option>' +
+        `<option value="Same">${_escapeHtml(_i18n("ui.hires.sameAsBase", "Same as base"))}</option>` +
         models.map(m => {
           const value = m.model_id || m.title || m.name || "";
           const label = _stripModelHash(m.name || m.title || value);
@@ -3307,6 +3475,22 @@ async function populateDropdowns() {
         }).join("");
       restoreSelection(hrCheckpoint, prev);
       delete hrCheckpoint.dataset.pendingValue;
+    }
+
+    // MH2. The Refiner's checkpoint: the same list; the server refuses one
+    // of another family before any step runs (`refiner_port.RefinerSwap.check`).
+    const refinerCheckpoint = document.getElementById("paramRefinerCheckpoint");
+    if (refinerCheckpoint) {
+      const prev = _pickPrev(refinerCheckpoint);
+      refinerCheckpoint.innerHTML =
+        `<option value="">${_escapeHtml(_i18n("ui.refiner.choose", "Choose a checkpoint"))}</option>` +
+        models.map(m => {
+          const value = m.model_id || m.title || m.name || "";
+          const label = _stripModelHash(m.name || m.title || value);
+          return `<option value="${_escapeHtml(value)}">${_escapeHtml(label)}</option>`;
+        }).join("");
+      restoreSelection(refinerCheckpoint, prev);
+      delete refinerCheckpoint.dataset.pendingValue;
     }
 
     // Sync the searchable-select trigger label after a programmatic
@@ -3553,6 +3737,8 @@ async function populateDropdowns() {
 
     // ControlNet model + preprocessor dropdowns (async, non-blocking). CN1.
     ControlNetPanel.loadLists().catch(() => {});
+    // MH1. The Hires model's Text Encoder and VAE take the main box's lists.
+    HiresModel.refresh("populate").catch(() => {});
   } catch (e) {
     console.error("[Studio] Failed to load resources:", e);
     showToast(I18N.t("toast.connectionFailed", "Failed to connect to Forge backend"), "error");
@@ -4510,6 +4696,8 @@ async function doGenerate(overrides = {}) {
         parseInt(document.getElementById("paramHrSteps")?.value) || 0,
       denoising_strength: _num("paramHrDenoise", 0.3),
       cfg: _num("paramHrCFG", 0),
+      // MH1. Absent for "Same as base", which is every job before this.
+      ...(HiresModel.selection() ? { model: HiresModel.selection() } : {}),
     };
   };
 
@@ -4560,6 +4748,7 @@ async function doGenerate(overrides = {}) {
         // An outpaint job sends none: it is already generated at the model's
         // own size and pasted back at the picture's (CT9).
         ...(!_outpaint && _hiresGroup() ? { hires: _hiresGroup() } : {}),
+        ...(Refiner.group() ? { refiner: Refiner.group() } : {}),
         // Auto Detail, the same way and for the same reason: absent is not
         // disabled. With no `auto_detail` key the server sets no slot at all
         // and the result is byte-identical to a pre-P0.8 one.
@@ -8784,6 +8973,18 @@ function bindUI() {
     window.Prefs?.set("gpu_tile_compositing", on);
   });
 
+  // ===== UPSCALER HALF PRECISION (SP1) =====
+  // Off unless the owner turns it on: it changes the upscaled picture slightly.
+  // Server-snapshotted at Generate, like the toggle above.
+  const _upscalerHalfToggle = document.getElementById("toggleUpscalerHalf");
+  if (window.Prefs?.get("upscaler_half_precision", false) === true) {
+    _upscalerHalfToggle?.classList.add("on");
+  }
+  _upscalerHalfToggle?.addEventListener("click", () => {
+    const on = _upscalerHalfToggle?.classList.contains("on") ?? false;
+    window.Prefs?.set("upscaler_half_precision", on);
+  });
+
   // ===== HEATMAP DATA (HM2) =====
   // The capture toggle is a server-snapshotted preference, exactly as the one
   // above. The folder is NOT a preference: it changes only together with the
@@ -8972,7 +9173,9 @@ function bindUI() {
     hires: [
       ["checkHires", "check"], ["paramHrUpscaler", "val"], ["paramHrScale", "val"],
       ["paramHrSteps", "val"], ["paramHrDenoise", "val"], ["paramHrCFG", "val"],
-      ["paramHrCheckpoint", "val"],
+      ["paramHrCheckpoint", "val"], ["paramHrTextEncoder", "val"], ["paramHrVAE", "val"],
+      ["checkRefiner", "check"], ["paramRefinerCheckpoint", "val"],
+      ["paramRefinerSwitch", "val"], ["paramRefinerCFG", "val"],
     ],
     ad: [
       ["checkAD", "check"],
@@ -8999,7 +9202,7 @@ function bindUI() {
       ["toggleMetadata", "on"],
       // Panel collapse state (Generate tab sections)
       ["panelSampling", "open"], ["panelCanvas", "open"], ["panelSeedBatch", "open"],
-      ["panelSoftInpaint", "open"], ["panelHires", "open"],
+      ["panelSoftInpaint", "open"], ["panelHires", "open"], ["panelRefiner", "open"],
       ["panelAD", "open"], ["panelUpscale", "open"], ["panelCN", "open"],
     ],
     format: [
@@ -9192,6 +9395,9 @@ function bindUI() {
     // Defaults/session restore writes #adLoraStack{n}.value without an input
     // event (the "val" branch above), so rehydrate the AD LoRA chips explicitly.
     if (window.ADLoRAStack) window.ADLoRAStack.restoreFromHidden();
+    // MH1. The same write, no event: show the Hires model's components row
+    // for a restored model, keeping the restored Text Encoder and VAE.
+    HiresModel.refresh("restore").catch(() => {});
 
     // Sync canvas size to restored width/height
     const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
@@ -10841,6 +11047,7 @@ const LayoutBlocks = {
     { id: "frame",      label: "Canvas",        canHide: true  },
     { id: "seedbatch",  label: "Seed",           canHide: true  },
     { id: "hires",      label: "Hires Fix",     canHide: true  },
+    { id: "refiner",    label: "Refiner",       canHide: true  },
     { id: "adetailer",  label: "ADetailer",     canHide: true  },
     { id: "upscale",    label: "Upscale",       canHide: true  },
     { id: "controlnet", label: "ControlNet",    canHide: true  },
@@ -11988,6 +12195,8 @@ async function init() {
   bindUI();
   KleinReferences.bind();
   ControlNetPanel.bind();
+  HiresModel.bind();
+  Refiner.bind();
   _initParamScrub();
 
   // Add initial history entry

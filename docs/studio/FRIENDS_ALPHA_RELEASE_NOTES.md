@@ -4,11 +4,44 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
-## 0.9.9: Tensor.Art link in the Codex — 2026-10-22
+## 0.9.9: Hires on another model, Refiner, faster upscaler option — 2026-10-22
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
 then close Studio and run Start-Studio.bat again. Nothing new is installed.
 
+- **Hires Fix > Model.** The Hires pass and Auto Detail can run on a different
+  model from the base pass, including one of another family (for example an
+  Anima base finished by an SDXL model). The Hires model uses its own Text
+  Encoder and VAE. The default is Same as base.
+  - Switching models adds a few seconds per job: about 4–5 s between two
+    Anima models and about 7 s to or from SDXL, on a 16 GB card. Only one
+    model is on the GPU at a time, so VRAM use does not go up.
+  - In a batch, all base passes run first, then one switch, then all Hires
+    passes.
+  - Across families, the base prompt's LoRA tags are left out of the Hires
+    pass.
+  - Text-to-image only.
+- **Refiner.** A new Refiner section on the Generate panel. A second checkpoint
+  of the same family takes over the sampling at the step you choose: "Switch
+  at step" 45 with 60 Steps gives the main model 45 steps and the Refiner 15.
+  The Refiner can have its own CFG. It works with Hires and Auto Detail, which
+  then run on the Refiner.
+  - A checkpoint of another family is refused before generating; use
+    Hires Fix > Model for that.
+  - Text-to-image only, .safetensors only, and not together with
+    Hires Fix > Model.
+  - The main model is put back after the job, and pictures made afterwards
+    are unchanged.
+- **Faster upscaler (half precision).** A new option in Settings > Performance
+  & VRAM, off by default. It runs upscalers such as Remacri in half precision:
+  the upscale took 2.6 s instead of 4.8 s on an RTX 5060 Ti. Fine detail in
+  the final picture can differ slightly.
+- **Gallery info** shows the Generation Time for every file format, and the
+  Refiner, its switch step and the Hires model when a picture used them. CFG
+  Scale shows again for a just-generated picture. Reusing a picture's
+  parameters brings its Refiner back.
+- **Pictures record `Version: Studio-0.9.9`** instead of Forge Neo's version.
+  Older pictures keep what they say.
 - **Codex > Models & VAE** says that the two starter models (Dominion and
   Animatox, by ToxicHost) are free, and links Moritz's models on Tensor.Art,
   which can be run there or bought for local use.

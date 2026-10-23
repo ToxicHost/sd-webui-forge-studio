@@ -95,8 +95,13 @@ class UpscalerESRGAN(Upscaler):
     def do_upscale(self, img: Image.Image, selected_model: str):
         soft_empty_cache()
 
+        # Read per upscale, not once at import as `PREFER_HALF` is: Studio's
+        # Settings toggle reaches this through the job's option scope
+        # (`forge_headless/job_options.py`), so one process serves both
+        # precisions and the cached model is keyed by precision as well as path.
+        half = bool(opts.prefer_fp16_upscalers)
         try:
-            model = self.load_model(selected_model)
+            model = self.load_model(selected_model, half)
         except Exception:
             errors.report(f"Unable to load {selected_model}", exc_info=True)
             return img
@@ -108,7 +113,7 @@ class UpscalerESRGAN(Upscaler):
         # and the real cost is preflighted below instead.
         free_memory(
             #       (W * H)       * C *          dtype            *    scale    *                  ratio                       *  MB
-            (opts.ESRGAN_tile**2) * 3 * (2 if PREFER_HALF else 4) * model.scale * MEM_RATIO.get(model.architecture.name, 0.05) * 1024 + module_size(model.model),
+            (opts.ESRGAN_tile**2) * 3 * torch_utils.get_param(model).element_size() * model.scale * MEM_RATIO.get(model.architecture.name, 0.05) * 1024 + module_size(model.model),
             device=devices.device_esrgan,
         )
 
@@ -211,7 +216,7 @@ class UpscalerESRGAN(Upscaler):
         return mode == preflight.MODE_GPU
 
     @lru_cache(maxsize=4, typed=False)
-    def load_model(self, path: str):
+    def load_model(self, path: str, half: bool = False):
         if not path.startswith("http"):
             filename = path
         else:
@@ -221,6 +226,6 @@ class UpscalerESRGAN(Upscaler):
                 file_name=path.rsplit("/", 1)[-1],
             )
 
-        model = modelloader.load_spandrel_model(filename, device=devices.cpu, prefer_half=PREFER_HALF)
+        model = modelloader.load_spandrel_model(filename, device=devices.cpu, prefer_half=half)
         model.to(devices.device_esrgan)
         return model

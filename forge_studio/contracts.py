@@ -354,6 +354,10 @@ class GenerationRequest(Contract):
     #: True (the default) keeps the main pass's word attention for heatmaps
     #: and word masks; False captures nothing.
     attention_capture_requested: bool = True
+    #: SP1. The owner's "Faster upscaler (half precision)" setting, snapshotted
+    #: by the SERVER at assembly like the two above. False (the default) loads
+    #: ESRGAN-family upscalers in fp32, as Neo does unless told otherwise.
+    upscaler_half_precision_requested: bool = False
     #: The wildcard resolution, snapshotted by the SERVER at assembly.
     #:
     #: On the request rather than beside it because every consumer that needs
@@ -459,6 +463,72 @@ class GenerationRequest(Contract):
     #: Absent means absent: a Queue-mode job carries no group and is
     #: byte-identical to one made before Batch mode existed.
     batch: "BatchSettings | None" = None
+    #: MH1. Which half of a model handoff this request is, or None for every
+    #: ordinary job. SERVER-SET, never read from a page: `presentation` builds
+    #: requests field by field and has no spelling for it. The application
+    #: splits a job whose Hires names another model into two requests on two
+    #: sessions (`application._run_handoff`).
+    handoff: "HandoffStage | None" = None
+    #: MH2. The Refiner, or None. Absent means absent: no Refiner is checked,
+    #: loaded or installed, and the job is byte-identical to one made before
+    #: this field existed.
+    refiner: "RefinerSettings | None" = None
+
+
+@dataclass(frozen=True)
+class RefinerSettings(Contract):
+    """MH2. A second checkpoint of the same family that finishes the sampling.
+
+    Neo's Refiner (`processing_scripts/refiner.py`, `apply_refiner`'s fast
+    path) in Studio's vocabulary. The base model samples steps 1..k, the
+    Refiner the rest of the same latent; Hires and Auto Detail then run on the
+    Refiner (owner's D1). The prompt keeps the base model's encoding, as Neo's
+    fast path does (D5).
+    """
+
+    enabled: bool = False
+    #: A checkpoint catalogue id, as `model_selection` carries one.
+    checkpoint_model_id: str = ""
+    #: The base model samples this many steps, the Refiner the rest: "45 of
+    #: 60" is 45 here with Steps 60. Neo's "Switch at" in its steps mode, as
+    #: a step rather than a fraction (D5).
+    switch_at_step: int = 0
+    #: 0 keeps the base CFG; Neo's "Refiner CFG Scale" (`refiner_cfg`, used
+    #: when >= 1.0).
+    cfg: float = 0.0
+
+
+@dataclass(frozen=True)
+class HandoffStage(Contract):
+    """MH1. One half of a job whose Hires runs on another model.
+
+    `stage` is "base" -- the main pass on the job's own model, kept in
+    memory and never saved -- or "hires": the same request on the Hires
+    model, whose main pass is replaced by `pictures` (Neo's `firstpass_image`,
+    the path behind its own Hires "Upscale" button), followed by Auto Detail
+    and the save. One `pictures` entry per picture of the job, in order, as
+    PNG data URLs.
+
+    `base_model` and `base_family` describe the base half for the Hires half:
+    the saved parameters name the base model as `Model` (Neo's own spelling
+    for a Hires checkpoint job), and a different family drops the base
+    prompt's LoRA tags from the Hires pass. `base_infotext` is the engine's
+    own record of the base pass, whose base-only settings (`Schedule type`,
+    `Shift`) the saved parameters keep; `base_seconds` is the base half and
+    the switch, so `Time taken` is the whole job's.
+    """
+
+    stage: str
+    pictures: tuple[str, ...] = ()
+    base_model: str = ""
+    base_family: str = ""
+    base_infotext: str = ""
+    base_seconds: float = 0.0
+
+    def __deepcopy__(self, memo: Any) -> "HandoffStage":
+        # Frozen and immutable all the way down; `asdict` deep-copies every
+        # field, and these are whole pictures.
+        return self
 
 
 @dataclass(frozen=True)
@@ -888,6 +958,17 @@ class HiresSettings(Contract):
     #: Neo drop the negative conditioning entirely. Worth knowing before
     #: treating it as a continuous scale.
     cfg: float = 0.0
+    #: MH1. The model the Hires pass (and Auto Detail after it) runs on, as
+    #: the same three catalogue ids `model_selection` carries, or None for
+    #: "Same as base". Carried verbatim; `ModelSelection.from_payload` is the
+    #: one definition of what a selection may contain.
+    #:
+    #: Neo's own field is `hr_checkpoint_name` + `hr_additional_modules`, and
+    #: it cannot be forwarded: both reload through Neo's checkpoint catalogue,
+    #: which Studio's directly loaded sessions do not carry
+    #: (`Evidence/source-review/MH-model-handoff.md`). Studio switches its own
+    #: session between the passes instead.
+    model: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)

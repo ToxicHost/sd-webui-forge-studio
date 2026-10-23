@@ -508,6 +508,48 @@ class WarmSessionManager:
         # the lock across it blocks every status read.
         return self._complete_load(selection)
 
+    def switch_for_job(self, job_id: str, selection: Any) -> dict[str, Any]:
+        """MH1. Switch the session FOR the job that holds the lease.
+
+        A model handoff is one job on two models. `ensure_loaded` defers any
+        switch while a lease is held -- correctly, since it would pull the
+        model out from under the job -- so the holder itself asks here, at the
+        safe boundary between its two halves, and keeps its lease throughout:
+        a queued job cannot slip in between and switch the model back.
+
+        The same close-A-then-open-B as every switch (`_switch_locked`), over
+        edges the graph already has: BUSY -> READY -> SWITCHING -> READY ->
+        BUSY. A selection that is already resident is reused, as
+        `ensure_loaded` reuses it. A failed open leaves FAILED with no session,
+        exactly as a failed ordinary switch does; the lease stays with the job
+        until it releases.
+        """
+
+        with self._lock:
+            self._require_open()
+            if self._active_job != job_id:
+                raise _error(
+                    MODEL_BUSY,
+                    "Only the running job can switch the model it runs on.",
+                    "job_id",
+                )
+            wanted = str(getattr(selection, "profile_id", "") or "")
+            if not wanted:
+                raise _error(
+                    MODEL_NOT_SELECTED,
+                    "That model selection could not be identified.",
+                )
+            resident = self._lifecycle.profile
+            if str(getattr(resident, "profile_id", "") or "") == wanted:
+                self.counters["reuses"] += 1
+                return self._lifecycle.snapshot()
+            if self._lifecycle.state is S.BUSY:
+                self._lifecycle.transition(S.READY, reason=f"job {job_id} hands off")
+            self._switch_locked(selection, reason=f"job {job_id} hands off")
+            self.counters["handoffs"] = self.counters.get("handoffs", 0) + 1
+            self._lifecycle.transition(S.BUSY, reason=f"job {job_id}")
+            return self._lifecycle.snapshot()
+
     # -- job leases --------------------------------------------------------
 
     def acquire(self, job_id: str, *, timeout: float | None = None) -> bool:

@@ -2749,7 +2749,41 @@ function _metaFromInfotext(infotext) {
     for (const [src, dst] of Object.entries(map)) {
         if (pp[src] !== undefined && pp[src] !== "") m[dst] = pp[src];
     }
+    // MH2. EVERY other setting too, as the server keeps every key
+    // (`gallery_metadata._read_settings`). A just-generated picture opens
+    // here, not from its saved row, and this map alone dropped Time taken,
+    // the Refiner and where it switched, and the Hires model -- in every
+    // file format, because none of them was ever on the list.
+    const prose = new Set(["prompt", "negativePrompt", "template", "negativeTemplate",
+                           "studioDynamicPrompts", "width", "height"]);
+    for (const [src, value] of Object.entries(pp)) {
+        if (prose.has(src) || src in map || value === undefined || value === "") continue;
+        const dst = _snakeKey(src);
+        if (!(dst in m)) m[dst] = value;
+    }
     return m;
+}
+// `parseInfotext`'s camelCase back to the server's snake_case names. Its
+// camelCase lowercases only the FIRST letter, so an acronym arrives as
+// "cFGScale" ("CFG scale") or "vAE": restore it, then split word boundaries,
+// keeping a run of capitals together -- "cfg_scale", "vae", "time_taken".
+// "CFG scale" was missing from this view altogether: the map's `cfgScale`
+// never matched what the parser produces.
+function _snakeKey(src) {
+    const s = /^[a-z][A-Z]/.test(src) ? src[0].toUpperCase() + src.slice(1) : src;
+    return s.replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+            .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+            .toLowerCase();
+}
+// MH2. "Refiner switch at" is Neo's fraction of the steps; the owner set a
+// step, so the panel says which one: "step 15 of 20".
+function _refinerSwitchText(m) {
+    const at = parseFloat(m.refiner_switch_at);
+    const steps = parseInt(m.steps, 10);
+    if (!isFinite(at)) return String(m.refiner_switch_at);
+    if (!(steps > 0)) return String(m.refiner_switch_at);
+    return _t("gallery.metadata.refinerStep", "step {step} of {steps}",
+              { step: Math.round(at * steps), steps });
 }
 async function loadMetadata(img) {
     const p = document.getElementById("gal-meta-panel"); if (!p) return;
@@ -2777,7 +2811,7 @@ async function loadMetadata(img) {
         const dv = m.date_original || m.date_time || ""; if (dv) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.date", "Date") + '</div><div class="gal-meta-value">' + esc(dv) + '</div></div>'; } else if (img && img.file_date) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.date", "Date") + '</div><div class="gal-meta-value">' + new Date(img.file_date * 1000).toLocaleDateString("en-US", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) + '</div></div>'; }
         if (img && img.width) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.dimensions", "Dimensions") + '</div><div class="gal-meta-value">' + img.width + ' \u00d7 ' + img.height + ' px</div></div>'; }
         if (m.file_size) { has = true; const mb = m.file_size / (1024 * 1024); h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.fileSize", "File Size") + '</div><div class="gal-meta-value">' + (mb >= 1 ? mb.toFixed(1) + " MB" : (m.file_size / 1024).toFixed(0) + " KB") + '</div></div>'; }
-        const ord = [["prompt","Prompt"],["negative_prompt","Negative"],["model","Model"],["steps","Steps"],["sampler","Sampler"],["scheduler","Scheduler"],["cfg_scale","CFG Scale"],["cfg","CFG Scale"],["seed","Seed"],["size","Size"],["clip_skip","Clip Skip"],["denoising","Denoise"],["hires_upscaler","Hires Up."],["hires_steps","Hires Steps"],["hires_upscale","Hires Scale"],["model_hash","Model Hash"],["camera_make","Camera"],["camera_model","Camera Model"],["lens_make","Lens"],["lens_model","Lens Model"],["focal_length","Focal Length"],["focal_length_35mm","Focal 35mm"],["f_number","Aperture"],["exposure_time","Exposure"],["iso","ISO"],["flash","Flash"],["software","Software"]];
+        const ord = [["prompt","Prompt"],["negative_prompt","Negative"],["model","Model"],["time_taken",_t("gallery.metadata.generationTime","Generation Time")],["refiner",_t("gallery.metadata.refiner","Refiner")],["refiner_switch_at",_t("gallery.metadata.refinerSwitch","Refiner Switch")],["hires_checkpoint",_t("gallery.metadata.hiresModel","Hires Model")],["steps","Steps"],["sampler","Sampler"],["scheduler","Scheduler"],["cfg_scale","CFG Scale"],["cfg","CFG Scale"],["seed","Seed"],["size","Size"],["clip_skip","Clip Skip"],["denoising","Denoise"],["hires_upscaler","Hires Up."],["hires_steps","Hires Steps"],["hires_upscale","Hires Scale"],["model_hash","Model Hash"],["camera_make","Camera"],["camera_model","Camera Model"],["lens_make","Lens"],["lens_model","Lens Model"],["focal_length","Focal Length"],["focal_length_35mm","Focal 35mm"],["f_number","Aperture"],["exposure_time","Exposure"],["iso","ISO"],["flash","Flash"],["software","Software"]];
         const resolvedPrompt = _parseResolvedPrompt(m.raw_infotext || m.raw_parameters);
         // A1111 writes "Denoising strength" for both img2img and HiRes Fix.
         // Disambiguate by looking for sibling HiRes fields.
@@ -2828,7 +2862,8 @@ async function loadMetadata(img) {
                       + '</div></div></div>';
                 }
             } else {
-                h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div><div class="gal-meta-value">' + esc(String(m[k])) + '</div></div>';
+                const shown = k === "refiner_switch_at" ? _refinerSwitchText(m) : String(m[k]);
+                h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div><div class="gal-meta-value">' + esc(shown) + '</div></div>';
             }
         }
         const skip = new Set(["file_size","template","error","raw_parameters","raw_infotext","comfyui_prompt","comfyui_workflow","pixel_x","pixel_y","orientation","x_resolution","y_resolution","resolution_unit","date_digitized","date_original","date_time","color_space","sensing_method","spectral_sensitivity","gain_control","file_source","serial_number","digital_zoom","max_aperture","exposure_bias","exposure_mode","exposure_program","metering_mode","scene_type","contrast","saturation","sharpness","white_balance","subject_distance","shutter_speed","aperture","lens_info","ExifOffset","tag_34665","_source","created_at"].concat(ord.map(o => o[0])));

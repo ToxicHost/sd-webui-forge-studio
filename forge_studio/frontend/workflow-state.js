@@ -110,6 +110,14 @@ var FIELD_MAP = {
   hires_denoise:    { id: "paramHrDenoise",    type: "number" },
   hires_cfg:        { id: "paramHrCFG",        type: "number" },
   hires_checkpoint: { id: "paramHrCheckpoint", type: "value" },
+  // MH1. The Hires model's own components.
+  hires_text_encoder: { id: "paramHrTextEncoder", type: "value" },
+  hires_vae:          { id: "paramHrVAE",         type: "value" },
+  // MH2. The Refiner.
+  refiner_enabled:    { id: "checkRefiner",           type: "collapseCheck" },
+  refiner_checkpoint: { id: "paramRefinerCheckpoint", type: "value" },
+  refiner_switch:     { id: "paramRefinerSwitch",     type: "int" },
+  refiner_cfg:        { id: "paramRefinerCFG",        type: "number" },
 
   // ADetailer master + 3 slots --------------------------------------------
   ad_enabled:        { id: "checkAD",         type: "collapseCheck" },

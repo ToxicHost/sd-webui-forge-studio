@@ -126,6 +126,12 @@ class ModelLifecycleService:
 
         return self._manager.ensure_loaded(selection)
 
+    def switch_for_job(self, token: str, selection: Any) -> dict[str, Any]:
+        """MH1. The leased job's own switch, between its two halves. See
+        `WarmSessionManager.switch_for_job`."""
+
+        return self._manager.switch_for_job(token, selection)
+
     def begin_job(self) -> str:
         """Take the warm session for one job, or refuse by name.
 

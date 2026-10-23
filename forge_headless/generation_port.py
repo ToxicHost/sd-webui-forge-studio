@@ -91,6 +91,12 @@ class GenerationOutcome:
     #: describe picture 1, so everything that reads one result still reads
     #: one. Empty for every job of one picture.
     pictures: tuple["GenerationOutcome", ...] = ()
+    #: MH1. The model that made this picture -- the label its infotext names
+    #: as `Model` -- and its family (`family_shift.preset_for`), so the second
+    #: half of a model handoff can name the first. Set only on the base
+    #: half's in-memory outcomes; "" everywhere else.
+    model_label: str = ""
+    model_family: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         described = {

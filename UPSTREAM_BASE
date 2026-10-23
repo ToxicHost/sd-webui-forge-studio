@@ -57,7 +57,7 @@ neo_comparisons_checked=2026-08-18
 # install-time. That was three days out of date and wrong about the third
 # family. Every number here is now recomputed from git by
 # tests/studio_alpha/test_patch_inventory.py rather than transcribed by hand.
-neo_owned_files_modified=39
+neo_owned_files_modified=40
 neo_inference_paths_modified=1
 neo_pixel_paths_modified=2
 

@@ -940,6 +940,19 @@ class JobCoordinator:
         # mid-flight; it was added for `describe()`'s progress merge and is
         # the same answer this needs.
         backend_id = backend_id or self._in_flight_backend_id()
+        # MH1. A model-handoff job is two backend jobs under one lease. The
+        # flag stops it going on to its next half; between the halves, while
+        # the model switches, it is the whole cancellation.
+        handoff = getattr(self._application, "cancel_handoff", None)
+        handed_off = bool(handoff(public_id)) if callable(handoff) else False
+        if not backend_id and handed_off:
+            with self._lock:
+                record = self._jobs[public_id]
+                if record["state"] not in TERMINAL_STATES:
+                    record["state"] = CANCELLED
+            return {"job_id": public_id, "state": CANCELLED,
+                    "cancelled_while_queued": False,
+                    "cancelled": True}
         if backend_id:
             result = self._application.cancel_generation(backend_id)
             with self._lock:

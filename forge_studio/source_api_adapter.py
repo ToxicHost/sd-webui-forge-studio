@@ -1065,8 +1065,10 @@ class SourceFrontendAdapter:
         like a Studio bug rather than a feature nobody built.
         `parity_ledger.py:80` has recorded it as missing all along.
 
-        BUILT RATHER THAN HIDDEN, which is the opposite of the ruling on the
-        Hires checkpoint control, and for a stated reason: an alpha tester on a
+        BUILT RATHER THAN HIDDEN, which was the opposite of what was done with
+        the Hires checkpoint control at the time (hidden as unwired in
+        `a17bfc73`; wired as Hires -> Model by MH1, 2026-10-22), and for a
+        stated reason: an alpha tester on a
         6 GB card cannot run Hires, Auto Detail and a generation together. A
         pure ESRGAN pass needs NO resident checkpoint and does no sampling, so
         it is the one large-image path that card can afford. Hiding it would

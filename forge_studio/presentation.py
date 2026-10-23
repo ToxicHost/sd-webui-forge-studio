@@ -291,6 +291,8 @@ _GENERATION_FIELDS = (
     # a sibling key inside `generation`, so nothing about the base request was
     # re-cut to make room for it.
     "hires",
+    # MH2. The Refiner, one nested group for the same reason.
+    "refiner",
     # Auto Detail, the same way and for the same reason. Without this key in
     # this tuple the field is refused as unknown, so the contract that already
     # declares `auto_detail` could never have received one over HTTP.
@@ -428,6 +430,8 @@ _HIRES_FIELDS = (
     "prompt",
     "negative_prompt",
     "cfg",
+    # MH1. The Hires model: three catalogue ids, or absent for "Same as base".
+    "model",
 )
 
 #: Every field an Auto Detail group may carry, and every field one slot may.
@@ -636,6 +640,10 @@ def _validated_request_payload(payload: Any) -> dict[str, Any]:
     batch = _validated_batch(payload.get("batch"))
     if batch is not None:
         request["batch"] = batch
+    # MH2. Only an enabled Refiner adds a key, for the same reason.
+    refiner = _validated_refiner(payload.get("refiner"), steps)
+    if refiner is not None:
+        request["refiner"] = refiner
     request.update(_resolved_aspect(
         payload,
         operation=str(request.get("operation") or "txt2img"),
@@ -857,6 +865,58 @@ def _validated_references(value: Any) -> tuple[Any, ...]:
             raise PresentationError(f"{role} carries no image data.")
         assets.append(_validated_asset(item, role))
     return tuple(assets)
+
+
+_REFINER_FIELDS = ("enabled", "checkpoint_model_id", "switch_at_step", "cfg")
+
+
+def _validated_refiner(value: Any, steps: int) -> Any:
+    """MH2. The Refiner group, or None when it is absent or off.
+
+    The switch step must leave the base model at least one step and the
+    Refiner at least one: at 0 or at Steps it would never switch -- Neo's own
+    slider allows both and silently does nothing, which is the class of
+    control this product removes. The checkpoint id's shape is checked here;
+    whether it is in the catalogue, and of the loaded model's family, is
+    answered where the job runs.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise PresentationError("refiner must be a JSON object.")
+    unexpected = sorted(str(key) for key in value if key not in _REFINER_FIELDS)
+    if unexpected:
+        raise PresentationError(f"Unsupported generation field: refiner.{unexpected[0]}.")
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise PresentationError("refiner.enabled must be true or false.")
+    if not enabled:
+        return None
+    checkpoint = value.get("checkpoint_model_id", "")
+    if not isinstance(checkpoint, str) or not checkpoint.strip():
+        raise PresentationError("Choose the Refiner's checkpoint.")
+    checkpoint = checkpoint.strip()
+    if len(checkpoint) > 128 or not checkpoint.isalnum():
+        raise PresentationError("refiner.checkpoint_model_id could not be read.")
+    switch = value.get("switch_at_step", 0)
+    if isinstance(switch, bool) or not isinstance(switch, int):
+        raise PresentationError("refiner.switch_at_step must be a whole number.")
+    if not 1 <= switch < int(steps):
+        raise PresentationError(
+            f"The Refiner switch step must be between 1 and {int(steps) - 1} "
+            f"for {int(steps)} steps; {switch} was requested.")
+    cfg = value.get("cfg", 0.0)
+    if isinstance(cfg, bool) or not isinstance(cfg, (int, float)):
+        raise PresentationError("refiner.cfg must be a number.")
+    cfg = float(cfg)
+    if cfg != 0.0 and not 1.0 <= cfg <= 30.0:
+        raise PresentationError(
+            "refiner.cfg must be 0 (keep the base CFG) or between 1.0 and 30.0.")
+    from .contracts import RefinerSettings
+
+    return RefinerSettings(enabled=True, checkpoint_model_id=checkpoint,
+                           switch_at_step=switch, cfg=cfg)
 
 
 def _controlnet_field(value: Any) -> dict[str, Any]:
@@ -1873,6 +1933,15 @@ def _validated_hires(value: Any) -> Any:
             raise PresentationError(f"hires.{name} must be text.")
         text[name] = raw.strip()
 
+    # MH1. The Hires model, carried verbatim like `model_selection`: the ids'
+    # own shape is `ModelSelection.from_payload`'s to judge, where the job is
+    # split. Null, {} or an empty checkpoint all mean "Same as base".
+    model = value.get("model")
+    if model is not None and not isinstance(model, Mapping):
+        raise PresentationError("hires.model must be a JSON object.")
+    if model is not None and not str(model.get("checkpoint_model_id") or "").strip():
+        model = None
+
     return HiresSettings(
         enabled=enabled,
         scale=scale,
@@ -1884,6 +1953,7 @@ def _validated_hires(value: Any) -> Any:
         prompt=text["prompt"],
         negative_prompt=text["negative_prompt"],
         cfg=cfg,
+        model=dict(model) if model is not None else None,
     )
 
 
@@ -2016,9 +2086,14 @@ class StudioPresentation:
         # HM2. The attention capture, on unless the owner turned it off
         # ("on by default, with a setting to turn it off for big batches").
         capture = document.get("attention_capture")
+        # SP1. Upscaler half precision, OFF unless the owner turned it on: it
+        # changes the upscaler's output (by ~0.01/255 for Remacri, measured in
+        # Evidence/speed-rnd-2026-10-22), so it is never a silent default.
+        half = document.get("upscaler_half_precision")
         return {
             "gpu_tile_compositing_requested": requested,
             "attention_capture_requested": True if capture is None else bool(capture),
+            "upscaler_half_precision_requested": bool(half) if half is not None else False,
         }
 
     #: Decorrelates the negative prompt's draw from the positive one. Without

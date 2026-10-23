@@ -100,6 +100,13 @@ class StudioApplication:
         self._selection_resolver = selection_resolver
         #: Attached after construction, for the same reason as the resolver.
         self._detector_catalogue: object | None = None
+        #: MH1. Lease tokens of model-handoff jobs that are running, and those
+        #: a cancel reached (`cancel_handoff`). Between the two halves no
+        #: backend job is in flight, so this is the only thing a cancel there
+        #: can reach.
+        self._handoffs: set[str] = set()
+        self._handoffs_cancelled: set[str] = set()
+        self._handoff_lock = Lock()
 
     def use_selection_resolver(self, resolver: object | None) -> None:
         """Attach the resolver after construction.
@@ -269,6 +276,7 @@ class StudioApplication:
         # request is malformed when the real answer is that nothing is warm.
         lifecycle = self._model_lifecycle
         if lifecycle is None or not getattr(lifecycle, "gates_generation", False):
+            self._hires_model(request, None)    # MH1: refuses a Hires model here
             self._validate_request(request)
             # No lifecycle wired: the pre-Phase-2 arrangement, where the
             # backend owns whatever session it was given. Unchanged so the
@@ -289,6 +297,7 @@ class StudioApplication:
         # `ensure_loaded` may switch, and switching under a held lease would
         # pull the session out from under the job that holds it.
         request = self._ensure_requested_model(request, lifecycle)
+        hires_model = self._hires_model(request, lifecycle)    # MH1, before the lease
         # `job_token` lets the coordinator queue this job under the SAME
         # public id it handed the caller before submission; without one the
         # lifecycle mints its own, exactly as before.
@@ -298,9 +307,209 @@ class StudioApplication:
         )
         try:
             self._validate_request(request)
+            if hires_model is not None:
+                return self._run_handoff(request, hires_model, token, lifecycle)
             return self._backend.submit_generation(request)
         finally:
             lifecycle.end_job(token)
+
+    # -- model handoff (MH1) -------------------------------------------------
+
+    @staticmethod
+    def _hires_model_named(request: Any) -> bool:
+        hires = getattr(request, "hires", None)
+        return bool(
+            hires is not None and getattr(hires, "enabled", False)
+            and getattr(hires, "model", None)
+        )
+
+    def _hires_model(self, request: Any, lifecycle: Any) -> Any:
+        """The Hires model as a `ResolvedSelection`, or None for "Same as base".
+
+        None also when it names exactly the base selection: that is the same
+        model, and a switch to it would be a no-op paid for in bookkeeping.
+
+        Resolved BEFORE the lease, like the base selection, so an unknown or
+        vanished Hires model is refused before any pass is paid for. A host
+        that cannot switch sessions (no lifecycle, no catalogue) refuses a
+        named Hires model by name rather than running Hires on the base model
+        and reporting it done.
+        """
+
+        if not self._hires_model_named(request):
+            return None
+        resolver = self._selection_resolver
+        if resolver is None or not callable(getattr(lifecycle, "switch_for_job", None)):
+            self._invalid(
+                "hires.model",
+                "Hires on another model needs Studio's own model folders; "
+                "this host has none. Set Hires Model to Same as base.",
+            )
+        operation = str(getattr(request, "operation", "") or "txt2img").lower()
+        if operation != "txt2img":
+            self._invalid(
+                "hires.model",
+                "Hires on another model works for text-to-image jobs. For a "
+                "picture operation, set Hires Model to Same as base.",
+            )
+        from types import SimpleNamespace
+
+        resolved = resolver(SimpleNamespace(model_selection=dict(request.hires.model)))
+        base = resolver(request)
+        if resolved is None:
+            return None
+        if base is not None and base.profile_id == resolved.profile_id:
+            return None
+        return resolved
+
+    def _run_handoff(self, request: Any, hires_model: Any, token: str,
+                     lifecycle: Any) -> GenerationJobIdentity:
+        """One job on two models: the base pass on this job's model, then the
+        Hires pass and Auto Detail on the Hires model.
+
+        Neo does this inside `StableDiffusionProcessingTxt2Img.sample` by
+        reloading through its checkpoint catalogue (`hr_checkpoint_name`),
+        which Studio's directly loaded sessions cannot do. Studio switches its
+        own session instead, between two backend jobs under ONE lease:
+
+        1. the whole job -- every picture of a batch -- on the base model,
+           with Hires and Auto Detail off, kept in memory and never saved;
+        2. `switch_for_job` to the Hires model (the owner's call, D3: swap,
+           never two models resident; one switch per job, not per picture);
+        3. the same request on the Hires model, whose main pass is each
+           picture from (1) -- Neo's `firstpass_image` -- then Auto Detail
+           (D1: on the Hires model) and the save.
+
+        The base model is not restored afterwards. The next job names its
+        own model and `ensure_loaded` reconciles it, which is the switch Neo
+        makes at its next iteration anyway (`processing.py:943-945`).
+
+        The returned identity is the second job's, on the session that holds
+        it, so progress, result and cancel all read from the right table. A
+        first half that did not complete is returned as it is.
+        """
+
+        from .contracts import HandoffStage
+
+        base_request = dataclasses.replace(
+            request,
+            hires=None,
+            auto_detail=None,
+            # Nothing of the base half is published, so nothing may be left
+            # pending for a picture that will never be adopted.
+            attention_capture_requested=False,
+            handoff=HandoffStage(stage="base"),
+        )
+        with self._handoff_lock:
+            self._handoffs.add(token)
+            self._handoffs_cancelled.discard(token)
+        import time
+
+        started = time.monotonic()
+        try:
+            first = self._backend.submit_generation(base_request)
+            if not self._backend_completed(first.job_id):
+                return first
+            result = self._backend.get_result(first.job_id)
+            pictures = tuple(
+                str(picture.image_data_url or "")
+                for picture in (result, *tuple(result.pictures or ()))
+            )
+            metadata = dict(result.metadata or {})
+            self._raise_if_handoff_cancelled(token)
+            lifecycle.switch_for_job(token, hires_model)
+            self._raise_if_handoff_cancelled(token)
+        finally:
+            with self._handoff_lock:
+                self._handoffs.discard(token)
+                self._handoffs_cancelled.discard(token)
+
+        hires_request = dataclasses.replace(
+            request,
+            model_id=str(hires_model.profile_id),
+            model_selection=dict(request.hires.model),
+            # The composition is the base half's and is already in the
+            # picture. ControlNet models, regional runners and Klein
+            # references belong to one family; none is carried across.
+            controlnet=(),
+            regions=(),
+            reference_images=(),
+            attention_capture_requested=False,
+            handoff=HandoffStage(
+                stage="hires",
+                pictures=pictures,
+                base_model=str(metadata.get("model_label", "") or ""),
+                base_family=str(metadata.get("model_family", "") or ""),
+                base_infotext=str(metadata.get("infotext", "") or ""),
+                base_seconds=round(time.monotonic() - started, 3),
+            ),
+        )
+        return self._backend.submit_generation(hires_request)
+
+    def _validate_refiner(self, request: Any) -> None:
+        """MH2. What the Refiner cannot be combined with, refused by name.
+
+        Text-to-image only: the switch is in the main pass's sampling, and the
+        image operations' second passes are Studio's own and were not built
+        for it. Not with a Hires Model: the Refiner already decides which
+        model finishes the picture (D1), and two switches in one job is a
+        recipe nobody asked for.
+        """
+
+        refiner = getattr(request, "refiner", None)
+        if refiner is None or not getattr(refiner, "enabled", False):
+            return
+        operation = str(getattr(request, "operation", "") or "txt2img").lower()
+        if operation != "txt2img":
+            self._invalid(
+                "refiner",
+                "The Refiner works for text-to-image jobs. Turn it off for a "
+                "picture operation.")
+        if self._hires_model_named(request):
+            self._invalid(
+                "refiner",
+                "Use the Refiner or Hires Fix > Model, not both: with the "
+                "Refiner on, Hires already runs on the Refiner's model.")
+        if not 1 <= int(refiner.switch_at_step) < int(request.steps):
+            self._invalid(
+                "refiner.switch_at_step",
+                f"The Refiner switch step must be between 1 and "
+                f"{int(request.steps) - 1} for {int(request.steps)} steps.")
+
+    def _backend_completed(self, job_id: str) -> bool:
+        try:
+            state = self._backend.poll_or_stream_progress(job_id).state
+        except StudioError:
+            return False
+        return str(getattr(state, "value", state)).lower() == "completed"
+
+    def _raise_if_handoff_cancelled(self, token: str) -> None:
+        with self._handoff_lock:
+            cancelled = token in self._handoffs_cancelled
+        if cancelled:
+            raise StudioError(
+                StructuredError(
+                    code="MODEL_JOB_CANCELLED",
+                    message="The job was cancelled between its base and Hires models.",
+                    field="job_id",
+                )
+            )
+
+    def cancel_handoff(self, token: str) -> bool:
+        """MH1. Stop a model-handoff job at its next boundary.
+
+        True when `token` is a running handoff, which then stops before the
+        switch, or before the Hires half begins. A cancel that arrives while a
+        half is sampling also reaches that half's backend job through the
+        ordinary route; this flag is what stops the job from going on to the
+        next half.
+        """
+
+        with self._handoff_lock:
+            if token not in self._handoffs:
+                return False
+            self._handoffs_cancelled.add(token)
+            return True
 
     def _ensure_requested_model(self, request: Any, lifecycle: Any) -> Any:
         """Make the resident session match what this request asked for.
@@ -524,6 +733,7 @@ class StudioApplication:
             ("height", request.height),
         ):
             self._positive_integer(field, value)
+        self._validate_refiner(request)
         self._validate_engine_choices(request)
 
     def _validate_engine_choices(self, request: GenerationRequest) -> None:

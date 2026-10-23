@@ -298,6 +298,14 @@ class ModelRootRegistry:
         except Exception:  # noqa: BLE001 - a model root is not worth a crash
             pass
 
+        # MH2: the Refiner's checkpoint is resolved per job the same way.
+        try:
+            from . import refiner_port
+
+            refiner_port.set_registry(self)
+        except Exception:  # noqa: BLE001 - a model root is not worth a crash
+            pass
+
         # UP1: the upscaler roots, and a rescan when they changed after the
         # engine already listed its upscalers (the Hires and Upscale menus).
         try:

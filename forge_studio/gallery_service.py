@@ -779,11 +779,25 @@ class GalleryService:
                 ).fetchone()
         if row is None:
             return None
-        return {
+        stored = {
             key: row[key] for key in row.keys()
             if row[key] is not None
             and key not in ("id", "image_id", "content_hash")
         }
+        # MH2. The row's columns are a fixed few, but it keeps the whole
+        # infotext: every other setting in it -- Time taken, the Refiner and
+        # where it switched, the Hires model -- is read from there, as it
+        # would be from the file (`gallery_index.read_metadata`). Without this
+        # a picture saved without embedded parameters, or stripped of them,
+        # lost all of them. A column wins over its parsed twin.
+        from .gallery_metadata import parse_generation_parameters
+
+        parsed = parse_generation_parameters(str(stored.get("raw_infotext") or ""))
+        twins = {"cfg_scale": "cfg"}
+        for key, value in parsed.items():
+            if key not in stored and twins.get(key) not in stored:
+                stored[key] = value
+        return stored
 
     def _scan_folders_for_browser(self) -> list[dict[str, Any]]:
         """The linked folders, named but not located.

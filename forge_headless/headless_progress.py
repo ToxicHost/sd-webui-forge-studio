@@ -181,6 +181,9 @@ class HeadlessProgress:
         #: Set by the port when the job asked for a second pass. Nothing
         #: transitions into the Hires states without it.
         self._hires_expected = False
+        #: MH1. The next step budget is a Hires pass with no base pass before
+        #: it (`expect_hires_only`).
+        self._hires_only = False
         self._preview_enabled = bool(preview_enabled)
         #: The most recently decoded frame as a data URL, its id, and when it
         #: was taken. The frame is NOT part of `ProgressSnapshot`: that
@@ -339,6 +342,20 @@ class HeadlessProgress:
         with self._lock:
             self._hires_expected = True
 
+    def expect_hires_only(self) -> None:
+        """MH1. Declare that the ONE sampling pass coming is a Hires pass.
+
+        The Hires half of a model handoff starts from a finished picture
+        (Neo's `firstpass_image`), so its first step budget is already the
+        Hires pass. Named when that budget arrives rather than now: if Neo
+        returns before sampling (an interrupt), the job never claims a Hires
+        pass it did not run, and Decoding stays a legal next state.
+        """
+
+        with self._lock:
+            self._hires_expected = True
+            self._hires_only = True
+
     def begin_picture(self, picture: int, pictures: int) -> None:
         """BM1. Picture `picture` of a `pictures`-picture Batch-mode job starts.
 
@@ -362,6 +379,10 @@ class HeadlessProgress:
                 )
             self._picture = int(picture)
             self._pictures = int(pictures)
+            # MH1. A new picture declares its own passes; a Hires-only flag
+            # the last picture never consumed (Neo returned before sampling)
+            # must not name this picture's first budget.
+            self._hires_only = False
             if self._state in (JobState.QUEUED, JobState.LOADING,
                                JobState.CONDITIONING):
                 return
@@ -387,6 +408,9 @@ class HeadlessProgress:
         with self._lock:
             if total < 1:
                 raise ProgressError("total steps must be at least one")
+            if self._hires_only and self._state is JobState.SAMPLING:
+                self._hires_only = False
+                self.advance_to(JobState.HIRES_PREPARING)
             if self._hires_expected and self._state is JobState.HIRES_PREPARING:
                 # `report_step` is monotonic ON PURPOSE: an out-of-order
                 # callback within one pass must not rewind the bar. Across

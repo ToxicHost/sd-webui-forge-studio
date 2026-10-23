@@ -924,6 +924,9 @@ def _pass_size(request: Any) -> tuple[int, str]:
     size = max(1, int(getattr(request, "pass_size", 1) or 1))
     if size == 1:
         return 1, ""
+    # MH1. Neo's `firstpass_image` is one picture.
+    if str(getattr(request, "handoff_stage", "") or "") == "hires":
+        return 1, "Hires on another model"
     count = _picture_count(request)
     if count % size:
         return 1, f"Batch size {size} does not divide {count} pictures"
@@ -1076,6 +1079,124 @@ def _with_setting(infotext: str, key: str, value: str) -> str:
         return infotext
     lines[tail] = f"{lines[tail]}, {key}: {value}"
     return "\n".join(lines)
+
+
+def _infotext_value(value: str) -> str:
+    """A settings-line value as Neo writes one (`infotext_utils.quote`):
+    bare unless it holds a comma, a colon or a newline."""
+
+    import json
+
+    if "," not in value and ":" not in value and "\n" not in value:
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _engine_label(engine: Any) -> str:
+    """MH1. The name this engine's pictures carry as `Model` (MI1)."""
+
+    identity = getattr(engine, "sd_checkpoint_info", None)
+    return str(getattr(identity, "name_for_extra", "") or "")
+
+
+def _without_lora_tags(prompt: str) -> str:
+    """MH1. A prompt with its `<lora:...>` (and `<lyco:...>`) tags removed.
+
+    For the Hires half of a cross-family handoff: the base model's LoRAs do
+    not fit the Hires model, and Neo would only load each file to report it
+    mismatched (`sd_forge_lora/networks.py` `load_lora_for_models`).
+    """
+
+    import re
+
+    stripped = re.sub(r"<(?:lora|lyco):[^>]*>", "", prompt, flags=re.IGNORECASE)
+    return re.sub(r"[ \t]{2,}", " ", stripped).strip()
+
+
+def _handoff_image(request: Any) -> Any:
+    """MH1. This picture's base-half picture, for the Hires half."""
+
+    from .contracts import HeadlessError
+
+    images = tuple(getattr(request, "handoff_images", ()) or ())
+    index = max(0, int(getattr(request, "picture", 0) or 1) - 1)
+    if index >= len(images):
+        raise HeadlessError(
+            "GENERATION_HANDOFF_NO_PICTURE",
+            f"The Hires model received no picture {index + 1} from the base model.")
+    return images[index]
+
+
+#: MH1. Settings that describe the BASE pass alone, which the Hires half's
+#: engine cannot know: it never sampled the base pass, so it writes its own
+#: family's default (`Shift`) or the unresolved request (`Schedule type`).
+_BASE_PASS_SETTINGS = ("Model", "Schedule type", "Shift", "Distilled CFG Scale")
+
+#: One `key: value` of a settings line, as Neo's `infotext_utils.re_param`.
+_SETTING = r'(^|, ){key}: ("(?:[^"\\]|\\.)*"|[^,]*)'
+
+
+def _settings_line(text: str) -> int | None:
+    import re
+
+    lines = text.split("\n")
+    return next((i for i in range(len(lines) - 1, -1, -1)
+                 if re.match(r"Steps: \d", lines[i])), None)
+
+
+def _setting(line: str, key: str) -> str | None:
+    import re
+
+    found = re.search(_SETTING.format(key=re.escape(key)), line)
+    return found.group(2) if found else None
+
+
+def _handoff_infotext(infotext: str, *, base_model: str, hires_model: str,
+                      prompt: tuple[str, str], base_infotext: str = "") -> str:
+    """MH1. The Hires half's saved parameters, saying what actually ran.
+
+    The engine's own string, edited and never rebuilt (`test_metadata`). Neo
+    writes a Hires-checkpoint job as `Model: <base>, ..., Hires checkpoint:
+    <hires>` (`processing.py` `init`, :1308). The Hires half is built on the
+    Hires model, so Neo named THAT as `Model` and wrote the base-pass
+    settings it would have used itself; each of `_BASE_PASS_SETTINGS` is
+    taken from the base half's own record instead (`base_infotext`) --
+    replaced, added, or removed where the base pass had none -- and the Hires
+    model is recorded under Neo's own key. `prompt` is the (used, original)
+    pair: a cross-family Hires half samples without the base model's LoRA
+    tags, and the recipe keeps the prompt as written.
+    """
+
+    import re
+
+    text = infotext or ""
+    used, original = prompt
+    if used != original and text.startswith(used):
+        text = original + text[len(used):]
+    tail = _settings_line(text)
+    if tail is not None:
+        lines = text.split("\n")
+        base_lines = (base_infotext or "").split("\n")
+        base_tail = _settings_line(base_infotext or "")
+        base_line = base_lines[base_tail] if base_tail is not None else ""
+        for key in _BASE_PASS_SETTINGS:
+            if key == "Model" and base_model:
+                value = _infotext_value(base_model)
+            elif base_tail is not None:
+                value = _setting(base_line, key)
+            else:
+                continue      # no base record: leave the engine's line alone
+            pattern = _SETTING.format(key=re.escape(key))
+            if value is None:
+                lines[tail] = re.sub(pattern, "", lines[tail], count=1)
+                continue
+            replaced, count = re.subn(pattern, lambda m: f"{m.group(1)}{key}: {value}",
+                                      lines[tail], count=1)
+            lines[tail] = replaced if count else f"{lines[tail]}, {key}: {value}"
+        text = "\n".join(lines)
+    if hires_model:
+        text = _with_setting(text, "Hires checkpoint", _infotext_value(hires_model))
+    return text
 
 
 def _region_prompts_for(request: Any, mask: Any) -> tuple[str, str] | None:
@@ -1488,6 +1609,13 @@ class StudioLiveGenerationPort:
         requested = getattr(request, "gpu_tile_compositing_requested", None)
         if requested is not None:
             overrides["composite_tiles_on_gpu"] = bool(requested)
+        # SP1. Upscaler half precision, the same way and for the same reason:
+        # Neo reads `opts.prefer_fp16_upscalers` (`modules/esrgan_model.py`
+        # `do_upscale`), and the job's answer must not leak to the next one.
+        # Always set, False included, so the scope -- not the process default
+        # -- decides every job.
+        overrides["prefer_fp16_upscalers"] = bool(
+            getattr(request, "upscaler_half_precision_requested", False))
 
         # CLIP SKIP, and it travels the same way for the same reason.
         #
@@ -1763,6 +1891,10 @@ class StudioLiveGenerationPort:
                 "The model session has been released and cannot generate.",
             )
         self.generate_calls += 1
+        # MH2. A Refiner whose restore failed last job is retried before this
+        # one samples; if it fails again the job is refused rather than run on
+        # weights nobody chose.
+        self._restore_refiner(strict=True)
 
         # WHERE THE TIME GOES. Built before the optimisations it exists to
         # judge, because this project has twice reached a confident conclusion
@@ -1886,6 +2018,33 @@ class StudioLiveGenerationPort:
                 processing_class = StableDiffusionProcessingImg2Img
             else:
                 processing_class = StableDiffusionProcessingTxt2Img
+            # MH1. The Hires half of a model handoff: this picture from the
+            # base model replaces the main pass, as Neo's own Hires "Upscale"
+            # button does (`txt2img.py` `txt2img_upscale_function`:
+            # `firstpass_image`, `txt2img_upscale`, the picture's own size).
+            # `sample()` then skips the base sampler and goes straight to
+            # `sample_hr_pass` -- decoded with nothing, encoded with THIS
+            # model's VAE, conditioned with this model's text encoder. A
+            # Latent upscaler therefore works across families too: the latent
+            # it resizes is this model's own encoding of the picture.
+            handoff_image = (
+                _handoff_image(request)
+                if str(getattr(request, "handoff_stage", "") or "") == "hires"
+                else None
+            )
+            positive = _pass_prompts(request, "positive_prompt")
+            base_family = str(getattr(request, "handoff_base_family", "") or "")
+            from .family_shift import preset_for
+
+            hires_family = preset_for(engine) or ""
+            self._handoff_prompt = None
+            if handoff_image is not None:
+                original = positive
+                # The positive prompt is where LoRA tags live; an empty Hires
+                # prompt inherits it (`setup_prompts`), so this covers both.
+                if base_family and hires_family and base_family != hires_family:
+                    positive = _without_lora_tags(positive)
+                self._handoff_prompt = (positive, original)
             operation_kwargs: dict[str, Any] = (
                 {
                     # A LIST, because Neo iterates it -- one entry, because
@@ -1916,6 +2075,8 @@ class StudioLiveGenerationPort:
                     # `t2i_hr_dcfg`, the same preset value as the base).
                     **({"hr_distilled_cfg": self._shift(request)}
                        if getattr(request, "enable_hr", False) else {}),
+                    **({"firstpass_image": handoff_image}
+                       if handoff_image is not None else {}),
                 }
             )
             processing = processing_class(
@@ -1925,7 +2086,7 @@ class StudioLiveGenerationPort:
                 # Comments stripped, as Neo's always-on script does. BM1: one
                 # per picture for a batched pass whose pictures drew their own
                 # wildcards; the one string for every other pass.
-                prompt=_pass_prompts(request, "positive_prompt"),
+                prompt=positive,
                 negative_prompt=_pass_prompts(request, "negative_prompt"),
                 seed=int(request.seed),  # type: ignore[attr-defined]
                 # The owner's variation, not a pin. This was `-1` while the
@@ -1959,6 +2120,17 @@ class StudioLiveGenerationPort:
                 override_settings={},
                 **operation_kwargs,
             )
+            if handoff_image is not None:
+                # Neo's marker for "the first pass is already done"; it keeps
+                # `process_images_inner` from treating this as a fresh job.
+                processing.txt2img_upscale = True  # type: ignore[attr-defined]
+                # The picture's own size, as Neo sets it after construction.
+                processing.width, processing.height = handoff_image.size  # type: ignore[attr-defined]
+                # No base sampler runs, so the first step budget is the Hires
+                # pass's, and the progress says so when it arrives.
+                expect_only = getattr(progress, "expect_hires_only", None)
+                if callable(expect_only):
+                    expect_only()
             # None unless the owner asked for Soft Inpainting on an inpaint
             # job. `None` is what this port has always set and what every
             # other job keeps: a bridge is installed ONLY when there is a
@@ -2022,6 +2194,26 @@ class StudioLiveGenerationPort:
                 embedding_roots.refresh(self._engine)
             except Exception:  # noqa: BLE001 - an embedding scan never fails a job
                 pass
+            # MH2. The Refiner, on this main pass: checked from the file's
+            # header BEFORE any step (another family is refused here, not at
+            # the switch), then reached by Neo's own `CFGDenoiser.forward`
+            # through the `apply_refiner` adapter. Its weights stay for Hires
+            # and Auto Detail (D1) and go back in the `finally`.
+            refiner = getattr(request, "refiner", None)
+            if refiner is not None:
+                from . import refiner_port
+
+                swap = refiner_port.RefinerSwap(
+                    engine=engine, path=refiner.path, base_path=refiner.base_path,
+                    switch_at=float(refiner.switch_at), cfg=float(refiner.cfg or 0.0),
+                    label=str(refiner.label or ""))
+                swap.check()
+                refiner_port.install()
+                processing.studio_refiner = swap  # type: ignore[attr-defined]
+                # Neo's `CFGDenoiser.forward`: `cond_scale = p.refiner_cfg or
+                # cond_scale` once the switch has happened.
+                processing.refiner_cfg = swap.cfg if swap.cfg >= 1.0 else None  # type: ignore[attr-defined]
+                self._refiner = swap
             # HM1. Mark THIS processing object -- the main pass -- for the
             # attention capture. Neo's Hires pass is flagged `is_hr_pass` on
             # the same object and is skipped; Studio's img2img Hires and the
@@ -2164,6 +2356,10 @@ class StudioLiveGenerationPort:
             # would attribute the next generation's moves to a telemetry
             # object nobody is reading.
             moves.__exit__(None, None, None)
+            # MH2. The base model's weights back, on success, failure and
+            # cancel alike. A failed restore is kept and retried -- strictly
+            # -- before the next job samples anything.
+            self._restore_refiner(strict=False)
             # KR1. Every job that carried references leaves none behind, on
             # success, failure and cancel alike -- a reference still on the
             # engine would condition the NEXT job. Never raises.
@@ -2475,6 +2671,34 @@ class StudioLiveGenerationPort:
             # never a result -- the same rule `_auto_detail` and
             # `_clip_inpaint` follow.
             processed.images = [results[0]] + images[1:]
+
+    def _restore_refiner(self, *, strict: bool) -> None:
+        """MH2. Put the base model's weights back after a Refiner job.
+
+        `strict=False` (the job's own `finally`) logs a failure and keeps the
+        swap for a retry; `strict=True` (the next job's start) refuses that
+        job when the retry fails too, because the engine would otherwise
+        sample with the Refiner's weights under the base model's name.
+        """
+
+        swap = getattr(self, "_refiner", None)
+        if swap is None:
+            return
+        try:
+            swap.restore()
+        except BaseException as exc:  # noqa: BLE001 - reported, and kept for a retry
+            logging.getLogger("studio.generation").error(
+                "REFINER restore failed: %r", exc)
+            if strict:
+                from .contracts import HeadlessError
+
+                raise HeadlessError(
+                    "REFINER_RESTORE_FAILED",
+                    "The model still carries the Refiner's weights and they could "
+                    "not be put back. Unload the model (or restart Studio) before "
+                    "generating again.") from exc
+            return
+        self._refiner = None
 
     def _shift(self, request) -> float:
         """The shift (or distilled guidance) every pass of this job uses: the
@@ -2947,6 +3171,33 @@ class StudioLiveGenerationPort:
                 image_data_url=_png_data_url(frame),
             )
 
+        if str(getattr(request, "handoff_stage", "") or "") == "base":
+            # MH1. The base half of a model handoff is not a result: no file,
+            # no watermark, nothing in the Gallery. Each picture rides its
+            # outcome to the Hires half as lossless PNG, like a Live frame,
+            # with the name and family of the model that made it.
+            frame = images[0]
+            width, height = frame.size
+            if picture >= pictures:
+                progress.mark_completed()  # type: ignore[attr-defined]
+            from .family_shift import preset_for
+
+            return GenerationOutcome(
+                job_id=request.request_id,  # type: ignore[attr-defined]
+                request_id=request.request_id,  # type: ignore[attr-defined]
+                result_relative_location="",
+                media_type="image/png",
+                width=int(width),
+                height=int(height),
+                seed=seed,
+                image_data_url=_png_data_url(frame),
+                model_label=_engine_label(self._engine),
+                model_family=preset_for(self._engine) or "",
+                # The engine's record of the base pass, for the base-only
+                # settings the Hires half's record keeps (`_handoff_infotext`).
+                infotext=str((list(getattr(processed, "infotexts", []) or [""]) or [""])[0]),
+            )
+
         # The owner's chosen format, resolved ONCE so the name, the encoder
         # and the reported media type cannot disagree with each other.
         output = getattr(request, "output", None)
@@ -2958,6 +3209,17 @@ class StudioLiveGenerationPort:
         # why every result the owner ever saved was anonymous.
         infotexts = list(getattr(processed, "infotexts", []) or [])
         infotext = str(infotexts[0]) if infotexts else ""
+        # MH1. The Hires half names the base model as `Model` and itself as
+        # `Hires checkpoint`, as Neo records a Hires-checkpoint job.
+        handoff_prompt = getattr(self, "_handoff_prompt", None)
+        if str(getattr(request, "handoff_stage", "") or "") == "hires" and handoff_prompt:
+            infotext = _handoff_infotext(
+                infotext,
+                base_model=str(getattr(request, "handoff_base_model", "") or ""),
+                hires_model=_engine_label(self._engine),
+                prompt=handoff_prompt,
+                base_infotext=str(getattr(request, "handoff_base_infotext", "") or ""),
+            )
         # RP1. The raw prompts the owner typed, when wildcards changed them --
         # into the file AND the Gallery, which both take this string.
         infotext = with_prompt_templates(infotext, request)
@@ -2967,6 +3229,11 @@ class StudioLiveGenerationPort:
         clock = getattr(self, "_picture_clock", None)
         if picture > 1 and clock is not None:
             seconds = round(time.monotonic() - clock, 3)
+        elif seconds is not None and str(getattr(request, "handoff_stage", "") or "") == "hires":
+            # MH1. Picture 1 of a handoff counts from the job's start, as any
+            # picture 1 does: the base half and the switch came first.
+            seconds = round(float(seconds) + float(
+                getattr(request, "handoff_base_seconds", 0.0) or 0.0), 3)
         infotext = with_time_taken(infotext, seconds)
 
         image = _stamped(images[0], request)

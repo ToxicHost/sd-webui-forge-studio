@@ -123,6 +123,9 @@ PREFERENCE_KEYS = frozenset({
     # palette, so a later improvement to the derivation reaches them.
     "theme",
     "custom_themes",
+    # SP1. Settings > VRAM > "Faster upscaler (half precision)": off unless
+    # the owner chose it. Neo's `prefer_fp16_upscalers`, applied per job.
+    "upscaler_half_precision",
     "vram_weights",
 })
 
@@ -172,6 +175,7 @@ PREFERENCE_SHAPES: dict[str, Any] = {
     "shortcuts": dict,
     "theme": str,
     "custom_themes": list,
+    "upscaler_half_precision": bool,
     "vram_weights": (int, float),
 }
 

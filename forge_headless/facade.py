@@ -369,6 +369,13 @@ class ForgeHeadlessRuntime:
                     release = stripped.split("=", 1)[1].strip().strip("\"'")
         except OSError:
             return UNKNOWN
+        if version and not release:
+            # The release is Studio's own and is imported, not written there
+            # (`forge_version.py`); read it where it is written.
+            try:
+                from forge_studio import __version__ as release
+            except Exception:  # noqa: BLE001 - a diagnostic never fails startup
+                release = None
         if version and release:
             return f"{version} {release}"
         return version or release or UNKNOWN

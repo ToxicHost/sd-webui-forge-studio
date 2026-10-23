@@ -10,7 +10,7 @@ were already made and commented in place, and this file catalogues them rather
 than introducing anything.
 
 ```text
-scope     modules/ · modules_forge/ · backend/          39 files, +1840 -78
+scope     modules/ · modules_forge/ · backend/          40 files, +1860 -83
 backend/  new model-family files, plus 2 registration points (PATCH-004),
           plus one upstream backport (PATCH-005), plus one sampler line
           (PATCH-006, a no-op for image latents)
@@ -45,7 +45,10 @@ unchanged otherwise, so "Neo-compatible" is Neo's code path. A second,
 ADAPTER-002 (2026-10-12), only OBSERVES: it reads cross-attention on the
 side during a job's main pass and changes nothing the model computes. A
 third, ADAPTER-003 (2026-10-18), is installed only on Apple Silicon (MPS) and
-changes load-time dtypes there; on CUDA it wraps nothing.
+changes load-time dtypes there; on CUDA it wraps nothing. A fourth,
+ADAPTER-004 (2026-10-22), replaces Neo's `apply_refiner` with a dispatcher
+that runs the Refiner's weight switch for a Refiner job and Neo's own function
+for every other.
 
 ### What the 2026-08-18 revision corrected
 
@@ -253,6 +256,24 @@ also a behaviour change against upstream.
   require Neo-owned code to import `forge_headless`. The import is the part of
   this patch worth being uncomfortable about.
 
+### Change 4 (SP1, 2026-10-22): half precision read per upscale
+
+Neo reads `opts.prefer_fp16_upscalers` once, at import (`PREFER_HALF`), so
+its "Prefer to load Upscaler in half precision" setting needs a restart.
+`do_upscale` now reads the option on every call, through the job scope like
+the composite toggle. `load_model(path, half)` keeps `lru_cache`, so the cache
+key becomes `(path, half)`: both precisions can be resident, and a model is
+never cast in place. The free-memory reservation takes the element size from
+the loaded model's parameters instead of `PREFER_HALF`. With the option off
+(Studio's default, and Neo's), the model loads in fp32 exactly as before.
+
+- **Studio owner modules:** `forge_studio/preferences` (`upscaler_half_precision`),
+  `presentation._server_execution_policy`, `forge_headless/live_generation_port.generate`.
+- **Behavioural impact:** none while off. When on, Remacri's output moves by
+  0.011/255 mean (PSNR 67.6 dB) and its upscale takes 2.7 s instead of 4.6 s
+  (`Evidence/speed-rnd-2026-10-22/FINDINGS.md`).
+- **Removal criteria:** upstream reads the option per call.
+
 ---
 
 # PATCH-004 — A model family Neo does not have: MOSS-Image
@@ -411,6 +432,39 @@ own prompt path sets `mask`; only Studio's regional runner does.
 
 ---
 
+# PATCH-007 — The engine says Studio
+
+- **Neo file(s), modified:** `modules_forge/forge_version.py` (`version`,
+  `release`).
+- **Neo file(s), added:** none.
+- **Studio owner module:** `forge_studio/__init__.py` (`__version__`, the one
+  place Studio's version is written).
+- **Introduced in:** 2026-10-22. Owner: "We remove Neo and replace it with
+  Studio entirely. This isn't Studio on top of Neo. This is simply Studio."
+
+### Why an adapter could not solve it
+
+The file IS the engine's name: `processing.program_version` writes
+`f"{version}-{release}"` as every picture's `Version:`, `launch_utils.git_tag`
+prints it at launch and in system info, and `forge_headless/facade.py` reads it
+for the backend identity. Rewriting the string after the fact would leave three
+readers disagreeing.
+
+### Behavioral impact
+
+`version = "Studio"`, `release` imported from `forge_studio.__version__`: new
+pictures say `Version: Studio-0.9.9` (it was `neo-2.27`), the console
+`Studio 0.9.9`, and a version bump reaches all three. No image changes. The
+Neo base Studio began from stays recorded in `UPSTREAM_BASE`.
+
+- **Feature flag:** no.
+- **Upstream conflict likelihood:** **High on every sync** (upstream edits this
+  file each release); resolve by keeping Studio's two lines.
+- **Upstream PR candidate:** no.
+- **Removal criteria:** none; this is Studio's identity.
+
+---
+
 # Runtime adapters: Neo behaviour changed without editing a Neo file
 
 A runtime adapter wraps a Neo callable from Studio-owned code. It never shows
@@ -541,6 +595,44 @@ signatures it wraps.
   **medium for drift** (a rename disables it, loudly).
 - **Removal criteria:** Neo upcasts fp8 for devices without fp8 and guards
   `discard_cuda_async_error` itself.
+
+---
+
+# ADAPTER-004 — the Refiner's switch (MH2)
+
+- **Studio owner module:** `forge_headless/refiner_port.py`, installed by the
+  live port the first time a job carries a Refiner (`refiner_port.install()`),
+  idempotently.
+- **Replaced (Neo `97ff3a40`, unchanged file):** `modules/sd_samplers_common.py`
+  module global `apply_refiner`, which `CFGDenoiser.forward`
+  (`sd_samplers_cfg_denoiser.py` :114) looks up on the module every step. The
+  replacement, `dispatch`, answers for a processing object carrying Studio's
+  `studio_refiner` and **calls Neo's original for every other one**.
+- **Why an adapter, not a file edit:** the call site reads a module attribute
+  at call time, so a dispatcher carries the whole change; and Neo's own
+  function reloads through its checkpoint catalogue (slow path, which raises in
+  Studio's directly loaded sessions) and imports a Gradio module.
+- **Behavioural impact (Refiner jobs only):** Neo's `refiner_fast_sd` steps --
+  unload the UNet patcher, load the second checkpoint's diffusion weights into
+  the same module, re-apply LoRAs, `sampling_prepare` -- at step
+  `switch_at_step / steps` of the main pass, once; Hires and Auto Detail then
+  run on those weights; the base weights are restored after the job (under
+  `torch.inference_mode()`, as Neo's `ScriptRefiner.postprocess`). A job
+  without a Refiner reaches Neo's function unchanged.
+- **Feature flag:** the request's `refiner` group. Absent means absent.
+- **Failure mode:** a checkpoint of another family is refused from its header
+  before any step; a failed restore is retried before the next job samples and
+  refuses that job if it fails again.
+- **Tests:** `tests/studio_alpha/test_mh2_refiner.py` (including the real
+  composition with Neo's denoiser loop stood in).
+- **Live:** `Evidence/model-handoff-2026-10-22/rf/` -- plain jobs after Refiner
+  jobs pixel-identical to before.
+- **Source review:** `Evidence/source-review/MH-model-handoff.md`, "Stage 2".
+- **Upstream conflict likelihood:** **Low for merges** (no file is edited),
+  **medium for drift** (a rename of `apply_refiner`, or of the fast path's
+  `backend` helpers, breaks the Refiner loudly; other jobs are unaffected).
+- **Removal criteria:** Neo's Refiner composes with Hires and can load a file
+  outside its catalogue.
 
 ---
 

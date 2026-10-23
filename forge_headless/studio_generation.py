@@ -124,6 +124,10 @@ _HEADLESS_TO_STUDIO: dict[str, str] = {
     "GENERATION_ADETAILER_STEPS_OUT_OF_RANGE": REQUEST_UNSUPPORTED,
     # The orchestrator's own refusal, for a slot that reached it unresolved.
     "GENERATION_ADETAILER_DETECTOR_UNRESOLVED_AT_RUN": REQUEST_UNSUPPORTED,
+    # MH2. A Refiner that is not in the catalogue, or not of the loaded
+    # model's family: the owner chose something this job cannot use.
+    "REFINER_MODEL_UNKNOWN": REQUEST_UNSUPPORTED,
+    "REFINER_MODEL_INCOMPATIBLE": REQUEST_UNSUPPORTED,
     "GENERATION_EXTENSIONS_NOT_PERMITTED": REQUEST_UNSUPPORTED,
     "GENERATION_REFERENCE_NOT_PERMITTED": REQUEST_UNSUPPORTED,
     "GENERATION_OPTIONS_MISSING": BACKEND_NOT_READY,
@@ -156,6 +160,8 @@ _CODE_FIELD: dict[str, str] = {
     "GENERATION_MODEL_NOT_RESIDENT": "model_id",
     "GENERATION_SAMPLER_UNSUPPORTED": "sampler",
     "GENERATION_SCHEDULER_UNSUPPORTED": "scheduler",
+    "REFINER_MODEL_UNKNOWN": "refiner.checkpoint_model_id",
+    "REFINER_MODEL_INCOMPATIBLE": "refiner.checkpoint_model_id",
     "GENERATION_HIRES_SCALE_OUT_OF_RANGE": "hires.scale",
     "GENERATION_HIRES_STEPS_OUT_OF_RANGE": "hires.second_pass_steps",
     "GENERATION_HIRES_DENOISE_OUT_OF_RANGE": "hires.denoising_strength",
@@ -333,6 +339,9 @@ STUDIO_REQUEST_FIELDS = (
     # HM2. The attention-capture setting: it reaches the port, which keeps or
     # skips the main pass's capture.
     "attention_capture_requested",
+    # SP1. The upscaler half-precision setting: it reaches the port's option
+    # scope, which the ESRGAN loader reads per upscale.
+    "upscaler_half_precision_requested",
     # BM1. Batch mode's count and size, carried as ONE group: they become the
     # job's `output_count` and its per-picture prompts and sizes.
     "batch",
@@ -561,6 +570,82 @@ def _hires_fields(hires: Any, *, base_cfg: float = 0.0) -> dict[str, Any]:
         # silently mean something else entirely.
         "hr_cfg": (float(getattr(hires, "cfg", 0.0)) or float(base_cfg)),
     }
+
+
+def _handoff_fields(handoff: Any) -> dict[str, Any]:
+    """MH1. One half of a model handoff onto the headless request.
+
+    The Hires half's pictures are decoded HERE, with the source image's own
+    checks (`decode_source`), so the port receives verified PIL images as it
+    does for every other picture input. They came from this server's own
+    base half, so a refusal would be a defect, and it surfaces by name.
+    Absent stays absent: an ordinary job sets nothing.
+    """
+
+    if handoff is None:
+        return {}
+    from types import SimpleNamespace
+
+    from .input_assets import decode_source
+
+    images = tuple(
+        decode_source(SimpleNamespace(data_url=url), required=True).image
+        for url in tuple(getattr(handoff, "pictures", ()) or ())
+    )
+    stage = str(getattr(handoff, "stage", "") or "")
+    if stage == "hires" and not images:
+        raise HeadlessError(
+            "GENERATION_HANDOFF_NO_PICTURE",
+            "The Hires model received no picture from the base model.")
+    return {
+        "handoff_stage": stage,
+        "handoff_images": images,
+        "handoff_base_model": str(getattr(handoff, "base_model", "") or ""),
+        "handoff_base_family": str(getattr(handoff, "base_family", "") or ""),
+        "handoff_base_infotext": str(getattr(handoff, "base_infotext", "") or ""),
+        "handoff_base_seconds": float(getattr(handoff, "base_seconds", 0.0) or 0.0),
+    }
+
+
+def _refiner_fields(request: Any) -> dict[str, Any]:
+    """MH2. The Refiner onto the headless request: two files and a fraction.
+
+    Both checkpoints resolved HERE from their catalogue ids through the
+    model-root registry, as ControlNet models are (`_translated_controlnet`):
+    the Refiner's, and the job's own (its weights come back after the job).
+    The step becomes Neo's fraction, `switch_at_step / steps`, compared with
+    `CFGDenoiser.step / total_steps`. A Refiner that IS the job's own model
+    is no Refiner: nothing is set. Absent stays absent.
+    """
+
+    refiner = getattr(request, "refiner", None)
+    if refiner is None or not getattr(refiner, "enabled", False):
+        return {}
+    from .refiner_port import label_for, resolve_checkpoint
+
+    def resolve(model_id: str, whose: str) -> str:
+        try:
+            return resolve_checkpoint(model_id)[0]
+        except HeadlessError as error:
+            raise HeadlessError(
+                "REFINER_MODEL_UNKNOWN",
+                f"{whose} is not in the checkpoint folders ({error.message})") from error
+
+    path = resolve(str(refiner.checkpoint_model_id), "The Refiner's checkpoint")
+    selection = getattr(request, "model_selection", None) or {}
+    base_path = resolve(str(selection.get("checkpoint_model_id", "") or ""),
+                        "The job's checkpoint")
+    if Path(path) == Path(base_path):
+        return {}
+    from .generation_request import RefinerOptions
+
+    return {"refiner": RefinerOptions(
+        path=path,
+        base_path=base_path,
+        label=label_for(path),
+        switch_at=int(refiner.switch_at_step) / max(1, int(request.steps)),
+        cfg=float(getattr(refiner, "cfg", 0.0) or 0.0),
+    )}
 
 
 def _translated_refine(settings: Any) -> Any:
@@ -927,6 +1012,10 @@ def translate_request(
         anima_emphasis=getattr(request, "anima_emphasis", None),
         attention_capture_requested=bool(
             getattr(request, "attention_capture_requested", True)),
+        upscaler_half_precision_requested=bool(
+            getattr(request, "upscaler_half_precision_requested", False)),
+        **_handoff_fields(getattr(request, "handoff", None)),
+        **_refiner_fields(request),
     )
     return RequestTranslation(
         headless_request=headless,
@@ -1564,22 +1653,36 @@ class HeadlessGenerationSession:
                 )
             )
         # LV1. A Live frame is never a file: its picture rides the outcome.
+        # MH1: nor is the base half of a model handoff, whose pictures --
+        # every one of a batch -- ride it the same way to the Hires half.
         inline = str(getattr(outcome, "image_data_url", "") or "")
         if inline:
-            return GeneratedResult(
-                job_id=job_id,
-                state=StudioJobState.COMPLETED,
-                mime_type=outcome.media_type,
-                image_data_url=inline,
-                metadata={
+            def inline_result(one: Any, pictures: tuple = ()) -> GeneratedResult:
+                metadata = {
                     "schema_version": "studio-headless-result/v1",
-                    "width": outcome.width,
-                    "height": outcome.height,
-                    "seed": outcome.seed,
-                    "request_id": outcome.request_id,
-                    "live": True,
-                },
-            )
+                    "width": one.width,
+                    "height": one.height,
+                    "seed": one.seed,
+                    "request_id": one.request_id,
+                    "live": not getattr(one, "model_label", ""),
+                }
+                if getattr(one, "model_label", ""):
+                    metadata.update(model_label=one.model_label,
+                                    model_family=getattr(one, "model_family", ""),
+                                    infotext=str(getattr(one, "infotext", "") or ""))
+                return GeneratedResult(
+                    job_id=job_id,
+                    state=StudioJobState.COMPLETED,
+                    mime_type=one.media_type,
+                    image_data_url=str(one.image_data_url),
+                    metadata=metadata,
+                    pictures=pictures,
+                )
+
+            return inline_result(outcome, tuple(
+                inline_result(picture)
+                for picture in tuple(getattr(outcome, "pictures", ()) or ())
+                if str(getattr(picture, "image_data_url", "") or "")))
         root = self._result_root
         if root is None:
             raise self._raise_studio(
