@@ -6433,6 +6433,14 @@ function _applyArchRules(arch) {
     if (!el) return; // fail open when the control doesn't exist
     (el.closest(".param-cell") || el).classList.add("arch-hidden");
   });
+  // A framed row whose every control is hidden goes too: Clip Skip has a row
+  // of its own, and on Anima/FLUX its empty frame stayed (owner, 2026-10-23).
+  document.querySelectorAll("#page-generate .param-grid").forEach(grid => {
+    const cells = grid.querySelectorAll(":scope > .param-cell");
+    if (cells.length && [...cells].every(cell => cell.classList.contains("arch-hidden"))) {
+      grid.classList.add("arch-hidden");
+    }
+  });
 }
 
 // ── Toolbar tool tips (name + live shortcut binding) ────────────────

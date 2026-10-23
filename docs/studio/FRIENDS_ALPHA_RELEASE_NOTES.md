@@ -26,6 +26,8 @@ then close Studio and run Start-Studio.bat again. Nothing new is installed.
   were still applied.
 - **The Refiner section is now under Model & VAE.** A panel layout you have
   customised keeps its own order.
+- **Sampling no longer shows an empty box** under Steps, CFG and Denoise on
+  Anima, FLUX and Klein, where Clip Skip does not apply.
 - French now says "tu" everywhere.
 - Pictures made without the Refiner are unchanged (checked on a real GPU,
   Anima).
