@@ -194,13 +194,15 @@ class RefinerOptions:
     weights come back after the job), both from the catalogue; the name its
     pictures record; the fraction of the main pass after which it samples
     (Neo's `CFGDenoiser.step / total_steps` test); its CFG (0 keeps the base
-    CFG). Paths stay here and never reach a log."""
+    CFG); its own LoRA tags ("" for none), or None for the main prompt's.
+    Paths stay here and never reach a log."""
 
     path: str
     base_path: str
     label: str
     switch_at: float
     cfg: float = 0.0
+    loras: str | None = None
 
 
 @dataclass(frozen=True)

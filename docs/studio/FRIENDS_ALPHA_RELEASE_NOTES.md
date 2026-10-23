@@ -4,6 +4,32 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.10: The Refiner's own LoRAs — 2026-10-23
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **The Refiner can have its own LoRAs.** Refiner > LoRAs: *Same as main
+  prompt* (the default, as before), *None*, or *Own list*, where you pick LoRAs
+  and weights as for an Auto Detail slot. The Refiner's list replaces the main
+  prompt's LoRAs for its steps, Hires and Auto Detail, as when each model in a
+  two-sampler workflow has its own LoRA stack. Pictures record it as "Refiner
+  LoRAs", Gallery info shows it, and reusing a picture's parameters brings it
+  back.
+  - How much the Refiner and its LoRAs can change depends on when it takes
+    over. At step 45 of 60 the last 15 steps mostly refine detail; switching
+    earlier, for example at step 30 or 15, gives it more of the picture.
+- **On Anima, the Refiner reads the prompt with its own text adapter**, as its
+  own model would. Before, its steps kept the main model's reading.
+- **Fixed: a LoRA could stay on after a Refiner job.** A picture made without
+  LoRAs right after a Refiner job whose prompt had one came out as if that LoRA
+  were still applied.
+- **The Refiner section is now under Model & VAE.** A panel layout you have
+  customised keeps its own order.
+- French now says "tu" everywhere.
+- Pictures made without the Refiner are unchanged (checked on a real GPU,
+  Anima).
+
 ## 0.9.9: Hires on another model, Refiner, faster upscaler option — 2026-10-22
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

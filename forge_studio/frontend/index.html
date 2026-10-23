@@ -744,6 +744,39 @@
             </div>
           </div>
 
+          <!-- Refiner (MH2; owner, 2026-10-22). A second checkpoint of the
+               SAME family takes over the sampling at a step; Hires and Auto
+               Detail then run on it. Neo's Refiner, its fast path. Placed
+               under Model & VAE, as the model choice it is (owner,
+               2026-10-23). -->
+          <div class="collapse-section" data-block="refiner">
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkRefiner"></div>
+              <span class="collapse-title" data-i18n="ui.refiner.title">Refiner</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelRefiner">
+              <div class="param-grid cols-1" style="margin-top:4px;">
+                <div class="param-cell" data-help="help.refiner.checkpoint"><label data-i18n="ui.refiner.checkpoint">Checkpoint</label><select class="param-select" id="paramRefinerCheckpoint"><option value="" data-i18n="ui.refiner.choose">Choose a checkpoint</option></select></div>
+              </div>
+              <div class="param-grid cols-2 field-group">
+                <div class="param-cell" data-help="help.refiner.switch"><label data-i18n="ui.refiner.switch">Switch at step</label><input class="param-val" id="paramRefinerSwitch" data-min="1" data-step="1" value="15"></div>
+                <div class="param-cell" data-help="help.refiner.cfg"><label data-i18n="ui.refiner.cfg">CFG</label><input class="param-val" id="paramRefinerCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
+              </div>
+              <!-- The Refiner's own LoRAs (owner, 2026-10-23): they replace the
+                   main prompt's for its steps, Hires and Auto Detail. The chips
+                   are the Auto Detail slot's; the list lives in the hidden input
+                   so workflows and sessions keep it. -->
+              <div class="param-grid cols-1 field-group">
+                <div class="param-cell" data-help="help.refiner.loras"><label data-i18n="ui.refiner.loras">LoRAs</label><select class="param-select" id="paramRefinerLoraMode"><option value="same" data-i18n="ui.refiner.loras.same">Same as main prompt</option><option value="none" data-i18n="ui.refiner.loras.none">None</option><option value="own" data-i18n="ui.refiner.loras.own">Own list</option></select></div>
+                <div class="param-cell" id="refinerLoraRow" style="display:none;">
+                  <div class="ad-lora-controls"><div class="ad-lora-chips" id="refinerLoraChips"></div><button type="button" class="prompt-browser-btn ad-lora-add" id="refinerLoraAdd" data-i18n="ui.refiner.loras.add">+ LoRAs</button></div>
+                </div>
+                <input type="hidden" id="refinerLoraStack">
+              </div>
+            </div>
+          </div>
+
           <!-- Sampling (FR-022: collapsible, open by default) -->
           <div class="collapse-section" data-block="sampling">
             <div class="collapse-header">
@@ -903,26 +936,6 @@
               <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
               <div class="param-grid cols-2 field-group secondary param-advanced">
                 <div class="param-cell" data-help="help.hires.cfg"><label data-i18n="ui.hires.cfg">CFG</label><input class="param-val" id="paramHrCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Refiner (MH2; owner, 2026-10-22). A second checkpoint of the
-               SAME family takes over the sampling at a step; Hires and Auto
-               Detail then run on it. Neo's Refiner, its fast path. -->
-          <div class="collapse-section" data-block="refiner">
-            <div class="collapse-header">
-              <div class="collapse-check" id="checkRefiner"></div>
-              <span class="collapse-title" data-i18n="ui.refiner.title">Refiner</span>
-              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
-            </div>
-            <div class="collapse-body" id="panelRefiner">
-              <div class="param-grid cols-1" style="margin-top:4px;">
-                <div class="param-cell" data-help="help.refiner.checkpoint"><label data-i18n="ui.refiner.checkpoint">Checkpoint</label><select class="param-select" id="paramRefinerCheckpoint"><option value="" data-i18n="ui.refiner.choose">Choose a checkpoint</option></select></div>
-              </div>
-              <div class="param-grid cols-2 field-group">
-                <div class="param-cell" data-help="help.refiner.switch"><label data-i18n="ui.refiner.switch">Switch at step</label><input class="param-val" id="paramRefinerSwitch" data-min="1" data-step="1" value="15"></div>
-                <div class="param-cell" data-help="help.refiner.cfg"><label data-i18n="ui.refiner.cfg">CFG</label><input class="param-val" id="paramRefinerCFG" data-min="0" data-max="30" data-step="0.5" value="0"></div>
               </div>
             </div>
           </div>

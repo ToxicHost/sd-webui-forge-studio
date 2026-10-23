@@ -17,8 +17,31 @@ place. Studio takes the second, Neo's own steps, with three differences:
 * it composes with Hires, which then runs on the Refiner model (D1). Neo prints
   "[Error]Refiner does not support Hires. fix" and runs without the refiner.
 
-The prompt is not re-encoded, as in Neo's fast path (D5). The base model's
-weights go back at the end of the job, so no later job runs on the Refiner's.
+D5, REVERSED (owner, 2026-10-23). Neo's fast path keeps the prompt as the base
+model encoded it. On Anima that is not the Refiner's reading of the prompt: the
+LLM adapter that turns the text encoder's output into the model's conditioning
+ships IN the checkpoint, and Neo's loader moves it to the text encoder
+(`loader.process_anima`), where the diffusion-weight swap never reaches it
+(`ignore_start="llm"`). AnimaTox and Hicks differ in 116 of its 118 tensors; a
+prospective user's ComfyUI two-sampler workflow, where each model applies its
+own adapter, did not match Studio. So at the switch the Refiner's adapter is
+loaded too and the prompt re-encoded with it, for the remaining steps, Hires and
+Auto Detail. Regional prompts keep the base model's encoding.
+
+The Refiner's own LoRAs (owner, 2026-10-23). `loras` None keeps Neo's fast path,
+which re-applies the main prompt's LoRAs onto the Refiner's weights; a string of
+`<lora:name:weight>` tags ("" for none) REPLACES them for the Refiner's steps,
+Hires and Auto Detail, as the second sampler of a ComfyUI two-sampler workflow
+has its own LoRA stack. Neo's `apply_lora_for_refiner` (a name-replacement rule
+in the settings) is not used: Studio has no settings file for the owner to edit.
+
+The base model's weights, and its adapter, go back at the end of the job, so no
+later job runs on the Refiner's.
+
+`current_lora_hash` is reset to `_RELOAD`, never Neo's "[]": "[]" is also the
+hash `load_networks` computes for an EMPTY LoRA list, so after Neo's reset a
+Refiner with no LoRAs, or the next job without any, returned early and kept the
+LoRA-patched objects (`networks.py` :134-136, `processing.py` :983).
 
 Installed as an ADAPTER: `install()` puts `dispatch` on
 `modules.sd_samplers_common.apply_refiner`, which `CFGDenoiser.forward` looks
@@ -38,6 +61,11 @@ log = logging.getLogger("studio.generation")
 
 _REGISTRY: Any = None
 _NEO_APPLY_REFINER: Any = None
+
+#: A `current_lora_hash` no LoRA list compiles to (`load_networks` compares
+#: `str(compiled_lora_targets)`, a list's repr), so the next activation always
+#: rebuilds the patched objects from the originals.
+_RELOAD = "studio: weights changed, re-apply the LoRAs"
 
 
 def set_registry(registry: Any) -> None:
@@ -81,15 +109,23 @@ class RefinerSwap:
     """
 
     def __init__(self, *, engine: Any, path: str, base_path: str,
-                 switch_at: float, cfg: float, label: str) -> None:
+                 switch_at: float, cfg: float, label: str,
+                 loras: str | None = None) -> None:
         self.engine = engine
         self.path = str(path)
         self.base_path = str(base_path)
         self.switch_at = float(switch_at)
         self.cfg = float(cfg or 0.0)
         self.label = label or label_for(self.path)
+        #: None: the main prompt's LoRAs (Neo's fast path). Otherwise the
+        #: Refiner's own `<lora:...>` tags, "" for none, which replace them.
+        self.loras = None if loras is None else str(loras)
         self.switched = False
         self.seconds: dict[str, float] = {}
+        #: Anima: the Refiner's LLM adapter is swapped in at the switch (set by
+        #: `check`), and the base adapter's own tensors kept here to go back.
+        self.swap_adapter = False
+        self._adapter_backup: dict[str, Any] | None = None
 
     # -- before sampling ---------------------------------------------------
 
@@ -129,6 +165,42 @@ class RefinerSwap:
                 f"({len(missing)} weights missing, {len(different)} of another "
                 "shape). The Refiner needs a checkpoint of the same family; for "
                 "another family, use Hires Fix > Model.")
+        self._check_adapter()
+
+    def _check_adapter(self) -> None:
+        """Anima only: whether the Refiner's own LLM adapter can replace the
+        loaded one. Same names and shapes, or the job is refused; a file that
+        carries none keeps the base adapter, and says so."""
+
+        adapter = self._adapter()
+        self.swap_adapter = False
+        if adapter is None:
+            return
+        live = {name: tuple(int(n) for n in tensor.shape)
+                for name, tensor in adapter.state_dict().items()}
+        theirs = _adapter_shapes(self.path)
+        if not theirs:
+            log.info("REFINER %s carries no LLM adapter; its steps keep the main "
+                     "model's prompt encoding", Path(self.path).name)
+            return
+        if theirs != live:
+            raise _refused(
+                f"{self.label}'s prompt adapter does not match the loaded model's "
+                f"({len(set(live) - set(theirs))} tensors missing, "
+                f"{sum(1 for k in live if k in theirs and theirs[k] != live[k])} "
+                "of another shape), so the Refiner cannot read the prompt as this "
+                "model does.")
+        self.swap_adapter = True
+
+    def _adapter(self) -> Any:
+        """Anima's LLM adapter on the loaded text encoder (`Qwen3_06B.llm_adapter`,
+        `backend/nn/llm/llama.py`), or None for every other family."""
+
+        try:
+            encoder = self.engine.forge_objects.clip.cond_stage_model.qwen3_06b
+        except AttributeError:
+            return None
+        return getattr(encoder, "llm_adapter", None)
 
     # -- the switch --------------------------------------------------------
 
@@ -144,12 +216,38 @@ class RefinerSwap:
         p = cfg_denoiser.p
         p.extra_generation_params["Refiner"] = self.label
         p.extra_generation_params["Refiner switch at"] = round(self.switch_at, 4)
+        if self.loras is not None:
+            p.extra_generation_params["Refiner LoRAs"] = self.loras or "None"
         self._load(self.path, "switch")
         self.switched = True
+        if self.swap_adapter:
+            self._swap_adapter(self.path)
         self._reactivate_loras(p)
+        # Its own LoRAs may patch the text encoder differently from the main
+        # prompt's, so the prompt is read again with them, as with its adapter.
+        if self.swap_adapter or self.loras is not None:
+            self._reencode(cfg_denoiser)
         self._prepare(x)
-        self.engine.current_lora_hash = str([])
+        self.engine.current_lora_hash = _RELOAD
         return True
+
+    def _reencode(self, cfg_denoiser: Any) -> None:
+        """The prompt again, through the Refiner's adapter: Neo's full-reload
+        Refiner steps (`p.setup_conds()`, then `CFGDenoiser.update_inner_model`'s
+        `get_conds` into the sampler's arguments), which `forward` reads back
+        right after this switch. The cond caches are emptied first, or
+        `get_conds_with_caching` would hand back the base model's encoding --
+        its key names the prompt and settings, not the adapter."""
+
+        from modules import devices
+
+        p = cfg_denoiser.p
+        clear_cond_caches(p)
+        with devices.autocast():
+            p.setup_conds()
+        c, uc = p.get_conds()
+        cfg_denoiser.sampler.sampler_extra_args["cond"] = c
+        cfg_denoiser.sampler.sampler_extra_args["uncond"] = uc
 
     def _prepare(self, x: Any) -> None:
         """Neo's fast path, last step: the new weights onto the card,
@@ -165,9 +263,15 @@ class RefinerSwap:
         if not self.switched:
             return
         self._load(self.base_path, "restore")
+        if self._adapter_backup is not None:
+            self._swap_adapter(None)
+        # The base model's next prompt is encoded by its own adapter, never
+        # served from a cache the Refiner's filled.
+        clear_cond_caches(None)
         self.switched = False
-        # The next job re-applies its own LoRAs from a clean hash.
-        self.engine.current_lora_hash = str([])
+        # The next job re-applies its own LoRAs -- none included -- onto the
+        # base model's weights, never the patched objects this job left.
+        self.engine.current_lora_hash = _RELOAD
 
     # -- Neo's fast-path steps --------------------------------------------
 
@@ -227,18 +331,85 @@ class RefinerSwap:
         self.seconds[stage] = round(time.monotonic() - started, 3)
         log.info("REFINER %s %s in %.2f s", stage, Path(path).name, self.seconds[stage])
 
-    def _reactivate_loras(self, p: Any) -> None:
-        """Neo's fast path, step 2: the LoRAs again, onto the new weights."""
+    def _swap_adapter(self, path: str | None) -> None:
+        """The Refiner's LLM adapter in (`path`), or the base one's kept
+        tensors back (None). The text encoder is unloaded first, as the UNet
+        is above, so a LoRA's patch is lifted before the weights change and
+        re-applied on the next encode rather than restored over them."""
 
-        self.engine.current_lora_hash = str([])
+        import time
+
+        import torch
+
+        started = time.monotonic()
+        with torch.inference_mode():
+            adapter = self._adapter()
+            self._unload_text_encoder()
+            if path is None:
+                adapter.load_state_dict(self._adapter_backup, strict=True)
+                self._adapter_backup = None
+            else:
+                if self._adapter_backup is None:
+                    self._adapter_backup = {
+                        name: tensor.detach().to("cpu", copy=True)
+                        for name, tensor in adapter.state_dict().items()}
+                adapter.load_state_dict(_adapter_tensors(path), strict=True)
+        stage = "adapter restore" if path is None else "adapter switch"
+        self.seconds[stage] = round(time.monotonic() - started, 3)
+        log.info("REFINER %s in %.2f s", stage, self.seconds[stage])
+
+    def _unload_text_encoder(self) -> None:
+        from backend.memory_management import current_loaded_models
+
+        patcher = self.engine.forge_objects.clip.patcher
+        for index, loaded in enumerate(list(current_loaded_models)):
+            if loaded.model is patcher:
+                current_loaded_models.pop(index).model_unload()
+                break
+
+    def _reactivate_loras(self, p: Any) -> None:
+        """Neo's fast path, step 2: the LoRAs again, onto the new weights --
+        the main prompt's, or the Refiner's own in their place."""
+
+        self.engine.current_lora_hash = _RELOAD
         if getattr(p, "disable_extra_networks", False):
             return
-        data = getattr(p, "extra_network_data", None)
-        if not data:
+        if self.loras is None:
+            data = getattr(p, "extra_network_data", None)
+            if not data:
+                return
+            from modules import extra_networks
+
+            extra_networks.activate(p, data)
             return
         from modules import extra_networks
 
-        extra_networks.activate(p, data)
+        own = list(extra_networks.parse_prompt(self.loras)[1].get("lora", []))
+        # In place, as Neo's own fast path replaces `extra_network_data["lora"]`:
+        # the cond cache's key and the end-of-job deactivate read this dict,
+        # and the Hires pass activates `hr_extra_network_data` on the Refiner.
+        for name in ("extra_network_data", "hr_extra_network_data"):
+            data = getattr(p, name, None)
+            if data is None and name == "extra_network_data":
+                data = {}
+                setattr(p, name, data)
+            if data is not None:
+                data["lora"] = list(own)
+        kept = dict(getattr(p, "lora_hashes", None) or {})
+        extra_networks.activate(p, p.extra_network_data)
+        _merge_lora_hashes(p, kept)
+
+
+def _merge_lora_hashes(p: Any, kept: dict[str, str]) -> None:
+    """The picture's "Lora hashes" name the main prompt's LoRAs AND the
+    Refiner's: `ExtraNetworkLora.activate` starts the dict afresh outside the
+    Hires pass, so the switch's activation would drop the main prompt's."""
+
+    if not kept:
+        return
+    merged = {**kept, **(getattr(p, "lora_hashes", None) or {})}
+    p.lora_hashes = merged
+    p.extra_generation_params["Lora hashes"] = ", ".join(f"{k}: {v}" for k, v in merged.items())
 
 
 def _unet_prefix(state_dict: Any) -> str:
@@ -251,6 +422,88 @@ def _unet_prefix(state_dict: Any) -> str:
     return unet_prefix_from_state_dict(state_dict)
 
 
+def _read_header(path: str) -> tuple[dict[str, Any], int]:
+    """A .safetensors file's header and the offset its tensor data starts at.
+
+    The format's own header: an 8-byte little-endian length, then JSON of
+    {name: {"dtype", "shape", "data_offsets"}}. `safe_open` took 3 s to give
+    the same answer for one 3.9 GiB file; this reads a few hundred KB.
+    """
+
+    import json
+    import struct
+
+    with open(path, "rb") as handle:
+        (length,) = struct.unpack("<Q", handle.read(8))
+        if length <= 0 or length > 100 * 1024 * 1024:
+            raise _refused(f"{Path(path).name} is not a readable .safetensors file.")
+        return json.loads(handle.read(length)), 8 + length
+
+
+_ADAPTER = "llm_adapter."
+_DTYPES = {"BF16": "bfloat16", "F16": "float16", "F32": "float32"}
+
+
+def _adapter_shapes(path: str) -> dict[str, tuple[int, ...]]:
+    """Anima's LLM adapter in a checkpoint file, as {name under the adapter:
+    shape}; empty when the file carries none."""
+
+    header, _start = _read_header(path)
+    return {key.split(_ADAPTER, 1)[1]: tuple(int(n) for n in info.get("shape", ()))
+            for key, info in header.items()
+            if key != "__metadata__" and _ADAPTER in key}
+
+
+def _adapter_tensors(path: str) -> dict[str, Any]:
+    """The adapter's tensors, read from their byte ranges (about 270 MB in
+    BF16) rather than through `load_torch_file`, which maps the whole file."""
+
+    import torch
+
+    header, start = _read_header(path)
+    tensors: dict[str, Any] = {}
+    with open(path, "rb") as handle:
+        for key, info in header.items():
+            if key == "__metadata__" or _ADAPTER not in key:
+                continue
+            name = _DTYPES.get(str(info.get("dtype")))
+            if name is None:
+                raise _refused(
+                    f"{Path(path).name}'s prompt adapter is stored as "
+                    f"{info.get('dtype')}, which the Refiner cannot read.")
+            first, last = info["data_offsets"]
+            handle.seek(start + int(first))
+            raw = bytearray(handle.read(int(last) - int(first)))
+            tensors[key.split(_ADAPTER, 1)[1]] = torch.frombuffer(
+                raw, dtype=getattr(torch, name)).reshape(info["shape"])
+    return tensors
+
+
+def clear_cond_caches(p: Any) -> None:
+    """Empty Neo's prompt-conditioning caches, in place: the class-level lists
+    every processing object shares (`processing.py` `cached_c`/`cached_uc`,
+    Txt2Img's `cached_hr_c`/`cached_hr_uc`) and `p`'s own, which are normally
+    the same lists. Their key is the prompt and settings, not the adapter."""
+
+    import sys
+
+    # Only if Neo's processing is already standing: importing it here would
+    # bring the engine up, and with no engine there is no cache to empty.
+    processing = sys.modules.get("modules.processing")
+    lists: list[Any] = []
+    if processing is not None:
+        lists += [getattr(getattr(processing, "StableDiffusionProcessing", None), name, None)
+                  for name in ("cached_c", "cached_uc")]
+        lists += [getattr(getattr(processing, "StableDiffusionProcessingTxt2Img", None), name, None)
+                  for name in ("cached_hr_c", "cached_hr_uc")]
+    if p is not None:
+        lists += [getattr(p, name, None)
+                  for name in ("cached_c", "cached_uc", "cached_hr_c", "cached_hr_uc")]
+    for cache in lists:
+        if isinstance(cache, list):
+            cache[:] = [None] * len(cache)
+
+
 def _diffusion_shapes(path: str) -> dict[str, tuple[int, ...]]:
     """A checkpoint's diffusion weights as {name: shape}, from its header.
 
@@ -259,17 +512,7 @@ def _diffusion_shapes(path: str) -> dict[str, tuple[int, ...]]:
     (`detection.py` :438, key names only) stripped, `llm*` left out.
     """
 
-    import json
-    import struct
-
-    # The format's own header: an 8-byte little-endian length, then JSON of
-    # {name: {"dtype", "shape", "data_offsets"}}. `safe_open` took 3 s to give
-    # the same answer for one 3.9 GiB file; this reads a few hundred KB.
-    with open(path, "rb") as handle:
-        (length,) = struct.unpack("<Q", handle.read(8))
-        if length <= 0 or length > 100 * 1024 * 1024:
-            raise _refused(f"{Path(path).name} is not a readable .safetensors file.")
-        header = json.loads(handle.read(length))
+    header, _start = _read_header(path)
     keys = [key for key in header if key != "__metadata__"]
     bare = not any(k.startswith(("model.diffusion_model.", "net.")) for k in keys)
     named = {(f"model.diffusion_model.{k}" if bare else k): k for k in keys}

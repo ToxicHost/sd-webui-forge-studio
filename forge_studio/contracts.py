@@ -482,8 +482,8 @@ class RefinerSettings(Contract):
     Neo's Refiner (`processing_scripts/refiner.py`, `apply_refiner`'s fast
     path) in Studio's vocabulary. The base model samples steps 1..k, the
     Refiner the rest of the same latent; Hires and Auto Detail then run on the
-    Refiner (owner's D1). The prompt keeps the base model's encoding, as Neo's
-    fast path does (D5).
+    Refiner (owner's D1). On Anima the Refiner reads the prompt with its own
+    LLM adapter (D5 reversed, 2026-10-23).
     """
 
     enabled: bool = False
@@ -496,6 +496,10 @@ class RefinerSettings(Contract):
     #: 0 keeps the base CFG; Neo's "Refiner CFG Scale" (`refiner_cfg`, used
     #: when >= 1.0).
     cfg: float = 0.0
+    #: The Refiner's own LoRAs as `<lora:name:weight>` tags, which replace the
+    #: main prompt's for its steps, Hires and Auto Detail; "" for none. None
+    #: keeps the main prompt's (Neo's fast path, and every job before this).
+    loras: str | None = None
 
 
 @dataclass(frozen=True)

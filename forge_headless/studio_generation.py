@@ -645,6 +645,7 @@ def _refiner_fields(request: Any) -> dict[str, Any]:
         label=label_for(path),
         switch_at=int(refiner.switch_at_step) / max(1, int(request.steps)),
         cfg=float(getattr(refiner, "cfg", 0.0) or 0.0),
+        loras=getattr(refiner, "loras", None),
     )}
 
 

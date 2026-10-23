@@ -618,7 +618,14 @@ signatures it wraps.
   `switch_at_step / steps` of the main pass, once; Hires and Auto Detail then
   run on those weights; the base weights are restored after the job (under
   `torch.inference_mode()`, as Neo's `ScriptRefiner.postprocess`). A job
-  without a Refiner reaches Neo's function unchanged.
+  without a Refiner reaches Neo's function unchanged. Differences from Neo's
+  steps (2026-10-23): on Anima the Refiner's LLM adapter is swapped in and the
+  prompt re-encoded; `refiner.loras` (the Refiner's own LoRA tags, "" for none)
+  replaces `extra_network_data["lora"]` and `hr_extra_network_data["lora"]`
+  where Neo applies its `refiner_lora_replacement` rule; and
+  `current_lora_hash` is left at a value no LoRA list compiles to, never Neo's
+  "[]" -- which equals an empty list's hash and let a plain job after a
+  Refiner+LoRA job keep the LoRA-patched objects (measured live).
 - **Feature flag:** the request's `refiner` group. Absent means absent.
 - **Failure mode:** a checkpoint of another family is refused from its header
   before any step; a failed restore is retried before the next job samples and
@@ -626,7 +633,8 @@ signatures it wraps.
 - **Tests:** `tests/studio_alpha/test_mh2_refiner.py` (including the real
   composition with Neo's denoiser loop stood in).
 - **Live:** `Evidence/model-handoff-2026-10-22/rf/` -- plain jobs after Refiner
-  jobs pixel-identical to before.
+  jobs pixel-identical to before; `Evidence/refiner-loras-2026-10-23/` -- the
+  Refiner's own LoRAs, and plain jobs after Refiner+LoRA jobs.
 - **Source review:** `Evidence/source-review/MH-model-handoff.md`, "Stage 2".
 - **Upstream conflict likelihood:** **Low for merges** (no file is edited),
   **medium for drift** (a rename of `apply_refiner`, or of the fast path's

@@ -118,6 +118,9 @@ var FIELD_MAP = {
   refiner_checkpoint: { id: "paramRefinerCheckpoint", type: "value" },
   refiner_switch:     { id: "paramRefinerSwitch",     type: "int" },
   refiner_cfg:        { id: "paramRefinerCFG",        type: "number" },
+  // Its own LoRAs: the mode (same / none / own) and the chips as JSON.
+  refiner_lora_mode:  { id: "paramRefinerLoraMode",   type: "value" },
+  refiner_loras:      { id: "refinerLoraStack",       type: "hidden" },
 
   // ADetailer master + 3 slots --------------------------------------------
   ad_enabled:        { id: "checkAD",         type: "collapseCheck" },

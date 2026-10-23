@@ -2761,7 +2761,27 @@ function _metaFromInfotext(infotext) {
         const dst = _snakeKey(src);
         if (!(dst in m)) m[dst] = value;
     }
+    // The Refiner's own LoRAs: "Refiner LoRAs" reaches here as "refinerLoRAs",
+    // which `_snakeKey` splits as "refiner_lo_ras", and Neo quotes a value
+    // with ":" in it (`infotext_core.quote`); the server's row has
+    // "refiner_loras", unquoted (`gallery_metadata._read_settings`).
+    if (pp.refinerLoRAs) {
+        delete m.refiner_lo_ras;
+        m.refiner_loras = _unquotedValue(pp.refinerLoRAs);
+    }
     return m;
+}
+function _unquotedValue(value) {
+    const s = String(value);
+    if (s.length > 1 && s[0] === '"' && s[s.length - 1] === '"') {
+        try { return String(JSON.parse(s)); } catch (_) { return s.slice(1, -1); }
+    }
+    return s;
+}
+// "None" is Studio's word for "the Refiner sampled without LoRAs".
+function _refinerLorasText(m) {
+    const v = String(m.refiner_loras);
+    return v === "None" ? _t("gallery.metadata.refinerLorasNone", "None") : v;
 }
 // `parseInfotext`'s camelCase back to the server's snake_case names. Its
 // camelCase lowercases only the FIRST letter, so an acronym arrives as
@@ -2811,7 +2831,7 @@ async function loadMetadata(img) {
         const dv = m.date_original || m.date_time || ""; if (dv) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.date", "Date") + '</div><div class="gal-meta-value">' + esc(dv) + '</div></div>'; } else if (img && img.file_date) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.date", "Date") + '</div><div class="gal-meta-value">' + new Date(img.file_date * 1000).toLocaleDateString("en-US", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) + '</div></div>'; }
         if (img && img.width) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.dimensions", "Dimensions") + '</div><div class="gal-meta-value">' + img.width + ' \u00d7 ' + img.height + ' px</div></div>'; }
         if (m.file_size) { has = true; const mb = m.file_size / (1024 * 1024); h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.fileSize", "File Size") + '</div><div class="gal-meta-value">' + (mb >= 1 ? mb.toFixed(1) + " MB" : (m.file_size / 1024).toFixed(0) + " KB") + '</div></div>'; }
-        const ord = [["prompt","Prompt"],["negative_prompt","Negative"],["model","Model"],["time_taken",_t("gallery.metadata.generationTime","Generation Time")],["refiner",_t("gallery.metadata.refiner","Refiner")],["refiner_switch_at",_t("gallery.metadata.refinerSwitch","Refiner Switch")],["hires_checkpoint",_t("gallery.metadata.hiresModel","Hires Model")],["steps","Steps"],["sampler","Sampler"],["scheduler","Scheduler"],["cfg_scale","CFG Scale"],["cfg","CFG Scale"],["seed","Seed"],["size","Size"],["clip_skip","Clip Skip"],["denoising","Denoise"],["hires_upscaler","Hires Up."],["hires_steps","Hires Steps"],["hires_upscale","Hires Scale"],["model_hash","Model Hash"],["camera_make","Camera"],["camera_model","Camera Model"],["lens_make","Lens"],["lens_model","Lens Model"],["focal_length","Focal Length"],["focal_length_35mm","Focal 35mm"],["f_number","Aperture"],["exposure_time","Exposure"],["iso","ISO"],["flash","Flash"],["software","Software"]];
+        const ord = [["prompt","Prompt"],["negative_prompt","Negative"],["model","Model"],["time_taken",_t("gallery.metadata.generationTime","Generation Time")],["refiner",_t("gallery.metadata.refiner","Refiner")],["refiner_switch_at",_t("gallery.metadata.refinerSwitch","Refiner Switch")],["refiner_loras",_t("gallery.metadata.refinerLoras","Refiner LoRAs")],["hires_checkpoint",_t("gallery.metadata.hiresModel","Hires Model")],["steps","Steps"],["sampler","Sampler"],["scheduler","Scheduler"],["cfg_scale","CFG Scale"],["cfg","CFG Scale"],["seed","Seed"],["size","Size"],["clip_skip","Clip Skip"],["denoising","Denoise"],["hires_upscaler","Hires Up."],["hires_steps","Hires Steps"],["hires_upscale","Hires Scale"],["model_hash","Model Hash"],["camera_make","Camera"],["camera_model","Camera Model"],["lens_make","Lens"],["lens_model","Lens Model"],["focal_length","Focal Length"],["focal_length_35mm","Focal 35mm"],["f_number","Aperture"],["exposure_time","Exposure"],["iso","ISO"],["flash","Flash"],["software","Software"]];
         const resolvedPrompt = _parseResolvedPrompt(m.raw_infotext || m.raw_parameters);
         // A1111 writes "Denoising strength" for both img2img and HiRes Fix.
         // Disambiguate by looking for sibling HiRes fields.
@@ -2862,7 +2882,8 @@ async function loadMetadata(img) {
                       + '</div></div></div>';
                 }
             } else {
-                const shown = k === "refiner_switch_at" ? _refinerSwitchText(m) : String(m[k]);
+                const shown = k === "refiner_switch_at" ? _refinerSwitchText(m)
+                    : k === "refiner_loras" ? _refinerLorasText(m) : String(m[k]);
                 h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div><div class="gal-meta-value">' + esc(shown) + '</div></div>';
             }
         }

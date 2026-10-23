@@ -2067,15 +2067,120 @@ const HiresModel = {
 const Refiner = {
   _el(id) { return document.getElementById(id); },
 
+  // Its own LoRAs (owner, 2026-10-23): "same" sends nothing (the main
+  // prompt's, Neo's fast path), "none" sends "", "own" sends the chips as
+  // `<lora:name:weight>` tags -- which replace the main prompt's for the
+  // Refiner's steps, Hires and Auto Detail (`refiner_port`).
+  _loras: [],
+  _selfWrite: false,
+
   // The `refiner` group a job sends, or null when the section is off.
   group() {
     if (!this._el("checkRefiner")?.classList.contains("checked")) return null;
+    const mode = this._mode();
     return {
       enabled: true,
       checkpoint_model_id: (this._el("paramRefinerCheckpoint")?.value || "").trim(),
       switch_at_step: parseInt(this._el("paramRefinerSwitch")?.value, 10) || 0,
       cfg: parseFloat(this._el("paramRefinerCFG")?.value) || 0,
+      ...(mode === "none" ? { loras: "" } : mode === "own" ? { loras: this.compileTags() } : {}),
     };
+  },
+
+  _mode() {
+    const v = this._el("paramRefinerLoraMode")?.value;
+    return v === "none" || v === "own" ? v : "same";
+  },
+
+  // The chips as tags, the AD slot stack's spelling (`ad-lora-stack.js`).
+  compileTags() {
+    return this._loras.map(it => `<lora:${it.name}:${Number.isFinite(it.weight) ? it.weight : 1}>`).join(", ");
+  },
+
+  _weight(w) {
+    let n = parseFloat(w);
+    if (!isFinite(n)) n = 1.0;
+    return Math.round(Math.min(10, Math.max(-10, n)) * 100) / 100;
+  },
+
+  _sanitize(items) {
+    if (!Array.isArray(items)) return [];
+    return items
+      .map(it => ({ name: String(it?.name || "").split("/").pop(), weight: this._weight(it?.weight) }))
+      .filter(it => it.name);
+  },
+
+  _setMode(mode) {
+    const select = this._el("paramRefinerLoraMode");
+    if (!select) return;
+    select.value = mode;
+    _syncSelectUI(select);
+    this._showRow();
+  },
+
+  _showRow() {
+    const row = this._el("refinerLoraRow");
+    if (row) row.style.display = this._mode() === "own" ? "" : "none";
+  },
+
+  // Mirrored into the hidden input, so workflows, tabs and sessions keep it.
+  _commit() {
+    const hidden = this._el("refinerLoraStack");
+    if (hidden) {
+      this._selfWrite = true;
+      hidden.value = JSON.stringify(this._loras);
+      hidden.dispatchEvent(new Event("input", { bubbles: true }));
+      this._selfWrite = false;
+    }
+    this._render();
+  },
+
+  addLora(lora, weight) {
+    const name = String((typeof lora === "string" ? lora : lora?.name) || "").split("/").pop();
+    if (!name) return;
+    if (this._loras.some(it => it.name === name)) {
+      showToast(_i18n("toast.refiner.loraTwice", "{name} is already in the Refiner's LoRAs", { name }), "info");
+      return;
+    }
+    const w = typeof weight === "number" ? weight : (lora?.preferred_weight > 0 ? lora.preferred_weight : 1.0);
+    this._loras.push({ name, weight: this._weight(w) });
+    this._commit();
+  },
+
+  _render() {
+    const box = this._el("refinerLoraChips");
+    if (!box) return;
+    box.innerHTML = "";
+    this._loras.forEach((it, index) => {
+      const chip = document.createElement("span");
+      chip.className = "ad-lora-chip";
+      const alias = it.name.replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, "");
+      chip.innerHTML =
+        `<span class="ad-lora-name" title="${_escapeHtml(it.name)}">${_escapeHtml(alias)}</span>` +
+        `<input class="ad-lora-weight" type="number" step="0.05" value="${it.weight}" aria-label="${_escapeHtml(_i18n("ui.refiner.loras.weight", "LoRA weight"))}">` +
+        `<button type="button" class="ad-lora-remove" aria-label="${_escapeHtml(_i18n("ui.refiner.loras.remove", "Remove LoRA"))}">×</button>`;
+      chip.querySelector(".ad-lora-weight").addEventListener("change", (e) => {
+        it.weight = this._weight(e.target.value);
+        e.target.value = it.weight;
+        const hidden = this._el("refinerLoraStack");
+        if (hidden) { this._selfWrite = true; hidden.value = JSON.stringify(this._loras);
+          hidden.dispatchEvent(new Event("input", { bubbles: true })); this._selfWrite = false; }
+      });
+      chip.querySelector(".ad-lora-remove").addEventListener("click", () => {
+        this._loras.splice(index, 1);
+        this._commit();
+      });
+      box.appendChild(chip);
+    });
+  },
+
+  // After a workflow, tab or session wrote the hidden input or the mode.
+  restoreFromHidden() {
+    const hidden = this._el("refinerLoraStack");
+    try { this._loras = this._sanitize(JSON.parse(hidden?.value || "[]")); }
+    catch (_) { this._loras = []; }
+    this._render();
+    this._showRow();
   },
 
   // A checkpoint of another architecture is said at once, here, rather than
@@ -2114,10 +2219,36 @@ const Refiner = {
     const at = parseFloat(p.refinerSwitchAt);
     const steps = parseInt(p.steps, 10);
     if (isFinite(at) && steps > 0) this._el("paramRefinerSwitch").value = String(Math.round(at * steps));
+    // Its own LoRAs: "Refiner LoRAs" is absent (the main prompt's), "None",
+    // or the tags, quoted as Neo quotes any value with ":" in it.
+    let loras = p.refinerLoRAs == null ? null : String(p.refinerLoRAs).trim();
+    if (loras && loras.length > 1 && loras[0] === '"' && loras[loras.length - 1] === '"') {
+      try { loras = String(JSON.parse(loras)); } catch (_) { loras = loras.slice(1, -1); }
+    }
+    if (!loras) { this._setMode("same"); return; }
+    if (loras === "None") { this._setMode("none"); return; }
+    const found = [...loras.matchAll(/<lora:([^:>]+)(?::(-?[\d.]+))?[^>]*>/g)];
+    this._loras = this._sanitize(found.map(m => ({ name: m[1], weight: m[2] ?? 1 })));
+    this._commit();
+    this._setMode("own");
   },
 
   bind() {
     this._el("paramRefinerCheckpoint")?.addEventListener("change", () => this._checkFamily());
+    this._el("paramRefinerLoraMode")?.addEventListener("change", () => this._showRow());
+    this._el("refinerLoraAdd")?.addEventListener("click", () => {
+      if (window.LoraBrowser && typeof window.LoraBrowser.openPick === "function") {
+        window.LoraBrowser.openPick((lora, weight) => this.addLora(lora, weight));
+      } else {
+        showToast(_i18n("toast.refiner.noLoraBrowser", "The LoRA Browser is not available"), "error");
+      }
+    });
+    // A workflow or tab restore writes the hidden input and says so; our own
+    // writes are ignored, so editing a weight keeps its focus.
+    this._el("refinerLoraStack")?.addEventListener("input", () => {
+      if (!this._selfWrite) this.restoreFromHidden();
+    });
+    this.restoreFromHidden();
   },
 };
 
@@ -9176,6 +9307,7 @@ function bindUI() {
       ["paramHrCheckpoint", "val"], ["paramHrTextEncoder", "val"], ["paramHrVAE", "val"],
       ["checkRefiner", "check"], ["paramRefinerCheckpoint", "val"],
       ["paramRefinerSwitch", "val"], ["paramRefinerCFG", "val"],
+      ["paramRefinerLoraMode", "val"], ["refinerLoraStack", "val"],
     ],
     ad: [
       ["checkAD", "check"],
@@ -9395,6 +9527,8 @@ function bindUI() {
     // Defaults/session restore writes #adLoraStack{n}.value without an input
     // event (the "val" branch above), so rehydrate the AD LoRA chips explicitly.
     if (window.ADLoRAStack) window.ADLoRAStack.restoreFromHidden();
+    // MH2. The Refiner's own LoRA chips and its mode, the same way.
+    Refiner.restoreFromHidden();
     // MH1. The same write, no event: show the Hires model's components row
     // for a restored model, keeping the restored Text Encoder and VAE.
     HiresModel.refresh("restore").catch(() => {});
@@ -11043,11 +11177,11 @@ const LayoutBlocks = {
     { id: "history",    label: "History",       canHide: true  },
     { id: "regions",    label: "Regions",       canHide: true  },
     { id: "model",      label: "Model & VAE",   canHide: true  },
+    { id: "refiner",    label: "Refiner",       canHide: true  },
     { id: "sampling",   label: "Sampling",      canHide: true  },
     { id: "frame",      label: "Canvas",        canHide: true  },
     { id: "seedbatch",  label: "Seed",           canHide: true  },
     { id: "hires",      label: "Hires Fix",     canHide: true  },
-    { id: "refiner",    label: "Refiner",       canHide: true  },
     { id: "adetailer",  label: "ADetailer",     canHide: true  },
     { id: "upscale",    label: "Upscale",       canHide: true  },
     { id: "controlnet", label: "ControlNet",    canHide: true  },

@@ -2206,7 +2206,8 @@ class StudioLiveGenerationPort:
                 swap = refiner_port.RefinerSwap(
                     engine=engine, path=refiner.path, base_path=refiner.base_path,
                     switch_at=float(refiner.switch_at), cfg=float(refiner.cfg or 0.0),
-                    label=str(refiner.label or ""))
+                    label=str(refiner.label or ""),
+                    loras=getattr(refiner, "loras", None))
                 swap.check()
                 refiner_port.install()
                 processing.studio_refiner = swap  # type: ignore[attr-defined]
@@ -2700,6 +2701,30 @@ class StudioLiveGenerationPort:
             return
         self._refiner = None
 
+    def _refiner_main_prompt(self, main: str) -> str:
+        """MH2. The main prompt as an Auto Detail pass on the Refiner reads it.
+
+        That pass builds its own processing object, whose LoRAs come from its
+        prompt text (`process_images_inner` parses and activates them). With
+        the Refiner's own LoRA list, the main prompt's tags are swapped for the
+        Refiner's, so the pass samples with the LoRAs the Refiner's steps did;
+        a slot's own tags are added later and stay. Otherwise unchanged.
+
+        Exact, unlike `_without_lora_tags`: the tags are removed where they
+        stand and the Refiner's appended with nothing between them, so the
+        text Neo's parse leaves for the encoder (`extra_networks.parse_prompt`
+        deletes each tag in place) is the main pass's, byte for byte.
+        """
+
+        import re
+
+        swap = getattr(self, "_refiner", None)
+        own = getattr(swap, "loras", None)
+        if swap is None or own is None or not getattr(swap, "switched", False):
+            return main
+        tags = re.findall(r"<lora:[^<>]*>", own)
+        return re.sub(r"<(?:lora|lyco):[^>]+>", "", main) + "".join(tags)
+
     def _shift(self, request) -> float:
         """The shift (or distilled guidance) every pass of this job uses: the
         loaded family's, as Neo's UI preset gives it (`family_shift`), or the
@@ -2849,6 +2874,7 @@ class StudioLiveGenerationPort:
         if int(getattr(request, "batch_size", 1) or 1) > 1 and index < len(drawn):
             main = drawn[index].positive_prompt
             main_negative = drawn[index].negative_prompt
+        main = self._refiner_main_prompt(main)
         prompt = _ad_prompt(str(getattr(slot, "prompt", "") or ""), main, region)
         negative = _ad_prompt(str(getattr(slot, "negative_prompt", "") or ""),
                               main_negative, region)

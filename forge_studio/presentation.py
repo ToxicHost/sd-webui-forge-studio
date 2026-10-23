@@ -867,7 +867,44 @@ def _validated_references(value: Any) -> tuple[Any, ...]:
     return tuple(assets)
 
 
-_REFINER_FIELDS = ("enabled", "checkpoint_model_id", "switch_at_step", "cfg")
+_REFINER_FIELDS = ("enabled", "checkpoint_model_id", "switch_at_step", "cfg", "loras")
+
+#: A LoRA tag as Neo's `extra_networks.re_extra_net` reads it, `lora` only:
+#: the name, then optional `:weight` parts (`ExtraNetworkLora.activate`).
+_REFINER_LORA_TAG = re.compile(r"<lora:([^<>]*)>")
+
+
+def _validated_refiner_loras(value: Any) -> str | None:
+    """The Refiner's own LoRA list: None (the main prompt's), or its
+    `<lora:name:weight>` tags joined by ", " -- "" for none.
+
+    Only tags: anything else in the field would be prompt text the Refiner
+    never reads. A weight that is not a number is refused here, because
+    `ExtraNetworkLora.activate`'s `float()` would raise inside Neo's
+    `errors.display` and the LoRA would silently not load.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise PresentationError("refiner.loras must be text.")
+    tags: list[str] = []
+    for found in _REFINER_LORA_TAG.finditer(value):
+        parts = found.group(1).split(":")
+        if not parts[0].strip():
+            raise PresentationError(f"{found.group(0)} names no LoRA.")
+        for part in parts[1:]:
+            number = part.split("=", 1)[1] if "=" in part else part
+            try:
+                float(number)
+            except ValueError:
+                raise PresentationError(
+                    f"The weight in {found.group(0)} is not a number.") from None
+        tags.append(found.group(0))
+    if _REFINER_LORA_TAG.sub("", value).strip(" ,\t\r\n"):
+        raise PresentationError(
+            "The Refiner's LoRAs take <lora:name:weight> tags only.")
+    return ", ".join(tags)
 
 
 def _validated_refiner(value: Any, steps: int) -> Any:
@@ -916,7 +953,8 @@ def _validated_refiner(value: Any, steps: int) -> Any:
     from .contracts import RefinerSettings
 
     return RefinerSettings(enabled=True, checkpoint_model_id=checkpoint,
-                           switch_at_step=switch, cfg=cfg)
+                           switch_at_step=switch, cfg=cfg,
+                           loras=_validated_refiner_loras(value.get("loras")))
 
 
 def _controlnet_field(value: Any) -> dict[str, Any]:
