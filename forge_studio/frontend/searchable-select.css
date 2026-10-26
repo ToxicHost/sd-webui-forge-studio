@@ -110,6 +110,60 @@
   user-select: none;
 }
 
+/* MF1. A folder header folds its models away. Folder names keep the case
+   the owner gave them, and the count stays visible while folded. */
+.ssel-optgroup-header.ssel-folder {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.ssel-optgroup-header.ssel-folder:hover {
+  background: var(--bg-raised);
+  color: var(--text-1);
+}
+
+.ssel-optgroup-header.ssel-folder.searching {
+  cursor: default;
+}
+
+.ssel-optgroup-header.ssel-folder.searching:hover {
+  background: none;
+  color: var(--text-3);
+}
+
+.ssel-folder-chevron {
+  flex-shrink: 0;
+  width: 9px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-3);
+}
+
+.ssel-folder-label {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssel-folder-count {
+  flex-shrink: 0;
+  font-weight: 400;
+  color: var(--text-4);
+}
+
+.ssel-option.in-folder {
+  padding-left: 23px;
+}
+
 .ssel-option {
   padding: 5px 10px;
   font-size: 11px;

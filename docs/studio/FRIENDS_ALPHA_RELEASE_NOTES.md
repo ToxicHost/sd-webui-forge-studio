@@ -4,6 +4,26 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.11: Model folders in the Model list — 2026-10-26
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **The Model list groups checkpoints by folder.** Models at the top of a
+  model folder come first; each subfolder (Anima, Illustrious, ...) then gets
+  its own header with a count. Click a header to fold or unfold that folder;
+  Studio remembers which folders you folded. The folder holding the selected
+  model always opens, and typing in the filter searches folded folders too.
+  - Hires Fix > Model and the Refiner's list are grouped the same way.
+  - A subfolder with the same name in two model folders is one group. In a
+    whole Forge `models` folder, `Stable-diffusion` is left out, so
+    `Stable-diffusion/Anima` shows as Anima, as in Forge.
+  - The Checkpoint browser's folder filters use the same names.
+- **Fixed: Studio could forget the model you last chose.** With Text Encoder
+  on "None" or VAE on "Automatic", the usual case for a model that brings its
+  own, the choice was not saved, so a start without a saved session could
+  open on an older model.
+
 ## 0.9.10: The Refiner's own LoRAs — 2026-10-23
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

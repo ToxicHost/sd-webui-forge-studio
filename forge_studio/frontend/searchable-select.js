@@ -20,10 +20,19 @@
  * lexicon.js — ↑/↓ move focus (with wrap), Enter selects, Escape
  * closes.
  *
+ * MF1. An optgroup carrying `data-collapsible` is a FOLDER: its header
+ * folds the options away on click, and what is folded is remembered per
+ * select id and folder in localStorage. The folder holding the selected
+ * option opens whenever the panel opens; typing in the filter searches
+ * folded folders too and shows the matches open. Plain optgroups (the
+ * Hires upscaler's Latent / Image) are unchanged.
+ *
  * API:
  *   const handle = StudioSearchableSelect.attach(selectEl, opts?);
  *   handle.refresh();   // force re-read from native select
  *   handle.destroy();   // restore native select
+ *   StudioSearchableSelect.groupByFolder(items, folderOf)
+ *                       // [{folder: "", items}, {folder: "A", items}, …]
  *
  * Options:
  *   placeholder        — text shown when value is empty/missing
@@ -49,7 +58,11 @@ function _readOptions(select) {
     const out = [];
     for (const node of select.children) {
         if (node.tagName === "OPTGROUP") {
-            out.push({ kind: "group", label: node.label || "" });
+            out.push({
+                kind: "group",
+                label: node.label || "",
+                collapsible: node.hasAttribute("data-collapsible"),
+            });
             for (const opt of node.children) {
                 if (opt.tagName !== "OPTION") continue;
                 out.push({
@@ -59,6 +72,7 @@ function _readOptions(select) {
                     disabled: !!opt.disabled,
                     title: opt.title || "",
                     selected: !!opt.selected,
+                    inGroup: true,
                 });
             }
         } else if (node.tagName === "OPTION") {
@@ -73,6 +87,109 @@ function _readOptions(select) {
         }
     }
     return out;
+}
+
+function _visibleItems(all, state) {
+    // `_readOptions`' list -> what the panel shows. A group whose every
+    // option is filtered out does not render. A FOLDER group (collapsible)
+    // shows its header with a count, and hides its options while folded;
+    // a filter query opens every folder, and `forcedOpen` -- the folder
+    // holding the selected option -- is open whatever is stored.
+    state = state || {};
+    const q = (state.query || "").trim().toLowerCase();
+    const folded = state.folded || new Set();
+    const out = [];
+    let group = null;
+    for (const item of all) {
+        if (item.kind === "group") {
+            group = { label: item.label, collapsible: !!item.collapsible, entry: null };
+            continue;
+        }
+        if (!item.inGroup) group = null;
+        if (q && !item.text.toLowerCase().includes(q)) continue;
+        if (group && !group.entry) {
+            group.entry = { kind: "group", label: group.label, collapsible: group.collapsible,
+                            folded: false, searching: !!q, count: 0 };
+            if (group.collapsible && !q && folded.has(group.label)
+                && group.label !== state.forcedOpen) {
+                group.entry.folded = true;
+            }
+            out.push(group.entry);
+        }
+        if (group) {
+            group.entry.count++;
+            if (group.entry.folded) continue;
+        }
+        out.push(group && group.collapsible ? Object.assign({ inFolder: true }, item) : item);
+    }
+    return out;
+}
+
+function _folderOf(all, value) {
+    // The folder (collapsible group) an option value sits in, or null.
+    let group = null;
+    for (const item of all) {
+        if (item.kind === "group") { group = item.collapsible ? item.label : null; continue; }
+        if (!item.inGroup) group = null;
+        if (item.value === value) return group;
+    }
+    return null;
+}
+
+function groupByFolder(items, folderOf) {
+    // MF1. Top-level items first (folder ""), then one entry per folder,
+    // folders sorted case-insensitively; items keep their order inside a
+    // folder. The first entry is always the top level, possibly empty.
+    const top = [];
+    const byFolder = new Map();
+    for (const item of items || []) {
+        const folder = String(folderOf(item) || "");
+        if (!folder) { top.push(item); continue; }
+        if (!byFolder.has(folder)) byFolder.set(folder, []);
+        byFolder.get(folder).push(item);
+    }
+    const folders = [...byFolder.keys()].sort((a, b) => {
+        const x = a.toLowerCase(), y = b.toLowerCase();
+        if (x !== y) return x < y ? -1 : 1;
+        return a < b ? -1 : a > b ? 1 : 0;
+    });
+    return [{ folder: "", items: top }].concat(
+        folders.map(folder => ({ folder, items: byFolder.get(folder) })));
+}
+
+function _nextOptIdx(visible, from, dir) {
+    // Wrap around, skipping group headers and disabled options. A folded
+    // folder's options are not in `visible`, so they are skipped too.
+    const n = visible.length;
+    if (n === 0) return -1;
+    let i = from < 0 ? (dir > 0 ? -1 : 0) : from;
+    for (let step = 0; step < n; step++) {
+        i = ((i + dir) % n + n) % n;
+        const it = visible[i];
+        if (it.kind === "option" && !it.disabled) return i;
+    }
+    return -1;
+}
+
+const FOLDED_KEY_PREFIX = "studio-ssel-folded:";
+
+function _loadFolded(id) {
+    // Never throws: a private window or blocked storage folds nothing.
+    if (!id) return new Set();
+    try {
+        const raw = window.localStorage.getItem(FOLDED_KEY_PREFIX + id);
+        const list = raw ? JSON.parse(raw) : [];
+        return new Set(Array.isArray(list) ? list.filter(x => typeof x === "string") : []);
+    } catch (_) {
+        return new Set();
+    }
+}
+
+function _saveFolded(id, folded) {
+    if (!id) return;
+    try {
+        window.localStorage.setItem(FOLDED_KEY_PREFIX + id, JSON.stringify([...folded]));
+    } catch (_) { /* in-memory only */ }
 }
 
 function _currentLabel(select, placeholder) {
@@ -110,6 +227,10 @@ function attach(select, opts) {
     let listEl = null;
     let searchEl = null;
     let kbIdx = -1;     // index into the *flat visible* option list
+    // MF1. Folded folders, remembered per select id; and the folder held
+    // open for this opening of the panel because it holds the selection.
+    const folded = _loadFolded(select.id);
+    let forcedOpen = null;
 
     function _close() {
         if (!panel) return;
@@ -142,24 +263,11 @@ function attach(select, opts) {
     }
 
     function _renderList() {
-        const all = _readOptions(select);
-        const q = (searchEl?.value || "").trim().toLowerCase();
-        const visible = [];
-        // Track which group label belongs to the next visible option
-        // so groups whose every option is filtered out don't render.
-        let pendingGroup = null;
-        for (const item of all) {
-            if (item.kind === "group") {
-                pendingGroup = item.label;
-                continue;
-            }
-            if (q && !item.text.toLowerCase().includes(q)) continue;
-            if (pendingGroup !== null) {
-                visible.push({ kind: "group", label: pendingGroup });
-                pendingGroup = null;
-            }
-            visible.push(item);
-        }
+        const visible = _visibleItems(_readOptions(select), {
+            query: searchEl?.value || "",
+            folded,
+            forcedOpen,
+        });
 
         if (visible.length === 0) {
             var noMatches = (window.I18N && window.I18N.t) ? window.I18N.t("searchableSelect.noMatches", "No matches") : "No matches";
@@ -168,13 +276,28 @@ function attach(select, opts) {
             return;
         }
 
+        const toggleTip = (window.I18N && window.I18N.t)
+            ? window.I18N.t("searchableSelect.toggleFolder", "Show or hide this folder")
+            : "Show or hide this folder";
         let html = "";
         for (let i = 0; i < visible.length; i++) {
             const it = visible[i];
-            if (it.kind === "group") {
+            if (it.kind === "group" && it.collapsible) {
+                html += '<div class="ssel-optgroup-header ssel-folder'
+                    + (it.folded ? " folded" : "")
+                    + (it.searching ? " searching" : "") + '"'
+                    + (it.searching ? "" : ' role="button" title="' + _esc(toggleTip) + '"')
+                    + ' aria-expanded="' + (it.folded ? "false" : "true") + '"'
+                    + ' data-idx="' + i + '">'
+                    + '<span class="ssel-folder-chevron" aria-hidden="true">' + (it.folded ? "▸" : "▾") + '</span>'
+                    + '<span class="ssel-folder-label">' + _esc(it.label) + '</span>'
+                    + '<span class="ssel-folder-count">' + it.count + '</span>'
+                    + '</div>';
+            } else if (it.kind === "group") {
                 html += '<div class="ssel-optgroup-header">' + _esc(it.label) + '</div>';
             } else {
                 const cls = "ssel-option"
+                    + (it.inFolder ? " in-folder" : "")
                     + (it.value === select.value ? " selected" : "")
                     + (it.disabled ? " disabled" : "");
                 html += '<div class="' + cls + '" role="option"'
@@ -203,6 +326,17 @@ function attach(select, opts) {
                 _paintKbFocus();
             });
         });
+        // A folder header toggles its folder. Not while filtering: the
+        // query has every folder open, and a click there would change a
+        // stored state the owner cannot see. mousedown keeps the focus in
+        // the search box, where the keyboard navigation lives.
+        listEl.querySelectorAll(".ssel-folder:not(.searching)").forEach(el => {
+            el.addEventListener("mousedown", (e) => e.preventDefault());
+            el.addEventListener("click", () => {
+                const it = visible[parseInt(el.dataset.idx, 10)];
+                if (it) _toggleFolder(it.label, it.folded);
+            });
+        });
 
         // Keyboard nav lives on the search input so typing + arrows
         // chain naturally. The list itself doesn't take focus.
@@ -226,17 +360,14 @@ function attach(select, opts) {
         };
     }
 
-    function _nextOptIdx(visible, from, dir) {
-        // Wrap around, skipping group headers and disabled options.
-        const n = visible.length;
-        if (n === 0) return -1;
-        let i = from < 0 ? (dir > 0 ? -1 : 0) : from;
-        for (let step = 0; step < n; step++) {
-            i = ((i + dir) % n + n) % n;
-            const it = visible[i];
-            if (it.kind === "option" && !it.disabled) return i;
-        }
-        return -1;
+    function _toggleFolder(label, wasFolded) {
+        if (wasFolded) folded.delete(label);
+        else folded.add(label);
+        // Folding the selection's own folder is the owner's choice and
+        // wins over the open-on-open rule for the rest of this opening.
+        if (label === forcedOpen) forcedOpen = null;
+        _saveFolded(select.id, folded);
+        _renderList();
     }
 
     function _paintKbFocus() {
@@ -306,6 +437,7 @@ function attach(select, opts) {
         listEl.style.maxHeight = available + "px";
 
         trigger.classList.add("ssel-trigger-open");
+        forcedOpen = _folderOf(_readOptions(select), select.value);
         _renderList();
         searchEl.addEventListener("input", _renderList);
         searchEl.focus();
@@ -389,6 +521,10 @@ function attachAll(root, opts) {
     return out;
 }
 
-window.StudioSearchableSelect = { attach, attachAll };
+// The underscored ones are exported for the Node tests, not for callers.
+window.StudioSearchableSelect = {
+    attach, attachAll, groupByFolder,
+    _visibleItems, _folderOf, _nextOptIdx, _loadFolded, _saveFolded,
+};
 
 })();

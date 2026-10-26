@@ -956,6 +956,7 @@
   "region.add.tooltip": "Bereich hinzufügen",
   "region.removeAll.tooltip": "Alle Bereiche entfernen",
   "searchableSelect.noMatches": "Keine Treffer",
+  "searchableSelect.toggleFolder": "Diesen Ordner ein- oder ausblenden",
   "selector.none": "Keine Modelle verfügbar",
   "selector.truncated": "{n} angezeigt — der Ordner enthält mehr",
   "selector.unavailable": "Ordner nicht verfügbar — prüfe die Einstellungen",

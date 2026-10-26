@@ -3533,27 +3533,45 @@ async function populateDropdowns() {
     // scan in the dropdown. The hash is still available in the
     // PNG/JPEG metadata that Forge writes alongside the image.
     const _stripModelHash = (s) => String(s || "").replace(/\s*\[[0-9a-fA-F]{8,16}\]\s*$/, "");
+    // Two payload shapes reach here. The profile-backed shape carries
+    // `title`; the catalogue-backed shape carries `model_id` + `name` and
+    // deliberately no path. Read both, and never fall through to
+    // `undefined` -- an earlier version used m.title unconditionally and
+    // rendered "undefined" for every catalogued model.
+    const _checkpointOption = (m) => {
+      const value = m.model_id || m.title || m.name || "";
+      const label = _stripModelHash(m.name || m.title || value);
+      return `<option value="${_escapeHtml(value)}">${_escapeHtml(label)}</option>`;
+    };
+    // MF1. The three checkpoint lists group by the folder a model sits in
+    // (`folder`, from `/studio/models`): the top level first and without a
+    // header, then one folding header per folder. A list with no folders
+    // is the flat list it always was. Neo and the Extension named the
+    // folder in the label ("Anima/x.safetensors"); this keeps the label
+    // the file's own name and puts the folder in the header.
+    const _checkpointOptionsHtml = (list) => {
+      const group = window.StudioSearchableSelect?.groupByFolder;
+      if (!group) return list.map(_checkpointOption).join("");
+      return group(list, m => m.folder).map(({ folder, items }) => {
+        const options = items.map(_checkpointOption).join("");
+        if (!folder) return options;
+        const label = _escapeHtml(folder).replace(/"/g, "&quot;");
+        return `<optgroup label="${label}" data-collapsible>${options}</optgroup>`;
+      }).join("");
+    };
+    const _searchOpts = (placeholder) => ({
+      placeholder,
+      searchPlaceholder: _i18n("ui.controlnet.filterModels", "Filter models…"),
+    });
     const modelSelect = document.getElementById("paramModel");
     if (modelSelect) {
       const prev = _pickPrev(modelSelect);
-      // Two payload shapes reach here. The profile-backed shape carries
-      // `title`; the catalogue-backed shape carries `model_id` + `name` and
-      // deliberately no path. Read both, and never fall through to
-      // `undefined` -- an earlier version used m.title unconditionally and
-      // rendered "undefined" for every catalogued model.
-      modelSelect.innerHTML = models.map(m => {
-        const value = m.model_id || m.title || m.name || "";
-        const label = _stripModelHash(m.name || m.title || value);
-        return `<option value="${_escapeHtml(value)}">${_escapeHtml(label)}</option>`;
-      }).join("");
+      modelSelect.innerHTML = _checkpointOptionsHtml(models);
       _applySelectorState(modelSelect, models, "checkpoint");
       restoreSelection(modelSelect, prev);
       delete modelSelect.dataset.pendingValue;
       // attach is idempotent — second call returns existing handle.
-      window.StudioSearchableSelect?.attach(modelSelect, {
-        placeholder: "— Select model —",
-        searchPlaceholder: "Filter models…",
-      });
+      window.StudioSearchableSelect?.attach(modelSelect, _searchOpts("— Select model —"));
     }
 
     // The sampler and scheduler dropdowns are filled by `_loadRegistries`
@@ -3599,13 +3617,14 @@ async function populateDropdowns() {
       const prev = _pickPrev(hrCheckpoint);
       hrCheckpoint.innerHTML =
         `<option value="Same">${_escapeHtml(_i18n("ui.hires.sameAsBase", "Same as base"))}</option>` +
-        models.map(m => {
-          const value = m.model_id || m.title || m.name || "";
-          const label = _stripModelHash(m.name || m.title || value);
-          return `<option value="${_escapeHtml(value)}">${_escapeHtml(label)}</option>`;
-        }).join("");
+        _checkpointOptionsHtml(models);
       restoreSelection(hrCheckpoint, prev);
       delete hrCheckpoint.dataset.pendingValue;
+      // Wrapped here, like the Model list, so its folders fold too. Before
+      // MF1 only a defaults/session restore wrapped it, so it was a native
+      // list on some starts and a searchable one on others.
+      window.StudioSearchableSelect?.attach(hrCheckpoint,
+        _searchOpts(_i18n("ui.hires.sameAsBase", "Same as base")));
     }
 
     // MH2. The Refiner's checkpoint: the same list; the server refuses one
@@ -3615,13 +3634,11 @@ async function populateDropdowns() {
       const prev = _pickPrev(refinerCheckpoint);
       refinerCheckpoint.innerHTML =
         `<option value="">${_escapeHtml(_i18n("ui.refiner.choose", "Choose a checkpoint"))}</option>` +
-        models.map(m => {
-          const value = m.model_id || m.title || m.name || "";
-          const label = _stripModelHash(m.name || m.title || value);
-          return `<option value="${_escapeHtml(value)}">${_escapeHtml(label)}</option>`;
-        }).join("");
+        _checkpointOptionsHtml(models);
       restoreSelection(refinerCheckpoint, prev);
       delete refinerCheckpoint.dataset.pendingValue;
+      window.StudioSearchableSelect?.attach(refinerCheckpoint,
+        _searchOpts(_i18n("ui.refiner.choose", "Choose a checkpoint")));
     }
 
     // Sync the searchable-select trigger label after a programmatic

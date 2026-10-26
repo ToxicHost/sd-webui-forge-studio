@@ -956,6 +956,7 @@
   "region.add.tooltip": "Ajouter une zone",
   "region.removeAll.tooltip": "Supprimer toutes les zones",
   "searchableSelect.noMatches": "Aucun résultat",
+  "searchableSelect.toggleFolder": "Afficher ou masquer ce dossier",
   "selector.none": "Aucun modèle disponible",
   "selector.truncated": "{n} affichés — le dossier en contient plus",
   "selector.unavailable": "Dossier indisponible — vérifie les Paramètres",

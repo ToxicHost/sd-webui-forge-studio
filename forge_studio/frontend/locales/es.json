@@ -956,6 +956,7 @@
   "region.add.tooltip": "Añadir región",
   "region.removeAll.tooltip": "Eliminar todas las regiones",
   "searchableSelect.noMatches": "Sin coincidencias",
+  "searchableSelect.toggleFolder": "Mostrar u ocultar esta carpeta",
   "selector.none": "No hay modelos disponibles",
   "selector.truncated": "{n} mostrados — la carpeta contiene más",
   "selector.unavailable": "Carpeta no disponible — revisa Ajustes",

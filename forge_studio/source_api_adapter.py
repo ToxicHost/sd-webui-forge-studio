@@ -1741,14 +1741,24 @@ class SourceFrontendAdapter:
         """Project one role's catalogue for the browser, or None if unconfigured.
 
         What leaves this method is the whole privacy boundary for model lists:
-        an opaque id, a sanitized display name, a size and format. Never an
-        absolute path, never the root, and never ``relative_location`` -- which
-        is root-relative and therefore still describes the owner's directory
-        layout.
+        an opaque id, a sanitized display name, a size and format, and the
+        model's ``folder``. Never an absolute path, never the root, and never
+        ``relative_location`` itself.
+
+        ``folder`` (MF1) is the subfolder inside the model folder, "" at the
+        top level -- the dropdowns group by it. It is the one piece of the
+        owner's layout sent, and it is fine to send: the Checkpoint browser's
+        ``subfolder`` already carries exactly it (`model_browser.model_folder`
+        serves both), the folder names are ones the owner chose to organise by,
+        and this server answers only this computer's loopback page. With
+        several model folders it names no root: Neo merges its checkpoint dirs
+        by relative path, so two folders' ``Anima`` are one ``Anima`` group.
 
         Duplicate display names are disambiguated for the human, while the id
         stays the thing the browser actually sends back.
         """
+        from .model_browser import model_folder
+
         registry = self._model_roots
         if registry is None:
             return None
@@ -1781,6 +1791,7 @@ class SourceFrontendAdapter:
                     "size_bytes": entry.size_bytes,
                     "availability": entry.availability.value,
                     "truncated": truncated,
+                    "folder": model_folder(entry, role),
                 }
             )
         return payload

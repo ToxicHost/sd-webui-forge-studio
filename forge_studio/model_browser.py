@@ -156,6 +156,27 @@ def preview_url(role: str, model_id: str, preview: Path) -> str:
             f"&v={version}")
 
 
+def model_folder(entry: Any, role: str) -> str:
+    """The folder one catalogue entry sits in, relative to its model folder.
+
+    "" at the top level. Never a root and never a file name: the parent of
+    `relative_location`, POSIX-separated. A leading folder whose name means
+    this role (`Stable-diffusion`, `checkpoints`) is dropped, because Neo roots
+    its checkpoint list at `models/Stable-diffusion` and names a file
+    `Anima/x.safetensors` -- so a library folder that is a whole Forge
+    `models` folder says `Anima`, as Neo and the Extension do. MF1.
+    """
+
+    from forge_headless.model_kind import folder_hint
+
+    relative = PurePosixPath(str(getattr(entry, "relative_location", "") or "")
+                             .replace("\\", "/"))
+    parts = list(relative.parent.parts)
+    if parts and folder_hint((parts[0],)) == role:
+        parts = parts[1:]
+    return "/".join(parts)
+
+
 def checkpoint_listing(registry: Any) -> list[dict[str, Any]]:
     """The browser's cards, in the Extension's shape, ids instead of paths."""
 
@@ -173,9 +194,7 @@ def checkpoint_listing(registry: Any) -> list[dict[str, Any]]:
         seen[label] = count + 1
         if count:
             label = f"{label} ({count + 1})"
-        relative = PurePosixPath(str(getattr(entry, "relative_location", "") or "")
-                                 .replace("\\", "/"))
-        subfolder = "" if str(relative.parent) == "." else str(relative.parent)
+        subfolder = model_folder(entry, "checkpoint")
         mtime, preview_link, base_model = on_model(
             registry, "checkpoint", entry.model_id, "card",
             lambda path, model_id=entry.model_id: _checkpoint_facts(model_id, path),

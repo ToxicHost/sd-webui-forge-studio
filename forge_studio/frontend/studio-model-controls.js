@@ -681,12 +681,24 @@
     if (settled && matched) state.preferenceApplied = true;
   }
 
+  // What a dropdown holds when it names a file: a catalogue id. "None",
+  // "Automatic" and "" name no file, and the server refuses the WHOLE
+  // selection if one is sent (`remember_selection` takes ids only) -- so with
+  // the Text Encoder on "None" or the VAE on "Automatic", the usual case for
+  // a model that brings its own, not even the checkpoint was remembered.
+  const CATALOGUE_ID = /^[0-9a-f]{32}$/i;
+
+  function rememberable(id) {
+    const value = document.getElementById(id)?.value || "";
+    return CATALOGUE_ID.test(value) ? value : "";
+  }
+
   async function rememberSelection() {
     if (!state.settingsToken) return;           // nothing to authorize with
     if (state.remembering) return;
     const selection = {};
     for (const [role, id] of Object.entries(SELECTORS)) {
-      const value = document.getElementById(id)?.value || "";
+      const value = rememberable(id);
       if (value) selection[role] = value;
     }
     state.remembering = true;
@@ -720,7 +732,10 @@
     if (!state.bootSettled || !state.preferenceApplied || state.restoring) return;
     const preference = state.preference || {};
     for (const [role, id] of Object.entries(SELECTORS)) {
-      const value = document.getElementById(id)?.value || "";
+      // The same filter as `rememberSelection`: a "None" that can never be
+      // remembered would otherwise differ from the preference on every poll
+      // and resend it every tick.
+      const value = rememberable(id);
       if (value && value !== (preference[role] || "")) {
         rememberSelection();
         return;

@@ -956,6 +956,7 @@
   "region.add.tooltip": "Add region",
   "region.removeAll.tooltip": "Remove all regions",
   "searchableSelect.noMatches": "No matches",
+  "searchableSelect.toggleFolder": "Show or hide this folder",
   "selector.none": "No models available",
   "selector.truncated": "{n} shown — folder contains more",
   "selector.unavailable": "Folder unavailable — check Settings",
