@@ -325,6 +325,7 @@ class ModelRootRegistry:
             from . import lora_bridge
 
             lora_bridge.set_library_files(self.library_files("lora"))
+            lora_bridge.set_library_source(self._fresh_library_loras)
         except Exception:  # noqa: BLE001 - a model root is not worth a crash
             pass
 
@@ -796,6 +797,24 @@ class ModelRootRegistry:
                 files.append(str(root.joinpath(*entry.relative_location.split("/"))))
         return tuple(files)
 
+    def _fresh_library_loras(self) -> tuple[str, ...]:
+        """LR1. Re-walk the LOCAL library folders' LoRA catalogues and return
+        their files. Runs on the generation thread when the engine meets a
+        LoRA name it does not know, so a share keeps its last scan here, as
+        `refresh(include_network=False)` does for a listing."""
+
+        with self._lock:
+            catalogues = [by_role["lora"] for _, by_role in sorted(self._library_served.items())
+                          if "lora" in by_role]
+        for catalogue in catalogues:
+            if catalogue.network:
+                continue
+            try:
+                catalogue.refresh()
+            except HeadlessError:
+                continue
+        return self.library_files("lora")
+
     def set_corrections(self, corrections: dict[str, str]) -> None:
         """The owner's corrections (path -> kind), then every library folder
         re-sorted. A rescan reads nothing new: the cache knows every file."""
@@ -913,6 +932,16 @@ class ModelRootRegistry:
                 if not catalogue.network or error.code != ROOT_UNREACHABLE:
                     raise
                 snapshots.append(catalogue.snapshot())
+        if role == "lora":
+            # LR1: the library walk above found any new LoRA; the engine's
+            # list is projected, so project it again or the browser offers a
+            # name the engine cannot resolve.
+            try:
+                from . import lora_bridge
+
+                lora_bridge.set_library_files(self.library_files("lora"))
+            except Exception:  # noqa: BLE001 - a model root is not worth a crash
+                pass
         return snapshots[0] if snapshots else None
 
     def touch_model(self, role: str, model_id: str, key, work, default=None):  # type: ignore[no-untyped-def]

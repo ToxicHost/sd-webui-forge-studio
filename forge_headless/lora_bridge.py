@@ -72,12 +72,24 @@ _ARMED = False
 #: Neo's scan registers every .safetensors it walks, checkpoints included.
 _LIBRARY_FILES: tuple[str, ...] = ()
 
+#: LR1. Re-walks the library and returns its LoRA files now. Set by the
+#: registry; consulted when Neo meets a name it does not know, which is where
+#: Neo rescans its own folders (`networks.py:108-114`).
+_LIBRARY_SOURCE = None
+
 
 def set_library_files(files) -> None:  # type: ignore[no-untyped-def]
     """The library's LoRA files, in order. No Neo import."""
 
     global _LIBRARY_FILES
     _LIBRARY_FILES = tuple(str(f) for f in (files or ()) if str(f))
+
+
+def set_library_source(source) -> None:  # type: ignore[no-untyped-def]
+    """LR1. How to get the library's LoRA files fresh, or None."""
+
+    global _LIBRARY_SOURCE
+    _LIBRARY_SOURCE = source
 
 
 def library_files() -> tuple[str, ...]:
@@ -113,6 +125,11 @@ def _include_library(networks: Any) -> None:
     one `load_networks` runs for a name it does not know) both call
     `process_network_files` through the module's globals, so replacing that
     one name covers both. Once per process.
+
+    LR1: with `names`, Neo is rescanning for a name it does not know -- a file
+    added while Studio runs. Its own walk covers its folders, not the
+    library's, so the library is re-read first. Without this a LoRA
+    downloaded into a library folder stayed unknown until a restart.
     """
 
     original = getattr(networks, "process_network_files", None)
@@ -121,10 +138,66 @@ def _include_library(networks: Any) -> None:
 
     def process_network_files(names=None):  # type: ignore[no-untyped-def]
         original(names)
+        if names and _LIBRARY_SOURCE is not None:
+            try:
+                set_library_files(_LIBRARY_SOURCE())
+            except Exception:  # noqa: BLE001 - the startup list still serves
+                pass
         _register_library_files(networks, names)
 
     process_network_files._studio_library = True  # type: ignore[attr-defined]
     networks.process_network_files = process_network_files
+
+
+def _not_found(networks: Any, name: str) -> str:
+    """The sentence for a `<lora:name:...>` that names no known file."""
+
+    import difflib
+
+    known = list(getattr(networks, "available_networks", None) or ())
+    by_lower = {k.lower(): k for k in known}
+    close = difflib.get_close_matches(name.lower(), list(by_lower), n=1, cutoff=0.8)
+    hint = f' Did you mean "{by_lower[close[0]]}"?' if close else ""
+    return (f'LoRA "{name}" not found: no LoRA file is named "{name}" in the '
+            f"LoRA folders ({len(known)} LoRAs known). The name in "
+            f"<lora:name:weight> must be the file name without its extension."
+            f"{hint}")
+
+
+def _explain_failures(networks: Any) -> None:
+    """Say WHY a LoRA failed to load.
+
+    `networks.py:load_networks` catches every exception from `load_network`
+    and logs only `Failed to load LoRA: "<name>"`. The usual cause -- no file
+    of that name, so `network_on_disk` is None -- and a file that would not
+    read look identical, and the image comes out without the LoRA. That
+    loop calls `load_network` through the module's globals, so replacing that
+    one name puts the reason in the console line just before Neo's own.
+    Once per process.
+    """
+
+    import logging
+
+    original = getattr(networks, "load_network", None)
+    if original is None or getattr(original, "_studio_reason", False):
+        return
+    logger = logging.getLogger("lora")
+
+    def load_network(name, network_on_disk):  # type: ignore[no-untyped-def]
+        if network_on_disk is None:
+            message = _not_found(networks, name)
+            logger.error(message)
+            raise FileNotFoundError(message)
+        try:
+            return original(name, network_on_disk)
+        except Exception as error:
+            filename = getattr(network_on_disk, "filename", "?")
+            logger.error(f'LoRA "{name}" could not be read from "{filename}": '
+                         f"{type(error).__name__}: {error}")
+            raise
+
+    load_network._studio_reason = True  # type: ignore[attr-defined]
+    networks.load_network = load_network
 
 
 class LoraUnavailable(RuntimeError):
@@ -238,6 +311,7 @@ def arm(roots: tuple[str, ...] = ()) -> bool:
     if roots:
         shared.cmd_opts.lora_dirs = list(roots)
     _include_library(networks)
+    _explain_failures(networks)
 
     # The two statements `before_ui` runs, minus its third -- the extra-networks
     # PAGE, which is a Gradio surface Studio has no place to put and does not
@@ -277,4 +351,4 @@ def _reset_for_tests() -> None:
 
 
 __all__ = ("LoraUnavailable", "arm", "armed", "available_names", "library_files",
-           "set_library_files")
+           "set_library_files", "set_library_source")

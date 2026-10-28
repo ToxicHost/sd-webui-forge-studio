@@ -4,6 +4,24 @@ Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
 when Regional prompting and Live are in.
 
+## 0.9.12: New LoRAs work without a restart — 2026-10-28
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Fixed: a LoRA added while Studio was open was skipped.** A LoRA downloaded
+  into a model folder showed in the LoRA browser, but Generate left it out
+  (the console said only `Failed to load LoRA`) until Studio was restarted.
+  The picture came out as if the LoRA were not there; with a turbo LoRA at
+  8 steps that looks badly broken. Studio now finds it at Generate.
+- **A LoRA that fails to load says why.** The console line before
+  `Failed to load LoRA` now says whether no file has that name (with the
+  closest name Studio knows) or the file could not be read.
+- **Fixed: Workshop called two Anima models incompatible** ("Key overlap: 0%")
+  when they were saved with different key prefixes, for example one saved by
+  ComfyUI. They now read as fully compatible. Merging with an Anima file saved
+  with no prefix at all would have kept only model A's weights; it now merges.
+
 ## 0.9.11: Model folders in the Model list — 2026-10-26
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

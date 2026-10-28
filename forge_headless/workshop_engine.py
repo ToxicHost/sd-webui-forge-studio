@@ -98,9 +98,25 @@ def _cast_output_tensor(t: Any, dtype_policy: str, key: str, arch: Optional[str]
 
 _COSMOS_NET_PREFIX = "net."
 _COSMOS_WRAPPED_PREFIX = "model.diffusion_model."
+#: The other spelling a saved diffusion model can carry (Neo's
+#: `preprocess_state_dict` and `unet_prefix_from_state_dict` accept it).
+_COSMOS_BARE_WRAPPED_PREFIX = "diffusion_model."
+#: `VideoRopePosition3DEmb`'s tables (`backend/nn/anima.py`): `persistent=False`
+#: buffers the model computes for itself, or (`seq`) not on Neo's model at
+#: all. Some files carry the three and merges often drop them, so they never
+#: count for or against compatibility.
+_COSMOS_COMPUTED_KEYS = frozenset({
+    "net.pos_embedder.dim_spatial_range",
+    "net.pos_embedder.dim_temporal_range",
+    "net.pos_embedder.seq",
+})
 
 
-def _cosmos_canonical_key(key: str) -> Optional[str]:
+def _cosmos_canonical_key(key: str, bare: bool = False) -> Optional[str]:
+    """`net.*` for every spelling Neo loads an Anima model from: `net.`,
+    `model.diffusion_model.`, `diffusion_model.`, or no prefix at all when the
+    whole file has none (`bare`; Neo's `preprocess_state_dict` adds one)."""
+
     if "cond_stage_model." in key or "conditioner." in key:
         return None
     if key.startswith(VAE_PREFIX) or ".first_stage_model." in key:
@@ -109,13 +125,25 @@ def _cosmos_canonical_key(key: str) -> Optional[str]:
         return key
     if key.startswith(_COSMOS_WRAPPED_PREFIX):
         return _COSMOS_NET_PREFIX + key[len(_COSMOS_WRAPPED_PREFIX):]
+    if key.startswith(_COSMOS_BARE_WRAPPED_PREFIX):
+        return _COSMOS_NET_PREFIX + key[len(_COSMOS_BARE_WRAPPED_PREFIX):]
+    if bare:
+        return _COSMOS_NET_PREFIX + key
     return None
+
+
+def _cosmos_is_bare(physical_keys: set) -> bool:
+    """A diffusion-only file saved without any prefix (`blocks.0...`)."""
+
+    return not any(k.startswith((_COSMOS_NET_PREFIX, _COSMOS_WRAPPED_PREFIX,
+                                 _COSMOS_BARE_WRAPPED_PREFIX)) for k in physical_keys)
 
 
 def _cosmos_canonicalize_input(physical_keys: set) -> tuple[set, dict[str, str], dict[str, int]]:
     canonical: set = set()
     lookup: dict[str, str] = {}
     dropped = {"te": 0, "vae": 0, "other": 0}
+    bare = _cosmos_is_bare(physical_keys)
     for key in physical_keys:
         if "cond_stage_model." in key or "conditioner." in key:
             dropped["te"] += 1
@@ -123,7 +151,7 @@ def _cosmos_canonicalize_input(physical_keys: set) -> tuple[set, dict[str, str],
         if key.startswith(VAE_PREFIX) or ".first_stage_model." in key:
             dropped["vae"] += 1
             continue
-        canonical_key = _cosmos_canonical_key(key)
+        canonical_key = _cosmos_canonical_key(key, bare)
         if canonical_key is None:
             dropped["other"] += 1
             continue
@@ -409,10 +437,23 @@ def check_compatibility(path_a: Path, path_b: Path) -> dict[str, Any]:
                                      "detail": ("One Cosmos model carries a bundled text encoder and the "
                                                 "other doesn't. Workshop writes the canonical layout, so "
                                                 "the bundled encoder is dropped from the output.")})
-        shared = keys_a & keys_b
-        only_a = keys_a - keys_b
-        only_b = keys_b - keys_a
-        overlap = len(shared) / max(len(keys_a | keys_b), 1) * 100
+        # The keys the merge itself pairs. For Anima that is the canonical
+        # `net.*` names, as `merge` pairs them: comparing the raw names
+        # reported 0 % overlap for two Anima models saved with different
+        # prefixes (Moritz, 2026-10-26: 688 only in A, 685 only in B) and
+        # blocked a merge that would have paired every weight.
+        if arch_a["arch"] == arch_b["arch"] == "cosmos":
+            canon_a, lookup_a, _ = _cosmos_canonicalize_input(keys_a)
+            canon_b, lookup_b, _ = _cosmos_canonicalize_input(keys_b)
+            pair_a = canon_a - _COSMOS_COMPUTED_KEYS
+            pair_b = canon_b - _COSMOS_COMPUTED_KEYS
+        else:
+            pair_a, pair_b = keys_a, keys_b
+            lookup_a = lookup_b = {key: key for key in keys_a | keys_b}
+        shared = pair_a & pair_b
+        only_a = pair_a - pair_b
+        only_b = pair_b - pair_a
+        overlap = len(shared) / max(len(pair_a | pair_b), 1) * 100
         if overlap < 50:
             issues.append({"type": "low_overlap",
                            "text": f"Key overlap: {overlap:.0f}% ({len(shared)} shared, {len(only_a)} only in A, {len(only_b)} only in B)",
@@ -437,7 +478,8 @@ def check_compatibility(path_a: Path, path_b: Path) -> dict[str, Any]:
             info.append({"type": "vae_both", "text": "Both models have baked-in VAE"})
         sample = list(shared)[:200]
         mismatched = sum(1 for key in sample
-                         if str(f_a.get_slice(key).get_dtype()) != str(f_b.get_slice(key).get_dtype()))
+                         if str(f_a.get_slice(lookup_a[key]).get_dtype())
+                         != str(f_b.get_slice(lookup_b[key]).get_dtype()))
         if mismatched:
             warnings.append({"type": "dtype_mismatch",
                              "text": f"Dtype mismatches: {mismatched / max(len(sample), 1) * 100:.0f}% of sampled keys differ (merge will upcast to fp32)"})
