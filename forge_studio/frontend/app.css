@@ -2948,9 +2948,15 @@ input[type="color"]:focus-visible { outline: 2px solid var(--accent); outline-of
    ═══════════════════════════════════════════ */
 
 .output-section {
-  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
+/* The header spans the panel, as Layers' does; the padding moved to what's under it. */
+.output-section > .section-header { border-top: none; }
+.output-section > .section-body { padding: 8px 12px 0; }
+.output-section > .section-body.collapsed { padding: 0 12px; }
+.output-section > .output-actions { margin: 0; padding: 8px 12px; }
+.output-head-title { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; }
+.output-head-count { font-size: 11px; color: var(--text-4); }
 .output-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

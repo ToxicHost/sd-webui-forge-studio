@@ -6220,6 +6220,8 @@ function renderOutputGallery() {
 
   // Show the output section
   if (section) section.style.display = State.sessionEntries.length ? "" : "none";
+  const count = document.getElementById("outputCount");
+  if (count) count.textContent = State.sessionEntries.length ? String(State.sessionEntries.length) : "";
 
   // Thumbs use thumbUrl (server-side 256px thumbnails for saved/scratch;
   // the data URL itself for "live") — full-res never loads in the grid.
@@ -8389,8 +8391,10 @@ function bindUI() {
     }
   }
   // Clear session — Settings button + session strip header button (deck)
+  // + the panel's output gallery header (Classic without the strip)
   document.getElementById("clearSessionBtn")?.addEventListener("click", _clearSession);
   document.getElementById("sessionStripClear")?.addEventListener("click", _clearSession);
+  document.getElementById("outputClear")?.addEventListener("click", _clearSession);
 
   // Live preview → gate preview thumbnail during generation
   document.getElementById("toggleLivePreview")?.addEventListener("click", () => {

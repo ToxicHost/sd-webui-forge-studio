@@ -21,6 +21,11 @@ then close Studio and run Start-Studio.bat again. Nothing new is installed.
   when they were saved with different key prefixes, for example one saved by
   ComfyUI. They now read as fully compatible. Merging with an Anima file saved
   with no prefix at all would have kept only model A's weights; it now merges.
+- **The results under the Generate panel can be cleared and folded.** They now
+  have a Session header. Its trash button clears the session (saved files on
+  disk are kept; unsaved results are gone), as the session strip's does, and
+  clicking the header folds the thumbnails. Result → Canvas and Save stay
+  visible, and Studio remembers the folded state.
 
 ## 0.9.11: Model folders in the Model list — 2026-10-26
 
