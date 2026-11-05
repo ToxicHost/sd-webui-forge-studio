@@ -4,19 +4,19 @@ This is the source-install workflow: clone Studio, run its launcher, and update
 with Git. Python libraries and model weights stay out of the repository. The first
 setup still downloads several gigabytes for Torch and its GPU libraries, plus
 173.4 MB for seven auxiliary models; this is a one-time setup for an unchanged
-environment. There is no giant portable ZIP to join or manually extract.
+environment.
 
 ## First run
 
 Install Git for Windows and 64-bit Python 3.13, including the Python launcher.
-The existing bootstrap accepts Python 3.11–3.13; 3.13 is the recommended tested
-version for this candidate. A supported NVIDIA GPU and driver are required.
+The bootstrap accepts Python 3.11–3.13; 3.13 is the recommended version.
+A supported NVIDIA GPU and driver are required.
 
 Run these commands in the directory where you want Studio:
 
 ```powershell
-git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Studio-Standalone
-cd Studio-Standalone
+git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
+cd Forge-Studio
 .\Start-Studio.bat
 ```
 
@@ -28,8 +28,8 @@ different contents are preserved and reported. Existing valid assets need no net
 
 Then Studio opens in your browser. Supply your own checkpoint, VAE and text encoders;
 the welcome screen asks where they are (one folder or several, subfolders included). The launcher creates empty models/Stable-diffusion,
-models/VAE and models/text_encoder folders for convenience. Five Auto Detail detectors
-and Remacri are prepared by setup; no generation checkpoint is downloaded.
+models/VAE and models/text_encoder folders for convenience. Five Auto Detail detectors,
+a mask model (MobileSAM) and Remacri are prepared by setup; no generation checkpoint is downloaded.
 
 Run Start-Studio.bat again for normal use. It reuses the environment and only
 installs dependencies when the existing requirement checks report missing or
@@ -45,10 +45,10 @@ git pull --ff-only
 .\Start-Studio.bat
 ```
 
-From the 2026-10-05 update on, Settings > About > Check for Updates does the same
-thing from inside Studio: it lists what is new, fast-forwards the checkout, and asks
-you to close Studio and run Start-Studio.bat again. It refuses, and says why, if
-Studio's own files have been edited or the checkout has commits of its own.
+Settings > About > Check for Updates does the same thing from inside Studio: it
+lists what is new, fast-forwards the checkout, and asks you to close Studio and run
+Start-Studio.bat again. It refuses, and says why, if Studio's own files have been
+edited or the checkout has commits of its own.
 
 Git transfers source changes, not the venv or model weights. If Git reports local
 source edits or diverged history, resolve that explicitly; do not discard changes
@@ -56,14 +56,17 @@ with reset/clean commands. Normal updates do not require deleting the venv.
 
 ## Settings, files and existing installations
 
-For a checkout named Studio-Standalone, first-run configuration is created at
-../Studio-Standalone-data/studio-config.json, with durable state in that sibling
+For a checkout named Forge-Studio, first-run configuration is created at
+../Forge-Studio-data/studio-config.json, with durable state in that sibling
 folder's Studio-State directory. The sibling folder survives Git updates and is
 never committed. Existing config is preserved byte for byte by the launcher.
 Default generated images are in ../Studio-Results, and logs are in ../logs,
 beside the checkout. Back up the data/results folders and any separately configured
 artwork/model paths. Clones in the same parent directory share these default
 results/log locations; use separate parent directories for independent installs.
+
+An existing clone under another folder name, such as Studio-Standalone, keeps
+working; there is no need to rename it.
 
 The clone is a new installation. It does not discover or import another Studio
 installation's private configuration/models. Point Settings at existing model
@@ -76,7 +79,7 @@ is preserved and reported rather than silently replaced.
 
 ## Offline preparation and verification
 
-A maintainer can supply the seven exact model filenames in one local directory:
+You can supply the seven exact model filenames in one local directory:
 
 ```powershell
 $env:STUDIO_ASSET_DIR = 'C:\StudioAssets'
@@ -89,12 +92,11 @@ copies. After dependencies and assets are present, normal launch is offline-capa
 Run Start-Studio.bat --check to perform setup/config validation without opening the
 browser or starting a server.
 
-## Features and review limits
+## Features and limits
 
-This is still a test version (0.9.x; Settings > About shows which). See
-[TESTER_FEATURE_STATUS.md](TESTER_FEATURE_STATUS.md),
+This is a public beta (0.9.x; Settings > About shows which). See
+[FEATURE_STATUS.md](FEATURE_STATUS.md),
 [DEPENDENCY_NOTES.md](DEPENDENCY_NOTES.md) and
 [BUNDLED_MODEL_ASSETS.md](BUNDLED_MODEL_ASSETS.md).
-Real model generation and clean-Windows acceptance were not certified by the
-installation checks. The public branch contains the application source and
-user documentation needed for this Git installation.
+The public branch contains the application source and user documentation needed
+for this Git installation.

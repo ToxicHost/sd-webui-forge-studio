@@ -879,6 +879,19 @@ class JobCoordinator:
 
     # -- cancellation ---------------------------------------------------------
 
+    def skip(self, public_id: str) -> bool:
+        """SK1. Skip the running job's current pass. Touches no record: the job
+        goes on. False when there is no running pass to skip."""
+
+        with self._lock:
+            record = self._jobs.get(public_id)
+            if record is None or record["state"] in TERMINAL_STATES:
+                return False
+            backend_id = record.get("backend_job_id")
+        backend_id = backend_id or self._in_flight_backend_id()
+        skip = getattr(self._application, "skip_generation", None)
+        return bool(backend_id and callable(skip) and skip(backend_id))
+
     def cancel(self, public_id: str) -> dict[str, Any]:
         """One cancel verb for queued AND backend jobs. Idempotent."""
 

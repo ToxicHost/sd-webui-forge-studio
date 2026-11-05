@@ -36,7 +36,9 @@ refusal in green -- which this project has already shipped once, for layouts.
 
 from __future__ import annotations
 
+import io
 import re
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -57,6 +59,11 @@ _RESERVED = frozenset(
 #: the path separators -- is refused rather than substituted, so the owner is
 #: told rather than surprised by a name they did not choose.
 _ALLOWED_NAME = re.compile(r"^[A-Za-z0-9 _.\-]+$")
+
+#: LX1. A zip import's limits: the Extension's upload size, and what it may
+#: unpack to, read from the bytes rather than trusted from the zip's header.
+MAX_ZIP_BYTES = 100 * 1024 * 1024
+MAX_UNPACKED_BYTES = 512 * 1024 * 1024
 
 #: One folder should not be able to hide a filesystem inside it.
 MAX_NAME_LENGTH = 120
@@ -350,6 +357,96 @@ class WildcardEditor:
         except OSError as error:
             raise EditorRefused(f"Move error: {error.strerror or error}") from error
         return {"ok": True, "new_path": moved.relative}
+
+    def export_zip(self) -> bytes:
+        """LX1. The Extension's `/studio/lexicon/export`
+        (`studio_lexicon.py:556-580`): every wildcard file under the root,
+        by its relative path. Hidden folders are left out, as there, and so is
+        anything a junction points at outside the root."""
+
+        real_root = self._real_root()
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            pending = [real_root]
+            while pending:
+                folder = pending.pop()
+                try:
+                    entries = sorted(folder.iterdir(), key=lambda item: item.name.lower())
+                except OSError:
+                    continue
+                for entry in entries:
+                    try:
+                        if not entry.resolve(strict=True).is_relative_to(real_root):
+                            continue
+                        if entry.is_dir():
+                            if not entry.name.startswith("."):
+                                pending.append(entry)
+                        elif entry.suffix.lower() == WILDCARD_SUFFIX:
+                            archive.write(entry, entry.relative_to(real_root).as_posix())
+                    except OSError:
+                        continue
+        return buffer.getvalue()
+
+    def import_zip(self, data: bytes) -> dict[str, Any]:
+        """LX1. The Extension's `/studio/lexicon/import` (`:585-634`), with two
+        differences, both on purpose.
+
+        A FILE THAT ALREADY EXISTS IS KEPT and counted in `existing`. The
+        Extension overwrites it, which loses a word list with no way back.
+
+        EVERY ENTRY GOES THROUGH `_resolve`, the gate every other write uses, so
+        `..`, an absolute path, a drive letter, a reserved name and a junction
+        out of the root are all refused the same way, one entry at a time.
+        Nothing is extracted: each file is read, checked and written here, so a
+        symlink entry is only ever a text file. Only `.txt` files are taken.
+        """
+
+        self._real_root()
+        if not data:
+            raise EditorRefused("That zip file is empty.")
+        if len(data) > MAX_ZIP_BYTES:
+            raise EditorRefused("That zip file is too large (100 MB at most).")
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(data), "r")
+        except zipfile.BadZipFile as error:
+            raise EditorRefused("That is not a zip file.") from error
+        imported = existing = skipped = 0
+        unpacked = 0
+        with archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                name = info.filename.replace("\\", "/")
+                if not name.lower().endswith(WILDCARD_SUFFIX) or name.startswith("/"):
+                    skipped += 1
+                    continue
+                try:
+                    target = self._resolve(name, must_exist=False)
+                except EditorRefused:
+                    skipped += 1
+                    continue
+                if target.path.exists():
+                    existing += 1
+                    continue
+                try:
+                    with archive.open(info) as member:
+                        body = member.read(MAX_FILE_BYTES + 1)
+                except (OSError, RuntimeError, ValueError, zipfile.BadZipFile, EOFError):
+                    skipped += 1
+                    continue
+                unpacked += len(body)
+                if len(body) > MAX_FILE_BYTES or unpacked > MAX_UNPACKED_BYTES:
+                    skipped += 1
+                    continue
+                try:
+                    text = body.decode("utf-8")
+                    target.path.parent.mkdir(parents=True, exist_ok=True)
+                    _atomic_write(target.path, text)
+                except (UnicodeDecodeError, OSError, EditorRefused):
+                    skipped += 1
+                    continue
+                imported += 1
+        return {"ok": True, "imported": imported, "existing": existing, "skipped": skipped}
 
     def search_content(self, query: str) -> list[dict[str, Any]]:
         """P7. The Extension's `search_content` (`studio_lexicon.py:522-550`):

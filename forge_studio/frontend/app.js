@@ -7039,7 +7039,9 @@ function bindUI() {
     }
     showToast(
       outcome.skipped
-        ? I18N.t("toast.skipping", "Skipping to next image...")
+        ? (outcome.mode === "pass"
+            ? I18N.t("toast.skipping", "Skipping this pass. The rest of the batch carries on.")
+            : I18N.t("toast.skipStops", "Stopping this job. Anything queued starts next."))
         : String(outcome.message || "Nothing is generating."),
       outcome.skipped ? "info" : "warn",
     );
@@ -7126,19 +7128,10 @@ function bindUI() {
     const runRefine = document.getElementById("checkUpscaleRefine")?.classList.contains("checked") || false;
     const runAD     = document.getElementById("checkUpscaleAD")?.classList.contains("checked") || false;
 
-    // Get canvas composite as data URL
-    const tmp = document.createElement("canvas");
-    tmp.width = S.W; tmp.height = S.H;
-    const ctx = tmp.getContext("2d", { colorSpace: "srgb" });
-    for (const L of S.layers) {
-      if (!L.visible || L.type === "adjustment") continue;
-      ctx.globalAlpha = L.opacity;
-      ctx.globalCompositeOperation = L.blendMode || "source-over";
-      ctx.drawImage(L.canvas, 0, 0);
-    }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-    const imageB64 = tmp.toDataURL("image/png");
+    // The Canvas's own flatten, the one Save uses, so a Brightness or Hue layer
+    // reaches the result (which then goes on top of it). Develop stays out: it
+    // applies to the document, and so to the result, afterwards.
+    const imageB64 = Core.exportFlattened("image/png", { applyDevelop: false });
 
     const newW = (Math.round(S.W * scale) >> 3) << 3;
     const newH = (Math.round(S.H * scale) >> 3) << 3;

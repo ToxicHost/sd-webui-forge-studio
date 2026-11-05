@@ -1,4 +1,4 @@
-"""What a tester sends back when something goes wrong. AR8.
+"""What to send when something goes wrong. AR8.
 
 BUILT TO AN EXISTING SPEC
 
@@ -8,10 +8,10 @@ Mac-specific and they are good, so they are followed here rather than
 re-derived:
 
   * an ALLOW-LIST, not a deny-list -- "nothing outside this table may be
-    collected", and a tester can read the whole list in a minute;
+    collected", and anyone can read the whole list in a minute;
   * redaction applied to the FILE THAT IS WRITTEN, not to what is displayed --
-    a tester must never have to trust that a viewer hid something;
-  * one human-readable file the tester can inspect BEFORE deciding to send it;
+    nobody should have to trust that a viewer hid something;
+  * one human-readable file to inspect BEFORE deciding to send it;
   * `--dry-run` that collects nothing and prints exactly what it would take;
   * every write path printed before writing;
   * no network request of any kind, ever;
@@ -37,7 +37,7 @@ Measured before deciding: the launch log carries ZERO prompts, and 1718 lines
 carrying the owner's home directory. So its creative content is nil and its
 path content is the whole risk -- which redaction handles, and which is why a
 redacted tail is worth having rather than dropping the log entirely. A
-traceback is usually the only thing that explains a tester's crash.
+traceback is usually the only thing that explains a crash.
 """
 
 from __future__ import annotations
@@ -106,6 +106,16 @@ def _run(command: list[str]) -> str | None:
     return result.stdout.strip() or None
 
 
+def _studio_version() -> str | None:
+    """Read from the source, not imported: this script runs without Torch."""
+    try:
+        text = (APP / "forge_studio" / "__init__.py").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    found = re.search(r'^__version__ = "([^"]+)"', text, flags=re.MULTILINE)
+    return found.group(1) if found else None
+
+
 def _versions() -> dict[str, object]:
     fields: dict[str, str] = {}
     base = APP / "UPSTREAM_BASE"
@@ -116,7 +126,7 @@ def _versions() -> dict[str, object]:
                 key, _, value = line.partition("=")
                 fields[key.strip()] = value.strip()
     return {
-        "distribution_version": fields.get("distribution_version"),
+        "distribution_version": _studio_version() or fields.get("distribution_version"),
         "studio_source_version": fields.get("studio_source_version"),
         "neo_upstream_commit": fields.get("commit"),
         "repository_commit": _run(["git", "-C", str(APP), "rev-parse", "HEAD"]),
@@ -214,7 +224,10 @@ def collect(state_root: Path | None) -> dict[str, object]:
 
 
 def _log_tail() -> str | None:
-    log = WS / "logs" / "studio-internal-alpha.log"
+    log = WS / "logs" / "studio.log"
+    if not log.is_file():
+        # Its name before 0.9.13; the only log until the first start after that.
+        log = WS / "logs" / "studio-internal-alpha.log"
     if not log.is_file():
         return None
     try:
@@ -248,7 +261,7 @@ def _readable(report: dict[str, object], log: str | None) -> str:
         out.append(f"mac            {apple['chip']}  macOS {apple.get('macos')}  "  # type: ignore[index,union-attr]
                    f"memory {round(memory / 1024**3) if memory else None} GB")
     out += [
-        f"distribution   {versions['distribution_version']}",     # type: ignore[index]
+        f"version        {versions['distribution_version']}",     # type: ignore[index]
         f"commit         {versions['repository_commit']}",        # type: ignore[index]
         f"torch present  {report['torch_present']}",
         "",

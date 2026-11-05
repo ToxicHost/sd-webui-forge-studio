@@ -1,8 +1,64 @@
-# Studio Standalone — Git tester candidate
+# Forge Studio release notes
 
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
-exact installed revision. This is a test version for Windows/NVIDIA; 1.0 comes
-when Regional prompting and Live are in.
+exact installed revision. Studio is in public beta on Windows/NVIDIA.
+
+## 0.9.13: First public beta — 2026-11-05
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+This is Forge Studio's first public beta. Until now it was shared with a small
+group of testers. Most of this release is wording and document names, plus these
+changes in the app.
+
+- **The Extensions tab is gone**, along with its group in Settings. Nothing could
+  be installed there, so both were always empty. Studio doesn't run Forge or A1111
+  extensions; the README lists what it doesn't support.
+- **Anima 2.9B and 3.8B models are built whole.** Studio assumed every Anima model
+  has 28 blocks, so a 40- or 52-block file would have lost the rest, with only a line
+  in the console. It now counts the file's blocks. A LoRA made for a smaller Anima
+  model follows Forge Neo's block tables, and one made for a larger model is refused
+  with a console line.
+  - No 2.9B or 3.8B model has been run yet.
+  - Pictures from 28-block models are pixel-identical to before (checked on a real
+    GPU: plain, with a LoRA, and with Hires and Auto Detail).
+- **Skip works in Batch mode.** It used to cancel the whole batch while saying
+  "Skipping to next image". It now abandons the pass it lands in, with no Hires or
+  Auto Detail on it, and goes on to the next. Finished pictures are kept. In Queue
+  mode it stops the job, as before, and the message now says which happened.
+  - The base half of a batch using Hires Fix > Model still stops the job, and so does
+    pressing Skip before the model has loaded.
+- **Fixed: Upscale Canvas ignored adjustment layers.** A Brightness or Hue layer had
+  no effect on the upscaled picture. It now upscales what the Canvas shows.
+- **Wildcards: drag files between folders, and zip export and import.** The tooltips
+  promised these and they didn't work. Import adds only `.txt` files inside your
+  wildcard folder. A file that already exists is kept, and the message says how many.
+- **The Codex no longer describes GPU Weights and Auto-unload**, which aren't in
+  Settings.
+- **A new README**, for people who have not heard of Studio yet.
+- **The console says "Forge Studio".** The address line is now
+  `Forge Studio: http://...`, and the starting and stopping lines no longer say
+  "internal alpha". The launcher accepts both the old and the new line.
+- **The log file is now `logs/studio.log`.** The old `studio-internal-alpha.log`
+  stays where it is and can be deleted. A support report reads the new file, or
+  the old one if Studio has not started since the update.
+- **A support report now shows Studio's version**, such as 0.9.13.
+- **Documents renamed**, in `docs/studio`:
+  - `FRIENDS_ALPHA_RELEASE_NOTES.md` is now `RELEASE_NOTES.md`
+  - `FRIENDS_ALPHA_TESTER_GUIDE.md` is now `USER_GUIDE.md`
+  - `TESTER_FEATURE_STATUS.md` is now `FEATURE_STATUS.md`
+  - `internal-alpha/studio-config.template.json` is now
+    `studio-config.template.json`
+- **The feature status page is rewritten.** The release-check history is gone,
+  and so are claims that no longer held, such as that real generation was
+  untested. Testers and Moritz have installed from fresh clones and generated on
+  real GPUs. The limits that are still true stay: Mac and Linux Docker have not
+  been run end to end, and GPU choice has not been tested on two cards.
+- **The install guides clone into `Forge-Studio`.** A clone under another folder
+  name keeps working; there is no need to rename it.
+- **Docker:** the image tag is now `forge-studio:docker`.
+- The install command keeps the branch name `release/tester-alpha-prep` for now.
 
 ## 0.9.12: New LoRAs work without a restart — 2026-10-28
 
@@ -861,15 +917,15 @@ checks only; there is no tablet certification yet. Keep backups of artwork.
 
 ## Git delivery cleanup — 2026-09-15
 
-The tester branch now contains runtime source, installation helpers, user guides
+This branch now contains runtime source, installation helpers, user guides
 and licenses. Project plans, agent instructions, Docker/deployment files, tests,
 legacy WebUI entry points and release-build tools are removed from this branch.
 The retained engine, Studio frontend, launchers, installers and requirements are
 unchanged. Existing installations can receive this cleanup with `git pull --ff-only`.
 
 Start-Studio.bat creates or repairs the local Python environment, verifies the
-six auxiliary models, and opens Studio. Python 3.11–3.13 is accepted; use 3.13 for
-this candidate. Existing settings are preserved. The launcher creates empty
+six auxiliary models, and opens Studio. Python 3.11–3.13 is accepted; use 3.13.
+Existing settings are preserved. The launcher creates empty
 models/Stable-diffusion, models/VAE and models/text_encoder folders; users supply
 their own generation models and choose model directories in Settings.
 
@@ -877,8 +933,6 @@ The five Auto Detail detectors and Remacri are downloaded from studio-assets-v1
 only when missing, with pinned size/hash verification. This cleanup does not
 change that release or any generation, sampling or painting behavior.
 
-See [installation](GIT_INSTALL.md), [tester notes](FRIENDS_ALPHA_TESTER_GUIDE.md)
-and [feature status](TESTER_FEATURE_STATUS.md). ControlNet, Live generation,
-Workshop and regional inference are unavailable in this Standalone candidate.
-Updates are manual. Real generation, interactive browser/tablet acceptance and
-cross-platform certification remain separate from these installation checks.
+See [installation](GIT_INSTALL.md), [user guide](USER_GUIDE.md) and
+[feature status](FEATURE_STATUS.md). ControlNet, Live generation, Workshop and
+regional inference came later, and updates were manual at this point.

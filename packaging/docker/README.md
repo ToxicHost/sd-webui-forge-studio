@@ -1,11 +1,11 @@
-# Docker tester setup — Linux / NVIDIA
+# Forge Studio with Docker — Linux / NVIDIA
 
-**Experimental: ready for a tester to try, not yet Docker-validated.** This
+**Experimental: not yet run end to end.** This
 profile targets a Linux x86_64 host, Docker Engine with Compose v2, and one
 NVIDIA GPU. Configuration and native startup checks were run on Windows; the
 Linux image build, GPU passthrough, model generation and restart persistence
-still need your test. Existing [feature limitations](../../docs/studio/TESTER_FEATURE_STATUS.md)
-also apply. ARM/Jetson, AMD, rootless Docker and Docker Desktop are outside this test.
+have not been run yet. Existing [feature limitations](../../docs/studio/FEATURE_STATUS.md)
+also apply. ARM/Jetson, AMD, rootless Docker and Docker Desktop are not covered.
 
 ## What is included
 
@@ -34,11 +34,11 @@ the diagnostic below checks a real CUDA operation. NVIDIA documents the
 No host Python or host CUDA toolkit installation is required by this image.
 
 Run these commands as your normal Linux user in Bash. If you already cloned
-this candidate, enter it and run `git pull --ff-only` instead of cloning again.
+Studio, enter it and run `git pull --ff-only` instead of cloning again.
 
 ```bash
-git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Studio-Standalone
-cd Studio-Standalone
+git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
+cd Forge-Studio
 
 export STUDIO_UID="$(id -u)"
 export STUDIO_GID="$(id -g)"
@@ -113,7 +113,7 @@ data area if you want them to survive replacement of the container.
 ```bash
 docker compose -f packaging/docker/compose.yaml stop
 # Back up STUDIO_DATA_DIR while stopped, and retain the previous image for rollback.
-docker image tag studio-standalone:docker-tester studio-standalone:docker-tester-backup
+docker image tag forge-studio:docker forge-studio:docker-backup
 git pull --ff-only
 export STUDIO_REVISION="$(git rev-parse HEAD)"
 docker compose -f packaging/docker/compose.yaml build
@@ -126,10 +126,10 @@ SIGTERM into Studio's existing cooperative cleanup path; Docker forces a stop
 after 60 seconds if it cannot finish. Let an important job complete first.
 
 To roll back, stop/down the container, restore a matching stopped-data backup if
-needed, tag the saved image back to `studio-standalone:docker-tester`, and run
-`up -d --no-build`. Cross-version data compatibility is not yet certified.
+needed, tag the saved image back to `forge-studio:docker`, and run
+`up -d --no-build`. Cross-version data compatibility has not been checked.
 
-For the first test, report:
+If you run this setup, report:
 
 1. Linux distribution, GPU/VRAM, `nvidia-smi`, Docker and Compose versions, and
    `git rev-parse HEAD` (do not include tokens or private model paths).

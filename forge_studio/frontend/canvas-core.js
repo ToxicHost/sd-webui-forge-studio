@@ -8228,12 +8228,14 @@ function getFlattenedRegionImageData(x0, y0, x1, y1, options) {
     return x.getImageData(0, 0, rw, rh);
 }
 
-function exportFlattened(mime) {
+// `options.applyDevelop` false: for a picture that goes back on the Canvas, where
+// Develop will apply to it again (Upscale Canvas).
+function exportFlattened(mime, options) {
     const c = _createCanvas(S.W, S.H);
     const x = c.getContext("2d", { colorSpace: "srgb" });
     _renderFlattenedToContext(x, {
         whiteBackground: mime === "image/jpeg" || mime === "image/webp",
-        applyDevelop: true,
+        applyDevelop: !options || options.applyDevelop !== false,
     });
     // Always encode as PNG for lossless transfer to the backend. The mime
     // arg above only controls the white-bg fill (JPEG/WebP have no alpha);

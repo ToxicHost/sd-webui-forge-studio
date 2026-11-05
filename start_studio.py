@@ -19,7 +19,7 @@ def checkout_launcher(app: Path = APP):
     launcher.PYTHON = launcher.interpreter_for(app)
     launcher.LAUNCHER = app / "launch_studio.py"
     launcher.CONFIG = launcher.ROOT / "studio-config.json"
-    launcher.TEMPLATE = app / "docs/studio/internal-alpha/studio-config.template.json"
+    launcher.TEMPLATE = app / "docs/studio/studio-config.template.json"
     return launcher
 
 

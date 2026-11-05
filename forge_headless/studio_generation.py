@@ -1619,6 +1619,28 @@ class HeadlessGenerationSession:
             )
         return event
 
+    def skip(self, job_id: str) -> bool:
+        """SK1. Abandon the pass running now, if this is a running Batch-mode job.
+
+        False means nothing was done and the caller decides: a job of one
+        picture has no next pass, and a Hires Fix > Model job's base half is left
+        out on purpose, because its Hires half pairs every base picture with its
+        seed by position.
+        """
+
+        record = self._jobs.get(job_id)
+        if record is None or not record.started or record.finished:
+            return False
+        request = record.headless_request
+        if int(getattr(request, "output_count", 1) or 1) < 2:
+            return False
+        if str(getattr(request, "handoff_stage", "") or "") == "base":
+            return False
+        self._adopt_if_available(record)
+        if record.gateway_progress is None:
+            return False
+        return record.gateway_progress.request_skip()
+
     def cancel(self, job_id: str) -> CancellationResult:
         record = self._require_job(job_id)
         if record.progress_view.terminal:

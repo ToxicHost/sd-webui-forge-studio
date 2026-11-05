@@ -10,11 +10,11 @@ were already made and commented in place, and this file catalogues them rather
 than introducing anything.
 
 ```text
-scope     modules/ · modules_forge/ · backend/          40 files, +1860 -83
+scope     modules/ · modules_forge/ · backend/          40 files, +1861 -84
 backend/  new model-family files, plus 2 registration points (PATCH-004),
           plus one upstream backport (PATCH-005), plus one sampler line
           (PATCH-006, a no-op for image latents)
-untouched ldm_patched/ entirely; extensions-builtin/ except PATCH-005
+untouched ldm_patched/ entirely; extensions-builtin/ except PATCH-005, PATCH-008
 tracking  neo...upstream/neo = 0 0
 ```
 
@@ -386,7 +386,8 @@ returns the model unchanged when the counts match. On a 40- or 52-block
 Anima model a 28- or 40-block LLLite file now attaches to the blocks
 upstream's tables map it to; before, the LLLite modules were built on the
 model's own block count, which the file's weights do not match (not
-reproduced here: no 40- or 52-block Anima model is available).
+reproduced here: no 40- or 52-block Anima model is available). Until PATCH-008
+this case could not be reached: every Anima model was built with 28 blocks.
 
 - **Feature flag:** no.
 - **Upstream conflict likelihood:** **None expected.** The code is upstream's;
@@ -470,6 +471,44 @@ Neo base Studio began from stays recorded in `UPSTREAM_BASE`.
 A runtime adapter wraps a Neo callable from Studio-owned code. It never shows
 up in `git diff`, so it is catalogued here by hand, and its test pins the
 signatures it wraps.
+
+# PATCH-008 — Upstream backport: Anima's block count and LoRA remap (Neo `22fae2d0`, `process_anima`)
+
+- **Neo file(s), modified:** `modules_forge/packages/huggingface_guess/detection.py`
+  (`detect_unet_config`: one line, `num_blocks` from `count_blocks`),
+  `extensions-builtin/sd_forge_lora/networks.py` (`process_anima`, verbatim from
+  upstream `51c0b26a`; the `BLOCK_MAPPINGS` import; its caller honours the False).
+- **Neo file(s), added:** none.
+- **Studio owner module:** none.
+- **Introduced in:** 2026-11-05, owner: "anima block, go ahead". Review:
+  `Evidence/source-review/PATCH-008-anima-block-count.md`.
+- **Not applied verbatim in one place:** upstream's caller tests
+  `dynamic_args.anima`. The pinned engine has no such flag; its caller tests the
+  model's class name, and that test stays.
+
+### Why an adapter could not solve it
+
+The count is read inside `detect_unet_config`, before Studio sees a model, and
+the remap sits inside `load_lora_for_models`. Replacing either from Studio code
+would be a runtime monkeypatch hiding two lines that are upstream's own.
+
+### Behavioral impact
+
+**A 28-block model: pixel-identical** before and after on a real GPU (plain, with a
+28-block LoRA, and Hires + Auto Detail; `Evidence/anima-blocks-2026-11-05/`). One
+difference by upstream's rule: a LoRA with keys past block 27 on a 28-block model
+was partly applied and is now refused with a console line.
+
+**A 40- or 52-block model (Anima 2.9B, 3.8B): built whole, instead of 28 blocks with
+the rest dropped.** Smaller LoRAs follow upstream's tables, and PATCH-005 becomes
+reachable. **Not run:** no such model is on the development machine. The real detector
+and model class were checked on made-up keys only. Word masks on these models use blocks
+chosen on 28, and Workshop's block weights name B00-B27.
+
+- **Feature flag:** no.
+- **Upstream conflict likelihood:** **None expected.** A sync brings the same lines.
+- **Upstream PR candidate:** not applicable -- it is upstream's.
+- **Removal criteria:** the next upstream sync past these commits; drop this entry then.
 
 # ADAPTER-001 — Anima's "Studio" emphasis mode (EM1)
 

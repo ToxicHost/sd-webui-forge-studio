@@ -558,6 +558,13 @@ class StudioApplication:
 
         return self._backend.preview_frame(job_id)
 
+    def skip_generation(self, job_id: str) -> bool:
+        """SK1. True when the running Batch-mode job abandons its current pass. A
+        backend without Skip, or a job with no next pass, answers False."""
+
+        skip = getattr(self._backend, "skip_generation", None)
+        return bool(skip(job_id)) if callable(skip) else False
+
     def cancel_generation(self, job_id: str) -> CancellationResult:
         result = self._backend.cancel_generation(job_id)
         self._release_result(job_id)

@@ -513,7 +513,7 @@
     background-repeat: no-repeat; background-position: 10px center;
 }
 .lex-tree-search::placeholder { color: var(--text-3); }
-.lex-tree-actions { display: flex; align-items: center; gap: 0; margin: 0 -4px; }
+.lex-tree-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0; margin: 0 -4px; }
 .lex-tree-actions button {
     display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: none; border-radius: 6px;
     background: none; color: var(--text-2); font-size: 12px; font-family: var(--font); cursor: pointer;

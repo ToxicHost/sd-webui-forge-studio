@@ -2921,6 +2921,12 @@ class StudioPresentation:
         register = getattr(self._application, "register_saved_file", None)
         return register(path, media_type=media_type) if callable(register) else None
 
+    def skip(self, job_id: str) -> bool:
+        """SK1. Skip the running job's current pass, if it has a next one."""
+
+        coordinator = self._coordinator_or_none()
+        return bool(coordinator.skip(job_id)) if coordinator is not None else False
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         """One cancel verb. Coordinator ids cover queued AND running jobs;
         backend ids keep the pre-existing behaviour for hosts without a
@@ -3645,6 +3651,35 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             return json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PresentationError("Request body is not valid UTF-8 JSON.") from exc
+
+    def _lexicon_import(self) -> None:
+        """LX1. It writes files, so behind the strict origin check, and bounded
+        as `_read_json_bounded` is: an oversized body is refused and the
+        connection closed, because its unread bytes would otherwise be parsed
+        as the next request."""
+
+        from forge_studio.wildcard_editor import MAX_ZIP_BYTES
+
+        if not self._is_allowed_origin_strict():
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+            return
+        if self.headers.get_content_type() != "application/zip":
+            raise PresentationError("Expected an application/zip request.")
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise PresentationError("Invalid Content-Length header.") from exc
+        if length < 0:
+            raise PresentationError("Invalid Content-Length header.")
+        if length > MAX_ZIP_BYTES:
+            self._body_consumed = True
+            self.close_connection = True
+            raise PresentationError(
+                "That zip file is too large (100 MB at most).",
+                status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        data = self.rfile.read(length)
+        self._body_consumed = True
+        self._send_json(HTTPStatus.OK, self._source_adapter.lexicon_import(data))
 
     def _send_pixel_bytes(self, pixels: Any, content_hash: str = "") -> None:
         """Raw RGBA under the same inert policy result bytes get.
@@ -4541,6 +4576,12 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             # dispatch, which would otherwise JSON-encode them.
             if self._serve_result(self.path):
                 return
+            # LX1. A zip, so not through the JSON catch-all either.
+            if path == "/studio/lexicon/export":
+                self._send_bytes(
+                    HTTPStatus.OK, "application/zip", self._source_adapter.lexicon_export(),
+                    extra_headers={"Content-Disposition": 'attachment; filename="wildcards_export.zip"'})
+                return
             # Gallery routes, before the same generic dispatch, and for the
             # same reason: thumbnails and full images are bytes.
             if self._serve_gallery("GET"):
@@ -4966,6 +5007,10 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/studio/settings/model_selection":
                 self._remember_model_selection()
+                return
+            # LX1. Raw zip bytes, which the JSON catch-all below cannot read.
+            if path == "/studio/lexicon/import":
+                self._lexicon_import()
                 return
             # LV1. Live Painting, above the `/studio/` catch-all, which would
             # answer from the adapter's "unavailable" literals. Without a

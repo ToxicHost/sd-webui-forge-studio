@@ -321,7 +321,7 @@ function _makeDragTarget(el, folderPath) {
         const srcParent = srcPath.split("/").slice(0, -1).join("/");
         if (srcParent === folderPath) return;
         if (srcPath === folderPath) return;
-        _toast(_t("lexicon.toast.moveUnavailable", "Moving files is not available yet."));
+        _moveItem(srcPath, folderPath);
     });
 }
 
@@ -350,7 +350,7 @@ function _setupRootDrop() {
         if (!srcPath) return;
         const srcParent = srcPath.split("/").slice(0, -1).join("/");
         if (srcParent === "") return;
-        _toast(_t("lexicon.toast.moveUnavailable", "Moving files is not available yet."));
+        _moveItem(srcPath, "");
     });
 }
 
@@ -861,16 +861,10 @@ function _onSearchInput() {
 // IMPORT / EXPORT
 // ========================================================================
 
-// REMOVED, not disabled. D8: an ABSENT service is hidden, and there is
-// no reason to show an owner that would not just be "Studio does not do
-// this". These called routes the standalone has no backend for, and the
-// tab gate was the only thing keeping them off the screen -- so serving
-// /tree re-arms every one of them on the same commit. That is the
-// incident this file already documents: Export clicked a synthetic
-// <a download="wildcards_export.zip"> at a route that does not exist and
-// saved a 404 JSON body to disk under a .zip name.
+// LX1. The Extension's routes, served by `wildcard_editor.py`. Import keeps a
+// file that already exists and says how many it left alone.
 function exportZip() {
-    _toast("Exporting wildcards\u2026");
+    _toast(_t("lexicon.toast.exporting", "Exporting wildcards\u2026"));
     // Trigger download via a hidden link
     const a = document.createElement("a");
     a.href = API + "/export";
@@ -887,7 +881,7 @@ async function importZip() {
         const file = input.files[0];
         if (!file) return;
 
-        _toast("Importing " + file.name + "\u2026");
+        _toast(_t("lexicon.toast.importing", "Importing {name}\u2026", { name: file.name }));
         try {
             const buf = await file.arrayBuffer();
             const r = await fetch(API + "/import", {
@@ -900,10 +894,11 @@ async function importZip() {
                 throw new Error(body.error || r.statusText);
             }
             const res = await r.json();
-            _toast("Imported " + res.imported + " files" + (res.skipped ? " (" + res.skipped + " skipped)" : ""));
+            _toast(_t("lexicon.toast.imported", "Imported {imported}, kept {existing} already there, skipped {skipped}.", {
+                imported: res.imported, existing: res.existing || 0, skipped: res.skipped || 0 }));
             loadTree();
         } catch (e) {
-            _toast("Import failed: " + e.message, "error");
+            _toast(_t("lexicon.toast.importFailed", "Import failed: {error}", { error: e.message }), "error");
         }
     });
     input.click();
@@ -1168,6 +1163,8 @@ function _buildUI(container) {
       +       '<div class="lex-tree-actions">'
       +         '<button data-action="new-file">' + IC.plus + '<span data-i18n="lexicon.newFileLabel">' + _t("lexicon.newFileLabel", "New file") + '</span></button>'
       +         '<button data-action="new-folder">' + IC.plus + '<span data-i18n="lexicon.newFolderLabel">' + _t("lexicon.newFolderLabel", "New folder") + '</span></button>'
+      +         '<button data-action="import" data-i18n="lexicon.import" data-i18n-title="lexicon.import.tooltip" title="' + _t("lexicon.import.tooltip", "Import wildcards from .zip") + '">' + _t("lexicon.import", "\u2B07 Import") + '</button>'
+      +         '<button data-action="export" data-i18n="lexicon.export" data-i18n-title="lexicon.export.tooltip" title="' + _t("lexicon.export.tooltip", "Export wildcards as .zip") + '">' + _t("lexicon.export", "\u2B06 Export") + '</button>'
       +         '<button data-action="refresh" class="lex-icon-btn" data-i18n-title="lexicon.refresh.tooltip" title="' + _t("lexicon.refresh.tooltip", "Refresh file tree") + '" aria-label="' + _t("lexicon.refresh.tooltip", "Refresh file tree") + '">' + IC.refresh + '</button>'
       +       '</div>'
       +     '</div>'
@@ -1255,6 +1252,8 @@ function _buildUI(container) {
 
     root.querySelector('[data-action="new-file"]').addEventListener("click", () => createFile());
     root.querySelector('[data-action="new-folder"]').addEventListener("click", () => createFolder());
+    root.querySelector('[data-action="export"]').addEventListener("click", exportZip);
+    root.querySelector('[data-action="import"]').addEventListener("click", importZip);
     root.querySelector('[data-action="refresh"]').addEventListener("click", () => { loadTree(); _toast(_t("lexicon.toast.refreshed", "Refreshed")); });
 
     // Textarea
@@ -1330,8 +1329,7 @@ if (window.StudioModules) {
         // whenever /tree refused -- no folder chosen, a folder not reachable,
         // or one request failing at page load -- so Wildcards vanished with
         // nothing saying why. The panel shows the refusal instead, and
-        // loadTree() runs again every time the tab is opened. Export/Import,
-        // which have no route, are not in the toolbar (see IMPORT / EXPORT).
+        // loadTree() runs again every time the tab is opened.
         init(container, services) {
             console.log(TAG, "Initializing Wildcards module v" + VERSION);
             if (!document.querySelector('link[href*="lexicon.css"]')) {

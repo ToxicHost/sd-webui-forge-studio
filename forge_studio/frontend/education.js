@@ -122,7 +122,7 @@ var Education = (function () {
       {
         id: "exp_layout",
         title: _t("education.tour.experienced.layout.title", "Layout"),
-        text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools plus the Inpaint Mask). <em>Canvas</em> in the center — scroll to zoom, Space+drag to pan, right-click for the canvas menu. <em>Panel</em> on the right (Generate and Extensions tabs). <span class=\"cx-kbd\">\\</span> collapses it. <em>Settings</em> is its own tab at the top.\n\nContext bar above the canvas shows controls for the active tool."),
+        text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools plus the Inpaint Mask). <em>Canvas</em> in the center — scroll to zoom, Space+drag to pan, right-click for the canvas menu. <em>Panel</em> on the right. <span class=\"cx-kbd\">\\</span> collapses it. <em>Settings</em> is its own tab at the top.\n\nContext bar above the canvas shows controls for the active tool."),
         spotlight: null, reveal: [], advance: "click",
         btn: _t("education.tour.experienced.layout.btn", "Next"),
         position: { bottom: "80px", left: "calc(50% - 190px)" }

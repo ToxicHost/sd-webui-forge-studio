@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 from backend.args import dynamic_args
 from backend.logging import setup_logger
+from backend.nn.anima import BLOCK_MAPPINGS
 from backend.patcher.lora import load_lora, model_lora_keys_clip, model_lora_keys_unet
 from backend.state_dict import state_dict_prefix_replace
 from backend.utils import load_torch_file
@@ -25,7 +26,7 @@ setup_logger(logger)
 load_lora_state_dict = functools.partial(load_torch_file, safe_load=True)
 
 
-def process_anima(lora: dict[str, torch.Tensor]):
+def process_anima(lora: dict[str, torch.Tensor], blocks: int) -> bool:
     # LLMAdapter was moved from transformer to text_encoder
 
     keys = list(lora.keys())
@@ -34,6 +35,46 @@ def process_anima(lora: dict[str, torch.Tensor]):
             lora[k.replace("diffusion_model", "text_encoders.qwen3_06b")] = lora.pop(k)
         elif k.startswith("lora_unet_llm_adapter"):
             lora[k.replace("lora_unet_llm_adapter", "lora_te_llm_adapter")] = lora.pop(k)
+
+    parsed: dict[str, tuple[int, str]] = {}
+    prefix, sep = ("lora_unet_blocks_", "_") if any(k.startswith("lora_unet_blocks_") for k in keys) else ("diffusion_model.blocks.", ".")
+
+    for k in keys:
+        if not k.startswith(prefix):
+            continue
+        num, s, tail = k[len(prefix) :].partition(sep)
+        if s and num.isdigit():
+            parsed[k] = (int(num), tail)
+
+    _blocks: int = (max(n for n, _ in parsed.values()) + 1) if parsed else 0
+    lora_blocks: int = next(size for size in (28, 40, 52) if _blocks <= size)
+
+    if lora_blocks == blocks:
+        return True
+
+    if lora_blocks > blocks:
+        logger.error(f"Cannot map larger Anima LoRA to smaller Anima Model ({lora_blocks} > {blocks})")
+        return False
+
+    temp = lora.copy()
+
+    if (mapping := BLOCK_MAPPINGS.get((lora_blocks, blocks))) is None:
+        logger.error(f"Failed to recognize LoRA ({lora_blocks}) to Model ({blocks}) Mapping")
+        return False
+
+    logger.warning(f"Re-Mapping Anima LoRA ({lora_blocks} to {blocks})")
+
+    reverse: dict[int, list[int]] = {}
+
+    for target, source in enumerate(mapping):
+        reverse.setdefault(source, []).append(target)
+
+    for k, (source, tail) in parsed.items():
+        for target in reverse.get(source, []):
+            lora[f"{prefix}{target}{sep}{tail}"] = temp[k].clone()
+
+    del temp
+    return True
 
 
 def load_lora_for_models(model: "UnetPatcher", clip: "CLIP", lora: dict[str, torch.Tensor], strength_model: float, strength_clip: float, filename: str = "default", online_mode: bool = False):
@@ -47,7 +88,8 @@ def load_lora_for_models(model: "UnetPatcher", clip: "CLIP", lora: dict[str, tor
     clip_keys = model_lora_keys_clip(clip.cond_stage_model) if clip is not None else {}
 
     if model.model.diffusion_model.__class__.__name__ == "Anima":
-        process_anima(lora)
+        if not process_anima(lora, len(model.model.diffusion_model.blocks)):
+            return model, clip
 
     lora_unmatch = lora
     lora_unet, lora_unmatch = load_lora(lora_unmatch, unet_keys)

@@ -46,7 +46,7 @@ _LOOPBACK = "127.0.0.1"
 _MAX_TIMEOUT_SECONDS = 600
 _DEFAULT_VRAM_CEILING_GIB = 14
 
-logger = logging.getLogger("studio.internal_alpha")
+logger = logging.getLogger("studio.launch")
 
 
 class LaunchConfigurationError(Exception):
@@ -63,7 +63,7 @@ def load_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise _fail(
             f"Configuration file not found: {path}. Copy the template from "
-            "docs/studio/internal-alpha/studio-config.template.json and fill "
+            "docs/studio/studio-config.template.json and fill "
             "in your profiles."
         )
     try:
@@ -81,7 +81,7 @@ def load_config(path: Path) -> dict[str, Any]:
     host = raw.get("host", _LOOPBACK)
     if host != _LOOPBACK:
         raise _fail(
-            "Internal alpha binds 127.0.0.1 only; set host to '127.0.0.1'."
+            "Studio binds 127.0.0.1 only; set host to '127.0.0.1'."
         )
 
     port = raw.get("port", 0)
@@ -352,7 +352,7 @@ def _read_remembered_selection(raw: Any) -> dict[str, str]:
 def _configure_logging(timeline: bool = False) -> Path:
     log_directory = WORKSPACE_ROOT / "logs"
     log_directory.mkdir(parents=True, exist_ok=True)
-    log_path = log_directory / "studio-internal-alpha.log"
+    log_path = log_directory / "studio.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -420,7 +420,7 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
     # nothing may treat as a load instruction.
 
     state = lifecycle.state()["state"]
-    logger.info("Studio internal alpha starting in state: %s", state)
+    logger.info("Studio starting in state: %s", state)
     if config["legacy_keys"]:
         logger.info(
             "Ignoring retired configuration keys: %s. They are kept in the "
@@ -748,7 +748,7 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
             "?onboarding=off" if config["onboarding"] == "suppressed" else ""
         )
         print(
-            f"Forge Studio internal alpha: "
+            f"Forge Studio: "
             f"http://{config['host']}:{actual_port}/studio/{onboarding_suffix}",
             flush=True,
         )
@@ -758,12 +758,12 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
         )
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
-        print("\nStudio internal alpha stopping.", flush=True)
+        print("\nStudio stopping.", flush=True)
     finally:
         if server is not None:
             server.server_close()
         composition.shutdown()
-        logger.info("Studio internal alpha stopped cooperatively.")
+        logger.info("Studio stopped cooperatively.")
     return 0
 
 
@@ -854,7 +854,7 @@ def _runtime_from(arguments: Any) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Launch Forge Studio internal alpha from a configuration file."
+        description="Launch Forge Studio from a configuration file."
     )
     parser.add_argument(
         "--config",

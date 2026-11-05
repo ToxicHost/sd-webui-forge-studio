@@ -468,7 +468,6 @@
       <div class="customize-divider" id="customizeDivider"></div>
       <div class="panel-tabs" id="panelTabs">
         <button class="panel-tab active" data-panel="generate" data-i18n="panels.generate">Generate</button>
-        <button class="panel-tab" data-panel="extensions" data-i18n="panels.extensions">Extensions</button>
       </div>
 
       <div class="panel-content">
@@ -1421,7 +1420,7 @@
         </div>
 
         <!-- ===== SETTINGS TAB ===== -->
-        <!-- ===== EXTENSIONS TAB ===== -->
+        <!-- The tab is hidden (nothing can be installed); ExtensionBridge still renders here. -->
         <div class="panel-page" id="page-extensions">
           <div class="extensions-content" id="extensionsContent">
             <div class="ext-loading" id="extLoading" data-i18n="ui.extensions.loading">Loading extensions...</div>
@@ -1454,7 +1453,6 @@
             <option value="output-files" data-i18n="settings.cat.output.title">Output &amp; Files</option>
             <option value="performance-vram" data-i18n="settings.cat.performance.title">Performance &amp; VRAM</option>
             <option value="keyboard-shortcuts" data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</option>
-            <option value="extensions" data-i18n="settings.cat.extensions.title">Extensions</option>
             <option value="about" data-i18n="settings.cat.about.title">About</option>
           </select>
           <div class="settings-nav-list" role="tablist" aria-orientation="vertical">
@@ -1489,10 +1487,6 @@
             <button class="settings-nav-button" type="button" data-settings-nav="keyboard-shortcuts" role="tab" aria-selected="false">
               <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M4.5 9.5h7"/></svg>
               <span data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</span>
-            </button>
-            <button class="settings-nav-button" type="button" data-settings-nav="extensions" role="tab" aria-selected="false">
-              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M6 2.5h4v2.5h2.5v3H10v3.5H6V8H3.5V5H6V2.5z"/></svg>
-              <span data-i18n="settings.cat.extensions.title">Extensions</span>
             </button>
             <button class="settings-nav-button" type="button" data-settings-nav="about" role="tab" aria-selected="false">
               <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.5v3.5M8 5h.01"/></svg>
@@ -1726,7 +1720,7 @@
                         <div class="theme-editor-side">
                           <span class="theme-editor-title" data-i18n="settings.theme.custom.preview">Preview</span>
                           <div class="theme-preview" id="themePreview">
-                            <div class="theme-preview-tabs"><span data-i18n="panels.generate">Generate</span><span data-i18n="panels.extensions">Extensions</span></div>
+                            <div class="theme-preview-tabs"><span data-i18n="panels.generate">Generate</span></div>
                             <div class="theme-preview-field" data-i18n="settings.theme.preview.prompt">a lighthouse at dusk, oil painting</div>
                             <div class="theme-preview-field faint" data-i18n="ui.negative.placeholder">Negative prompt...</div>
                             <div class="theme-preview-card"><span data-i18n="ui.hires.title">Hires Fix</span><span data-i18n="settings.theme.preview.hint">2.0× · denoise 0.30</span></div>
@@ -2409,32 +2403,6 @@
                   <p class="shortcut-settings-note settings-card-note" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.</p>
                   <div id="shortcutSettingsRows"></div>
                   <button class="defaults-btn defaults-btn-reset" id="shortcutResetAll" data-i18n="settings.shortcuts.resetAll">Reset all to defaults</button>
-                </div>
-              </section>
-            </div>
-          </section>
-
-          <!-- ══════════ EXTENSIONS ══════════ -->
-          <section class="settings-category" data-settings-category="extensions" aria-labelledby="settings-cat-extensions-title" hidden tabindex="-1">
-            <header class="settings-category-header">
-              <h2 id="settings-cat-extensions-title" data-i18n="settings.cat.extensions.title">Extensions</h2>
-              <p class="settings-category-sub" data-i18n="settings.cat.extensions.sub">Choose which integrated extensions appear in the application.</p>
-            </header>
-            <div class="settings-section-stack">
-              <section class="settings-card" data-settings-section="extensions">
-                <div class="settings-card-head settings-card-head-static settings-card-head-toolbar">
-                  <span class="settings-card-titles">
-                    <span class="settings-card-title" data-i18n="settings.extensions.title">Extensions</span>
-                    <span class="settings-card-summary" id="extEnabledSummary" data-i18n="settings.extensions.description">Toggle which extensions appear in the Extensions tab.</span>
-                  </span>
-                  <div class="settings-inline-search">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
-                    <input type="search" id="extSearchInput" class="settings-inline-search-input" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.extensions.searchPlaceholder" placeholder="Search extensions…" data-i18n-aria-label="settings.extensions.searchAria" aria-label="Search extensions">
-                  </div>
-                </div>
-                <div class="settings-card-body">
-                  <p class="settings-card-note" data-i18n="settings.extensions.trust">Only enable extensions you trust. Disabling an extension hides its tab and controls but does not uninstall it.</p>
-                  <div id="extToggles"></div>
                 </div>
               </section>
             </div>

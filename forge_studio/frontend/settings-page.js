@@ -19,7 +19,7 @@
   var CATEGORIES = [
     "general", "appearance-layout", "canvas-tools", "generation-preview",
     "prompts-metadata", "output-files", "performance-vram",
-    "keyboard-shortcuts", "extensions", "about"
+    "keyboard-shortcuts", "about"
   ];
   var DEFAULT_CATEGORY = "general";
   var LS_CATEGORY = "studio.settings.category";
@@ -110,7 +110,6 @@
     keyboardShortcutsSettings: { category: "keyboard-shortcuts", section: "keyboard-shortcuts" },
     shortcutSettingsRows: { category: "keyboard-shortcuts", section: "keyboard-shortcuts" },
     shortcutResetAll: { category: "keyboard-shortcuts", section: "keyboard-shortcuts" },
-    extToggles: { category: "extensions", section: "extensions" },
     checkUpdateBtn: { category: "about", section: "updates" },
     updateCheckStatus: { category: "about", section: "updates" },
     creditsToggle: { category: "about", section: "credits" },

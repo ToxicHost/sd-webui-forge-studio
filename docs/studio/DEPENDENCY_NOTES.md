@@ -19,4 +19,4 @@ untrusted users to modify the application's cache directories.
 
 Model provenance and the existing Remacri license-provenance gap are recorded in
 [BUNDLED_MODEL_ASSETS.md](BUNDLED_MODEL_ASSETS.md). Current feature and verification
-limits are in [TESTER_FEATURE_STATUS.md](TESTER_FEATURE_STATUS.md).
+limits are in [FEATURE_STATUS.md](FEATURE_STATUS.md).

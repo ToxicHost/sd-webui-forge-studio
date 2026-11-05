@@ -896,6 +896,15 @@ def _picture_count(request: Any) -> int:
         return 1
 
 
+def _job_cancelled(progress: Any) -> bool:
+    """SK1. The job, rather than one pass. A progress double with no Skip says
+    only `cancellation_requested`, which then can only mean the job."""
+
+    if hasattr(progress, "job_cancelled"):
+        return bool(progress.job_cancelled)
+    return bool(getattr(progress, "cancellation_requested", False))
+
+
 def _picture_id(job_id: str, number: int) -> str:
     """BM1. Picture `number`'s request id: picture 1 keeps the job's own, so a
     one-picture job and picture 1 of a batch read alike; the rest add theirs."""
@@ -1728,6 +1737,13 @@ class StudioLiveGenerationPort:
         that is a fallback. The Extension walks the seed even then; seeds are
         engine semantics (`Evidence/source-review/BM1-batch-mode.md` §4).
 
+        SKIP (SK1) abandons the pass it lands in and goes on to the next, as
+        Neo's `state.skipped` does (`processing.py:937-938`). The stop is a
+        cancel's, so no Hires, Auto Detail or publish runs on that pass
+        (`_publish` drops it), and unlike Neo nothing of the pass is kept. Pictures
+        that finished are kept. With none left, a skip of every pass ends as a
+        cancel does, having made nothing; otherwise the job completes.
+
         CANCEL stops between passes and keeps the pictures that finished, as
         the Extension does (`:3138-3142`); `_publish` drops the pass a cancel
         landed in. A cancel before anything finished is an ordinary cancelled
@@ -1755,9 +1771,11 @@ class StudioLiveGenerationPort:
         begin = getattr(progress, "begin_picture", None)
 
         finished: list[Any] = []
+        stopped = False
         for start in range(0, count, size):
             number = start + 1
-            if start and getattr(progress, "cancellation_requested", False):
+            if start and _job_cancelled(progress):
+                stopped = True
                 break
             if callable(begin):
                 begin(number, count)
@@ -1786,8 +1804,14 @@ class StudioLiveGenerationPort:
             try:
                 outcome = self._generate_in_scope(_with_fields(request, fields), progress)
             except HeadlessError as error:
-                if error.code == "GENERATION_CANCELLED" and finished:
-                    break
+                if error.code == "GENERATION_CANCELLED":
+                    if getattr(progress, "skip_requested", False) and not _job_cancelled(progress):
+                        # SK1. This pass is abandoned; the job goes on.
+                        progress.clear_skip()  # type: ignore[attr-defined]
+                        continue
+                    if finished:
+                        stopped = True
+                        break
                 raise
             except BaseException as exc:  # noqa: BLE001 - converted, then re-raised
                 if size > 1 and _looks_like_out_of_memory(exc):
@@ -1804,8 +1828,16 @@ class StudioLiveGenerationPort:
                     picture = replace(picture, job_id=job_id, pictures=())
                 finished.append(picture)
         self._picture_clock = None
-        if len(finished) < count:
+        if not finished:
             progress.mark_cancelled()  # type: ignore[attr-defined]
+            raise HeadlessError("GENERATION_CANCELLED", "Every pass of the batch was skipped.")
+        if stopped:
+            progress.mark_cancelled()  # type: ignore[attr-defined]
+        else:
+            # SK1. `_publish` completes the job on its LAST picture, and a skipped
+            # last pass never got there. Left running, the job's pictures are
+            # never delivered (found live; see Evidence/skip-batch-2026-11-05).
+            progress.mark_completed()  # type: ignore[attr-defined]
         first = finished[0]
         if not is_dataclass(first):
             return first

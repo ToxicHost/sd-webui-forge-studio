@@ -1,6 +1,6 @@
 services:
   studio:
-    image: studio-standalone:docker-tester
+    image: forge-studio:docker
     platform: linux/amd64
     build:
       context: ../..

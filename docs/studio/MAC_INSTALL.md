@@ -33,7 +33,7 @@ Pick one.
 the files as "downloaded from the internet"). Open Terminal and run:
 
 ```bash
-git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git ~/Studio-Standalone
+git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git ~/Forge-Studio
 ```
 
 If macOS offers to install "command line developer tools" when you type `git`,
@@ -41,7 +41,7 @@ accept: that is Apple's own installer and it provides Git.
 
 **B. As a ZIP.** Download the ZIP of the `release/tester-alpha-prep` branch
 from GitHub, double-click it to unpack, and move the folder to your home folder
-as `Studio-Standalone`. Files from a browser download are "quarantined" by
+as `Forge-Studio`. Files from a browser download are "quarantined" by
 macOS; see the next section.
 
 ## Start Studio
@@ -49,7 +49,7 @@ macOS; see the next section.
 The simplest way, which works whatever macOS thinks of the download:
 
 ```bash
-cd ~/Studio-Standalone
+cd ~/Forge-Studio
 sh start-studio.sh
 ```
 
@@ -70,14 +70,14 @@ Studio is not signed by an Apple-registered developer, so macOS may refuse to
 open `Start-Studio.command` the first time, saying it is from an "unidentified
 developer" or "could not be verified". Any one of these is fine:
 
-1. **Use Terminal instead:** `cd ~/Studio-Standalone` then
+1. **Use Terminal instead:** `cd ~/Forge-Studio` then
    `sh start-studio.sh`. This does not trigger the check.
 2. **Allow it once:** try to open it, then open **System Settings → Privacy &
    Security**, scroll down, and click **Open Anyway** next to the message about
    Start-Studio.command. (On macOS 14 you can also Control-click the file,
    choose **Open**, then **Open** again.)
 3. **Remove the download mark from the folder** (only for a folder you got
-   from this project): `xattr -dr com.apple.quarantine ~/Studio-Standalone`
+   from this project): `xattr -dr com.apple.quarantine ~/Forge-Studio`
 
 Studio never asks you to turn Gatekeeper off, and you should not.
 
@@ -108,15 +108,15 @@ Studio never asks you to turn Gatekeeper off, and you should not.
 Close Studio, back up your pictures and settings, then in Terminal:
 
 ```bash
-cd ~/Studio-Standalone
+cd ~/Forge-Studio
 git pull --ff-only
 sh start-studio.sh
 ```
 
 ## Where your files are
 
-For a checkout at `~/Studio-Standalone`, settings live beside it in
-`~/Studio-Standalone-data`, pictures in `~/Studio-Results` and logs in
+For a checkout at `~/Forge-Studio`, settings live beside it in
+`~/Forge-Studio-data`, pictures in `~/Studio-Results` and logs in
 `~/logs`. Removing Studio means deleting those folders and the checkout.
 
 ## If something goes wrong
@@ -125,10 +125,10 @@ Run this in Terminal and read the `.txt` file it writes before sending it to
 whoever gave you Studio. It contains no pictures, prompts or model files:
 
 ```bash
-cd ~/Studio-Standalone
+cd ~/Forge-Studio
 venv/bin/python scripts/build_support_bundle.py --dry-run
 venv/bin/python scripts/build_support_bundle.py
 ```
 
 Feature limitations are listed in
-[TESTER_FEATURE_STATUS.md](TESTER_FEATURE_STATUS.md).
+[FEATURE_STATUS.md](FEATURE_STATUS.md).

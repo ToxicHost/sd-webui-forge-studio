@@ -290,6 +290,11 @@ class HeadlessBackendAdapter(BackendAdapter):
             return (0, None)
         return self._generation.preview_frame(job_id)
 
+    def skip_generation(self, job_id: str) -> bool:
+        """SK1. See `HeadlessGenerationSession.skip`."""
+
+        return bool(self._generation.skip(job_id)) if self._generation is not None else False
+
     def cancel_generation(self, job_id: str) -> CancellationResult:
         if self._generation is not None:
             return self._generation.cancel(job_id)

@@ -177,6 +177,7 @@ class HeadlessProgress:
         self._step = 0
         self._total: int | None = None
         self._cancel = False
+        self._skip = False
         self._error: str | None = None
         #: Set by the port when the job asked for a second pass. Nothing
         #: transitions into the Hires states without it.
@@ -218,8 +219,28 @@ class HeadlessProgress:
 
     @property
     def cancellation_requested(self) -> bool:
+        """Should whatever is running stop at its next safe boundary?
+
+        True for a cancel and for a Skip: to the sampler, Hires, Auto Detail and
+        publishing the two are the same, which is Neo's rule too
+        (`sd_samplers_cfg_denoiser.py:100` stops on `interrupted or skipped`).
+        Only the Batch loop tells them apart, through `job_cancelled`.
+        """
+
+        with self._lock:
+            return self._cancel or self._skip
+
+    @property
+    def job_cancelled(self) -> bool:
+        """SK1. The whole job was cancelled, as opposed to one pass skipped."""
+
         with self._lock:
             return self._cancel
+
+    @property
+    def skip_requested(self) -> bool:
+        with self._lock:
+            return self._skip
 
     def snapshot(self) -> ProgressSnapshot:
         with self._lock:
@@ -379,6 +400,10 @@ class HeadlessProgress:
                 )
             self._picture = int(picture)
             self._pictures = int(pictures)
+            # SK1. A Skip that arrived as the last pass finished was for that
+            # pass. One before the first pass began is for the first pass.
+            if int(picture) > 1:
+                self._skip = False
             # MH1. A new picture declares its own passes; a Hires-only flag
             # the last picture never consumed (Neo returned before sampling)
             # must not name this picture's first budget.
@@ -482,6 +507,19 @@ class HeadlessProgress:
                 # `+ 1` reads as "no further step can arrive in this budget",
                 # and is true whether the source counts from zero or from one.
                 self.advance_to(JobState.HIRES_PREPARING)
+
+    def request_skip(self) -> bool:
+        """SK1. Abandon the pass running now; the Batch loop goes on to the next."""
+
+        with self._lock:
+            if self._state in TERMINAL_STATES or self._cancel:
+                return False
+            self._skip = True
+            return True
+
+    def clear_skip(self) -> None:
+        with self._lock:
+            self._skip = False
 
     def request_cancellation(self) -> bool:
         """Ask the job to stop at its next safe boundary. Idempotent."""

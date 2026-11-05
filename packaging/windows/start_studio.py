@@ -28,7 +28,10 @@ def interpreter_for(app: Path) -> Path:
 PYTHON = interpreter_for(APP)
 LAUNCHER = APP / "launch_studio.py"
 CONFIG = ROOT / "studio-config.json"
-TEMPLATE = APP / "docs" / "studio" / "internal-alpha" / "studio-config.template.json"
+TEMPLATE = APP / "docs" / "studio" / "studio-config.template.json"
+#: The line the app prints when its server is up. The old wording stays
+#: accepted, in case this launcher runs against a differently updated app.
+READY_LINES = ("Forge Studio: http", "Forge Studio internal alpha: http")
 
 
 def fail(message: str) -> int:
@@ -130,7 +133,7 @@ class Watch:
             pass
 
     def note(self, line: str) -> None:
-        if line.startswith("Forge Studio internal alpha: http"):
+        if line.startswith(READY_LINES):
             self.ready = True
             return
         if "studio.job:" not in line:
@@ -270,7 +273,7 @@ def open_browser_when_ready(process: subprocess.Popen, watch: Watch | None = Non
                 continue
             if watch is not None:
                 watch.note(line)
-            if not opened and line.startswith("Forge Studio internal alpha: http"):
+            if not opened and line.startswith(READY_LINES):
                 url = line.split(": ", 1)[1].strip()
                 opened = True
                 if open_browser:

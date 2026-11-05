@@ -4,7 +4,7 @@ FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b60333
 ARG STUDIO_UID=1000
 ARG STUDIO_GID=1000
 ARG STUDIO_REVISION=unknown
-LABEL org.opencontainers.image.title="Studio Standalone Docker tester" \
+LABEL org.opencontainers.image.title="Forge Studio (Docker)" \
       org.opencontainers.image.source="https://github.com/ToxicHost/sd-webui-forge-studio" \
       org.opencontainers.image.revision=$STUDIO_REVISION
 

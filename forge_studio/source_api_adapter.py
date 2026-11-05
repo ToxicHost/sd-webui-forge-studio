@@ -766,18 +766,18 @@ class SourceFrontendAdapter:
         if route == "/studio/interrupt":
             return self.interrupt()
         if route == "/studio/skip":
-            # "Skip to the next image" and "cancel the one running" are the
-            # same act in this product: one image per job, and the queue
-            # starts the next as soon as the current one reaches a safe
-            # terminal state. Upstream's skip abandons one image of a BATCH,
-            # which is a distinction Studio does not have.
-            #
-            # This answered `skipped: false` with `ok: true` unconditionally,
-            # and the page toasted "Skipping to next image..." over it.
+            # SK1. A Batch-mode job abandons the pass it is on and goes on to the
+            # next, as upstream's skip does. Every other job has no next pass of
+            # its own: stopping it is what lets the queue start the next job. The
+            # page says which of the two happened, from `mode`.
+            job_id = self._coordinated_job_id()
+            if job_id is not None and self._presentation.skip(job_id):
+                return {"ok": True, "skipped": True, "mode": "pass", "message": ""}
             outcome = self.interrupt()
             return {
                 "ok": True,
                 "skipped": bool(outcome.get("cancelled", False)),
+                "mode": "job",
                 "message": str(outcome.get("message", "")),
             }
         if route == "/studio/load_model":
@@ -1034,6 +1034,16 @@ class SourceFrontendAdapter:
         # same non-2xx guard as GET and POST. Both callers therefore reject this
         # refusal instead of converting a parsed 404 body into a green success.
         raise SourceFrontendRouteError("DELETE", route)
+
+    def lexicon_export(self) -> bytes:
+        """LX1. Bytes, so presentation serves it above the JSON catch-all."""
+
+        with _editor_refusals():
+            return self._editor().export_zip()
+
+    def lexicon_import(self, data: bytes) -> dict[str, Any]:
+        with _editor_refusals():
+            return self._editor().import_zip(data)
 
     def _editor(self) -> Any:
         """A writer over whatever folder is chosen RIGHT NOW.
