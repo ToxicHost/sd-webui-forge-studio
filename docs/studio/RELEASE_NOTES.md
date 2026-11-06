@@ -60,7 +60,7 @@ changes in the app.
 - **The install guides clone into `Forge-Studio`.** A clone under another folder
   name keeps working; there is no need to rename it.
 - **Docker:** the image tag is now `forge-studio:docker`.
-- The install command keeps the branch name `release/tester-alpha-prep` for now.
+- The install command now uses the `main` branch. Copies already installed keep updating as they are.
 
 ## 0.9.12: New LoRAs work without a restart — 2026-10-28
 

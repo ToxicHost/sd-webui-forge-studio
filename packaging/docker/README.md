@@ -37,7 +37,7 @@ Run these commands as your normal Linux user in Bash. If you already cloned
 Studio, enter it and run `git pull --ff-only` instead of cloning again.
 
 ```bash
-git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
+git clone --depth 1 --branch main https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
 cd Forge-Studio
 
 export STUDIO_UID="$(id -u)"

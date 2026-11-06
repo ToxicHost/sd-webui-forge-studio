@@ -33,13 +33,13 @@ Pick one.
 the files as "downloaded from the internet"). Open Terminal and run:
 
 ```bash
-git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git ~/Forge-Studio
+git clone --depth 1 --branch main https://github.com/ToxicHost/sd-webui-forge-studio.git ~/Forge-Studio
 ```
 
 If macOS offers to install "command line developer tools" when you type `git`,
 accept: that is Apple's own installer and it provides Git.
 
-**B. As a ZIP.** Download the ZIP of the `release/tester-alpha-prep` branch
+**B. As a ZIP.** Download the ZIP of the `main` branch
 from GitHub, double-click it to unpack, and move the folder to your home folder
 as `Forge-Studio`. Files from a browser download are "quarantined" by
 macOS; see the next section.

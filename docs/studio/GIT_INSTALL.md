@@ -15,7 +15,7 @@ A supported NVIDIA GPU and driver are required.
 Run these commands in the directory where you want Studio:
 
 ```powershell
-git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
+git clone --depth 1 --branch main https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
 cd Forge-Studio
 .\Start-Studio.bat
 ```

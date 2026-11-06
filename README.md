@@ -158,7 +158,7 @@ Studio has its own interface on the Forge Neo engine, so these aren't available:
 Open PowerShell in the folder where you want Studio, then run:
 
 ```powershell
-git clone --depth 1 --branch release/tester-alpha-prep https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
+git clone --depth 1 --branch main https://github.com/ToxicHost/sd-webui-forge-studio.git Forge-Studio
 cd Forge-Studio
 .\Start-Studio.bat
 ```
