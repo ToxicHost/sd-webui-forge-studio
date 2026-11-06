@@ -18,6 +18,7 @@
 
 .ssel-trigger {
   display: inline-flex;
+  min-width: 0; /* in a flex row, shrink so the label can ellipsize */
   align-items: center;
   justify-content: space-between;
   gap: 4px;

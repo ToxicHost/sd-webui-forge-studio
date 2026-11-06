@@ -31,6 +31,8 @@ changes in the app.
     pressing Skip before the model has loaded.
 - **Fixed: Upscale Canvas ignored adjustment layers.** A Brightness or Hue layer had
   no effect on the upscaled picture. It now upscales what the Canvas shows.
+- **Fixed: a long model name pushed the Model box out of the panel**, in Deck under
+  the next column. The name now cuts off with "…", in the VAE and Text Encoder boxes too.
 - **Wildcards: drag files between folders, and zip export and import.** The tooltips
   promised these and they didn't work. Import adds only `.txt` files inside your
   wildcard folder. A file that already exists is kept, and the message says how many.
