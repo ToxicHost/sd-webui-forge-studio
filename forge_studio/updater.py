@@ -20,7 +20,14 @@ It refuses, with a reason the page shows, when the copy is not a Git checkout,
 tracks no remote branch, has its own commits (diverged), or has edited files.
 A developer tree is one of those, so it is never touched.
 
-Source review: Evidence/source-review/U1-check-for-updates.md
+U3. Releases moved from `release/tester-alpha-prep` to `main`. Installed copies
+fetch their branch by name, so a copy that follows the old one is pointed at
+`main` the next time it checks or updates. Nothing else moves it: Studio goes
+online only when the owner presses, so a copy updated by hand with `git pull`
+gets a console line at startup instead (`follows_retired_branch`).
+
+Source review: Evidence/source-review/U1-check-for-updates.md,
+Evidence/source-review/U3-move-to-main.md
 """
 
 from __future__ import annotations
@@ -34,6 +41,10 @@ from typing import Any, Callable
 
 _FETCH_TIMEOUT = 120
 _LOCAL_TIMEOUT = 30
+#: U3. The old release branch stays on GitHub, frozen on the last release that
+#: can move a copy: anyone further behind updates to it, then moves.
+_RETIRED_BRANCH = "release/tester-alpha-prep"
+_RELEASE_BRANCH = "main"
 
 
 class UpdateService:
@@ -92,14 +103,62 @@ class UpdateService:
         branch = upstream[len(remote) + 1:] if upstream.startswith(remote + "/") else upstream.split("/", 1)[1]
         return remote, branch, upstream
 
+    def _follow_release_branch(self, remote: str, branch: str, upstream: str) -> tuple[str, str, str]:
+        """U3. Point a copy on the retired branch at `main`, if that loses nothing.
+
+        Returns what the copy now follows. Files and HEAD are not touched, and
+        every way this can fail leaves the copy on the old branch to try again
+        at the next press. Only a copy with no commits of its own, whose HEAD is
+        already part of `main`, moves; anything else (a fork whose `main` is
+        unrelated, say) carries on as it was.
+        """
+
+        stay = remote, branch, upstream
+        if branch != _RETIRED_BRANCH or self._status(upstream)["ahead"]:
+            return stay
+        tracking = f"refs/remotes/{remote}/{_RELEASE_BRANCH}"
+        # A named refspec: a `--branch` clone's own refspec covers only the old
+        # branch, so a plain `fetch origin main` would update no tracking ref.
+        code, _, _ = self._git("fetch", "--quiet", remote, f"+refs/heads/{_RELEASE_BRANCH}:{tracking}",
+                               timeout=_FETCH_TIMEOUT)
+        if code != 0 or self._git("merge-base", "--is-ancestor", "HEAD", tracking)[0] != 0:
+            return stay
+        _, refspecs, _ = self._git("config", "--get-all", f"remote.{remote}.fetch")
+        single_branch = "refs/heads/*" not in refspecs
+        if single_branch and tracking not in refspecs:
+            if self._git("remote", "set-branches", "--add", remote, _RELEASE_BRANCH)[0] != 0:
+                return stay
+        # The move itself: one config write.
+        if self._git("branch", f"--set-upstream-to={remote}/{_RELEASE_BRANCH}", self._branch())[0] != 0:
+            return stay
+        if single_branch:
+            # So a later `git pull` no longer depends on the old branch. Failing
+            # here costs nothing: the copy has already moved.
+            self._git("remote", "set-branches", remote, _RELEASE_BRANCH)
+        return remote, _RELEASE_BRANCH, f"{remote}/{_RELEASE_BRANCH}"
+
+    def follows_retired_branch(self) -> bool:
+        """U3. Local only, for the startup line: this asks Git, not GitHub."""
+
+        try:
+            return self._tracked()[1] == _RETIRED_BRANCH
+        except _Refusal:
+            return False
+
     def _branch(self) -> str:
         code, branch, _ = self._git("rev-parse", "--abbrev-ref", "HEAD")
         return branch if code == 0 else "HEAD"
 
     def _fetch(self, remote: str, branch: str) -> None:
         code, _, err = self._git("fetch", "--quiet", remote, branch, timeout=_FETCH_TIMEOUT)
-        if code != 0:
-            raise _Refusal("Cannot reach GitHub", offline=True, detail=err)
+        if code == 0:
+            return
+        # GitHub answered: reporting this as offline would send the owner
+        # looking at their network.
+        if "couldn't find remote ref" in err:
+            raise _Refusal(f"GitHub no longer has the branch this copy follows ({branch}), so it "
+                           "can't update itself. Install it again from the install guide.", detail=err)
+        raise _Refusal("Cannot reach GitHub", offline=True, detail=err)
 
     def _status(self, upstream: str) -> dict[str, Any]:
         _, head, _ = self._git("rev-parse", "HEAD")
@@ -114,7 +173,7 @@ class UpdateService:
         """`/studio/api/check-update`, in the Extension's reply shape."""
 
         try:
-            remote, branch, upstream = self._tracked()
+            remote, branch, upstream = self._follow_release_branch(*self._tracked())
             self._fetch(remote, branch)
             state = self._status(upstream)
         except _Refusal as refusal:
@@ -145,7 +204,7 @@ class UpdateService:
             return {"ok": False, "error": "An update is already running."}
         try:
             self._phase("checking", 5, "Checking update")
-            remote, branch, upstream = self._tracked()
+            remote, branch, upstream = self._follow_release_branch(*self._tracked())
             code, edited, _ = self._git("status", "--porcelain", "--untracked-files=no")
             if code != 0 or edited:
                 raise _Refusal("Some of Studio's own files have been edited, so the update "

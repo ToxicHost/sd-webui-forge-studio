@@ -727,6 +727,7 @@ def run(config_path: Path, runtime: dict[str, Any] | None = None,
         )
         actual_port = int(server.server_address[1])
         _log_port_choice(config["port"], actual_port)
+        _log_retired_branch(UpdateService(APP_ROOT))
         # OOM1. If the launcher restarted this server after an unexpected stop,
         # set its record aside for the page to show once. Never raises.
         from .crash_notice import load_once as _load_crash_notice
@@ -804,6 +805,21 @@ def _bind_studio_server(make: Any, configured: int) -> Any:
             if index == len(candidates) - 1:
                 raise
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _log_retired_branch(updater: Any) -> None:
+    """U3. A copy updated by hand with `git pull` never presses Check for Updates,
+    which is what moves it to `main`, so it would stay on the frozen branch and
+    be told "Already up to date" forever. Local Git only: Studio does not go
+    online at startup. This is a courtesy line, so it can never stop a launch."""
+
+    try:
+        if updater.follows_retired_branch():
+            logger.info(
+                "This copy follows an old release branch that no longer gets updates. "
+                "Press Settings > About > Check for Updates once to move it to main.")
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not read which branch this copy follows.", exc_info=True)
 
 
 def _log_port_choice(configured: int, actual: int) -> None:
