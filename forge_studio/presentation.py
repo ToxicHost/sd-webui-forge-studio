@@ -118,7 +118,9 @@ _SOURCE_LOADER_CSP_HASH = (
     # UI1 adds studio-themes.js (after prefs.js) and studio-themes-ui.js to
     # the loader. Same method, which reproduced I8LM5PPZ... from c86b86d2's
     # file first.
-    "'sha256-RkZGg4C7Un2Xi8DBu6tr9inxp26s5eF1shmyrQqPRf0='"
+    #
+    # ST1 adds stage.js after codex.js. Same method (CRLF normalised to LF).
+    "'sha256-zkTO6S+4ccIHnuxcdthCJr9BfaObZ2j7z5rdmDgQ1j8='"
 )
 _UPDATE_HANDLER_CSP_HASH = (
     "'sha256-q6WhThBFsQIP9RODqeJp+tqgTSG3Y20BYxMivfQlkX0='"
@@ -360,7 +362,9 @@ _REGION_FIELDS = ("name", "prompt", "negative_prompt", "weight",
 _CONTROLNET_FIELDS = ("model_id", "preprocessor", "image", "weight",
                       "guidance_start", "guidance_end", "control_mode",
                       "resize_mode", "processor_res", "threshold_a",
-                      "threshold_b", "pixel_perfect", "hires_option")
+                      "threshold_b", "pixel_perfect", "hires_option",
+                      # ST5. A Union model's type when the preprocessor cannot say it.
+                      "control_type")
 
 #: The three operations this product admits. A string here rather than the
 #: headless `Operation` enum: `forge_studio` does not import `forge_headless`,
@@ -971,7 +975,7 @@ def _validated_controlnet(value: Any) -> tuple[Any, ...]:
     """
 
     from .contracts import (
-        CONTROLNET_CONTROL_MODES, CONTROLNET_HIRES_OPTIONS,
+        CONTROLNET_CONTROL_MODES, CONTROLNET_CONTROL_TYPES, CONTROLNET_HIRES_OPTIONS,
         CONTROLNET_RESIZE_MODES, MAX_CONTROLNET_UNITS, ControlNetUnitSettings,
     )
 
@@ -1053,6 +1057,7 @@ def _validated_controlnet(value: Any) -> tuple[Any, ...]:
             pixel_perfect=pixel_perfect,
             hires_option=choice(unit, "hires_option", CONTROLNET_HIRES_OPTIONS,
                                 "Both", role),
+            control_type=choice(unit, "control_type", CONTROLNET_CONTROL_TYPES, "", role),
         ))
     return tuple(units)
 

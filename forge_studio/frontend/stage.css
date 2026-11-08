@@ -1,0 +1,113 @@
+/* Forge Studio — Stage module. Studio's own tokens (app.css), no colours of its own
+   except the viewport's frame, which marks the picture's edges. */
+.stage-root {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-void);
+  color: var(--text-1);
+  font-size: var(--ui-font, 12px);
+}
+.stage-viewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-void);
+}
+.stage-canvas { display: block; touch-action: none; }
+.stage-frame {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid var(--accent-mid);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+}
+.stage-frame-size {
+  position: absolute;
+  left: 0;
+  top: -20px;
+  font-size: var(--ui-font-meta, 10px);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.stage-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+.stage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  min-height: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  padding: 12px var(--section-pad, 12px);
+}
+.stage-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--control-gap, 6px);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.stage-section:last-child { border-bottom: 0; }
+.stage-section-title {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.stage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--control-gap, 6px); }
+.stage-row { display: flex; gap: var(--control-gap, 6px); }
+.stage-row > .stage-btn { flex: 1 1 0; min-width: 0; }
+.stage-btn {
+  height: var(--control-h, 30px);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 5px);
+  background: var(--bg-input);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--ui-font-small, 11px);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stage-btn:hover:not(:disabled) { border-color: var(--border-hover); background: var(--bg-raised); }
+.stage-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.stage-btn:disabled { opacity: 0.35; cursor: default; }
+.stage-part { margin: 0; color: var(--text-1); font-weight: 500; }
+.stage-hint { margin: 0; color: var(--text-3); font-size: var(--ui-font-small, 11px); line-height: 1.45; }
+.stage-lens { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; color: var(--text-2); }
+.stage-lens input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.stage-lens-value { font-family: var(--font-mono, monospace); color: var(--text-1); }
+.stage-figures { display: flex; flex-direction: column; gap: 4px; }
+.stage-figure {
+  display: flex; align-items: center; gap: 8px;
+  height: var(--control-h-sm, 28px); padding: 0 8px;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm, 5px);
+  background: var(--bg-input); color: var(--text-2); font: inherit; font-size: var(--ui-font-small, 11px);
+  cursor: pointer; text-align: left;
+}
+.stage-figure:hover { border-color: var(--border-hover); }
+.stage-figure.active { border-color: var(--accent-mid); background: var(--accent-dim); color: var(--text-1); }
+.stage-figure:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.stage-swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.stage-check { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--ui-font-small, 11px); cursor: pointer; }
+.stage-check input { accent-color: var(--accent); margin: 0; }
+.stage-select {
+  grid-column: 1 / -1; height: var(--control-h-sm, 28px); padding: 0 6px;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm, 5px);
+  background: var(--bg-input); color: var(--text-1); font: inherit; font-size: var(--ui-font-small, 11px);
+}
+.stage-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

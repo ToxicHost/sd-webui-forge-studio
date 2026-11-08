@@ -21,6 +21,10 @@ See [what works and what doesn't](docs/studio/FEATURE_STATUS.md).
   from it: an object with a crisp edge, a soft area such as sky or glow, or
   everything else. A Word Detail slot in Auto Detail repaints where a word
   landed, for things a face detector can't find.
+- **Stage: pose 3D figures for ControlNet.** Pose up to four figures in 3D, by
+  dragging, from a preset or from a picture, and frame them with a camera. The
+  scene becomes the ControlNet guide when you press Generate, and each figure can
+  get its own region prompt.
 - **Regional prompting on any model.** Any number of regions. Attention Couple on
   SD 1.5 and SDXL, masked prompts on the rest. Hires keeps the regions, and Auto
   Detail fixes a face with its region's prompt. Checked on SDXL, Anima and
@@ -51,7 +55,8 @@ See [what works and what doesn't](docs/studio/FEATURE_STATUS.md).
   with its own prompt and LoRAs. While inpainting, faces your mask isn't on are
   left alone.
 - **ControlNet:** three units for SD 1.5, SDXL and Anima (Control-LLLite), with
-  Forge's preprocessors. Their models download the first time you use them.
+  Forge's preprocessors. Their models download the first time you use them. A
+  unit can also take its picture from Stage.
 - **FLUX.2 Klein reference images**, which can also take a ControlNet map.
 - **Regions:** besides the methods above, One pass per region repaints each
   region of a canvas picture separately.
@@ -61,6 +66,25 @@ See [what works and what doesn't](docs/studio/FEATURE_STATUS.md).
 - Tag and word autocomplete in the prompt box.
 - A console warning when RAM runs short, and a restart if Studio stops
   unexpectedly, with the page saying why.
+
+### Stage
+
+- Up to four posable figures in a 3D scene, with a camera and lens. The frame in
+  the view is the picture, at the Generate size.
+- Pose by dragging: a body part swings from its joint, hand and foot handles bend
+  the whole limb, a hip handle crouches or leans. Six preset poses, Mirror, and
+  rings for fine turning.
+- **Body types:** Adult, Teen, Child and Small child, plus a Height slider.
+- **What ControlNet gets:** a shaded 3D figure on Anima, pose sticks (OpenPose) or
+  depth on SD 1.5 and SDXL. The Anima model is a 51 MB download you start with
+  **Get the 3D pose model**.
+- **Regions and masks per figure:** each figure gets a region for its own prompt,
+  which follows it, and masks for its body, head and hands.
+- **Drawing guide:** the figures shown faintly over the Canvas to draw over,
+  never added to the picture.
+- **Pose from a picture (opt-in):** read one person's pose from a picture onto a
+  figure. It needs a 2.8 GB model that downloads only when you press **Get the
+  pose-reading model**. The picture never leaves your computer.
 
 ### Canvas
 
@@ -187,7 +211,11 @@ telemetry or analytics. After setup, it goes online only for:
 - Civitai lookup in the model browsers and Check for Updates, when you press
   them;
 - a ControlNet preprocessor's model, downloaded the first time you use that
-  preprocessor (the Generate button says so while it does).
+  preprocessor (the Generate button says so while it does);
+- Stage's two models, each only when you press its button: **Get the 3D pose
+  model** in a ControlNet unit set to Stage (51 MB) and **Get the pose-reading
+  model** in Stage's Pose section (2.8 GB). Both come from huggingface.co and are
+  checked before they are kept.
 
 ## Other platforms
 

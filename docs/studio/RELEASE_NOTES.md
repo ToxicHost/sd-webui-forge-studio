@@ -3,6 +3,51 @@
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. Studio is in public beta on Windows/NVIDIA.
 
+## 0.9.14: Stage — 2026-11-08
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed;
+Stage's two models download only if you ask for them.
+
+- **New: Stage**, a tab (after Workshop) for posing 3D figures to guide
+  ControlNet.
+  - Up to four figures, each with its own colour. Drag a body part to swing it
+    from its joint (Shift twists it), drag a hand or foot to bend the whole
+    limb, or the hips to crouch or lean. Six preset poses, Mirror, Reset, and
+    rotation rings for fine turning (off by default). Drag the ring on the
+    floor to move a figure, and its knob to turn it.
+  - A camera with a lens from 14 to 135 mm. The frame in the view is the
+    picture, at the Generate size.
+  - **Body types:** Adult, Teen, Child and Small child, plus Height. They are
+    reshaped from an adult body model, so the 3D figure is an approximation of
+    a child's build; say the age in the prompt too.
+  - **Use it:** press Unit 1, 2 or 3 under *Use in ControlNet*, or set a unit's
+    Source to **Stage**. The scene is drawn again each time you press Generate.
+    On Anima the unit uses a shaded 3D figure with the `anima_3dpose` model (51
+    MB; the unit offers **Get the 3D pose model**). On SD 1.5 and SDXL it draws
+    pose sticks (OpenPose, works with Xinsir's union model) or depth. Depth also
+    carries the mannequin's smooth surface, so it starts at weight 0.45.
+    Preprocessor is locked to None.
+  - **Make regions and masks** gives each figure a region in the Regions panel
+    for its own prompt, which follows the figure each time you generate, plus
+    masks for each figure's body, head and hands. A Region margin lets a region
+    reach past the body for hair and loose clothes.
+  - **Show as a guide on the Canvas** puts the figures faintly over the Canvas to
+    draw over. It is only on screen, never in a picture or a file.
+  - **Pose from a picture (opt-in):** reads one person's pose from a picture
+    onto the selected figure. It needs Meta's SAM 3D Body model, a 2.8 GB
+    download that starts only when you press **Get the pose-reading model**.
+    The picture never leaves your computer. The figure stays upright, so someone
+    lying down comes out standing.
+  - The scene is remembered in your browser. It isn't saved with Workflows or
+    the Gallery yet, and there are no props or floor yet. A kneeling or sitting
+    figure needs the setting in the prompt (`sitting on a chair`).
+  - Licences: the Anima 3D pose model is non-commercial, and SAM 3D Body is under
+    Meta's SAM License. See **Licensing** in the Codex.
+- **Fixed: two Anima ControlNet units broke the model.** After a job with two
+  Anima units, Auto Detail, the next job and even a plain job failed with a
+  TypeError until Studio was restarted. Both units now come off cleanly.
+
 ## 0.9.13: First public beta — 2026-11-05
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

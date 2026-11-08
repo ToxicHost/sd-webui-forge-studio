@@ -1,6 +1,8 @@
 __pycache__
 **/tokenizer/tokenizer.json
 *.bin
+# Stage's figure ships with Studio (ST1); it is mesh data, not a model.
+!forge_studio/frontend/stage/body.bin
 *.ckpt
 *.gguf
 *.onnx

@@ -678,6 +678,18 @@ class SourceFrontendAdapter:
         if route == "/studio/cn_models":
             catalogued = self._role_payload("controlnet") or []
             return [{"name": "None", "model_id": ""}, *catalogued]
+        # ST1c. Stage's 3D-pose adapter: installed, downloading, or not. Names
+        # the file and its licence, never a path.
+        if route == "/studio/stage/pose_model":
+            from .stage_assets import FETCHER, controlnet_folder
+
+            return FETCHER.status(controlnet_folder(self._model_roots))
+        # ST7. "Pose from a picture"'s model: installed, downloading, or not.
+        # Never a path.
+        if route == "/studio/stage/picture_model":
+            from .stage_assets import PICTURE_FETCHER, picture_model_folder
+
+            return PICTURE_FETCHER.status(picture_model_folder(self._model_roots))
         # CN1. Neo's preprocessors with what the page builds controls from.
         # Answered only once the engine is up (registration imports Neo);
         # before that the page gets "None" and `loading`, and asks again.
@@ -874,6 +886,49 @@ class SourceFrontendAdapter:
         # owner enables it. See `civitai_lookup.py`.
         if route.startswith("/studio/civitai/"):
             return self._civitai(route, payload if isinstance(payload, Mapping) else {})
+        # ST1c. The owner pressed the unit's download button: fetch the pinned
+        # adapter into the first ControlNet folder, then rescan that role so the
+        # unit's model list shows it.
+        if route == "/studio/stage/pose_model":
+            from .stage_assets import FETCHER, StageAssetError, controlnet_folder
+
+            registry = self._model_roots
+            try:
+                return FETCHER.start(controlnet_folder(registry),
+                                     on_done=lambda: registry.refresh("controlnet"))
+            except StageAssetError as error:
+                raise SourceFrontendAdapterError(str(error), http_status=409) from None
+        # ST7. The owner pressed "Get the pose-reading model" after reading
+        # what it is (2.8 GB, Meta's SAM License): fetch the pinned file.
+        if route == "/studio/stage/picture_model":
+            from .stage_assets import PICTURE_FETCHER, StageAssetError, picture_model_folder
+
+            try:
+                return PICTURE_FETCHER.start(picture_model_folder(self._model_roots))
+            except StageAssetError as error:
+                raise SourceFrontendAdapterError(str(error), http_status=409) from None
+        # ST7. Read a person's pose from a picture for Stage. GPU work outside
+        # the queue, so it holds the coordinator's one-job gate as the
+        # ControlNet preview does: refused while a job runs or waits.
+        if route == "/studio/stage/pose_from_picture":
+            from forge_headless.stage_pose_reader import READER, PoseReadError
+
+            from .contracts import StudioError
+            from .stage_assets import PICTURE_FETCHER, picture_model_folder
+
+            import contextlib
+
+            body = payload if isinstance(payload, Mapping) else {}
+            path = PICTURE_FETCHER.installed_path(picture_model_folder(self._model_roots))
+            hold = getattr(self._presentation, "gpu_side_task", None)
+            try:
+                with (hold("stage-pose") if hold is not None else contextlib.nullcontext()):
+                    return READER.read(path, body.get("image"))
+            except StudioError as error:
+                raise SourceFrontendAdapterError(error.error.message, http_status=409) from None
+            except PoseReadError as error:
+                status = 404 if error.code == "NO_MODEL" else 400
+                raise SourceFrontendAdapterError(error.message, http_status=status) from None
         # P4. "Set preview from file" / "Use last output": `name` is the
         # browser's `stem`, which is the catalogue id.
         if route == "/studio/checkpoint_preview":

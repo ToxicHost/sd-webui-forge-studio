@@ -154,6 +154,8 @@ var ENTRIES = [
   { id: "regional_prompting", title: "Regional Prompting", category: "advanced", tags: ["regional", "regions", "spatial", "zone", "area", "multi", "couple", "masked prompts", "one pass per region"] },
   { id: "attention_couple", title: "Attention Couple (Architecture)", category: "advanced", tags: ["attention", "couple", "regional", "bounded", "self-attention", "cross-attention", "architecture", "softmax", "bias"] },
   { id: "controlnet", title: "ControlNet", category: "advanced", tags: ["controlnet", "pose", "depth", "edge", "canny", "openpose", "lineart", "union", "lllite", "preprocessor", "structure"] },
+  { id: "stage", title: "Stage", category: "advanced", tags: ["stage", "pose", "figure", "mannequin", "3d", "controlnet", "anima", "drag", "camera"] },
+  { id: "licensing", title: "Licensing", category: "getting_started", tags: ["licence", "license", "non-commercial", "agpl", "anima", "circlestone", "openpose", "terms", "sam 3d body", "sam license", "meta"] },
   { id: "word_detail", title: "Auto Detail: Word Detail", category: "advanced", tags: ["word detail", "auto detail", "adetailer", "words", "heatmap", "detail a word", "slot"] },
   { id: "develop", title: "Develop", category: "advanced", tags: ["develop", "exposure", "contrast", "highlights", "shadows", "temperature", "tint", "saturation", "vibrance", "curve", "hsl", "color grading", "local adjustments", "tone"] },
   // ── LAYERS & EXPORT ────────────────────────────────────────

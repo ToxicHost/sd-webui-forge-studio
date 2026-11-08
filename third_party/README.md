@@ -12,6 +12,7 @@ that imports torch at module scope; nothing imports it as part of Studio.
 
 | Package | Used by | Wheel (as Forge's `forge_legacy_preprocessors/install.py` installs it) | sha256 | Licence |
 |---|---|---|---|---|
+| `studio_sam3d` | Stage's "Pose from a picture" (`forge_headless/stage_pose_reader.py`, ST7), which puts this folder on `sys.path` itself | NOT a wheel: ComfyUI's SAM 3D Body implementation, Comfy-Org/ComfyUI commit `0decb39ee5b5e17c200334589fc317dbbe98310e`, its ComfyUI import lines pointed at `shim.py` (plain PyTorch, written for Studio) by `Evidence/controlnet-expansion-2026-11-06/e7/build_port.py`; `SOURCE.txt` names the commit | — | GPL-3.0 (weights: SAM License, downloaded on request, never here) |
 | `depth_anything_v2` | Neo's `depth_anything_v2` preprocessor | `depth_anything_v2-2024.7.1.0-py2.py3-none-any.whl`, github.com/MackinationsAi/UDAV2-ControlNet release v1.0.0 (code from DepthAnything/Depth-Anything-V2) | `6848128867d1f7c7519d88df0f88bfab89100dc5225259c4d7cb90325c308c9f` | Apache-2.0 |
 
 The model WEIGHTS are not here. Neo downloads them on first use

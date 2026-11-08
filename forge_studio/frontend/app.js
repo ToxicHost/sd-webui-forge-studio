@@ -652,6 +652,14 @@ const ControlNetPanel = {
   // The checkpoint check's verdict, from `restoreTextEncoderForModel`.
   fromCheck(check) {
     const arch = (check && check.arch) || "unknown";
+    this.arch = arch;
+    // ST5. Stage units follow the model family: every time it is known, not
+    // only when it changes -- a session that starts on SDXL with a unit
+    // remembered on Anima's adapter must be put right too (seen live,
+    // 2026-11-08).
+    setTimeout(() => this.UNITS.forEach(n => {
+      if (this._el(`paramCN${n}Source`)?.value === "Stage") this._toStage(n);
+    }), 0);
     if (check && check.references === true) this.mode = "klein";
     else this.mode = this.CONTROL_ARCHES.includes(arch) ? "control" : "none";
     this.sync();
@@ -786,6 +794,22 @@ const ControlNetPanel = {
     if (mode) mode.disabled = !!entry && entry.control_mode === false;
     const upload = this._el(`cnUpload${n}`);
     if (upload) upload.hidden = this._el(`paramCN${n}Source`)?.value !== "Upload";
+    const stage = this._el(`cnStage${n}`);
+    const onStage = this._el(`paramCN${n}Source`)?.value === "Stage";
+    if (stage) stage.hidden = !onStage;
+    // ST5c. Stage's map is already finished: a preprocessor would re-read it
+    // (OpenPose finds no person in sticks; a depth estimator turns them into
+    // lines), as the owner's first SDXL runs did. Locked to None on Stage.
+    const module = this._el(`paramCN${n}Module`);
+    if (module) {
+      if (onStage && module.value !== "None") {
+        module.value = "None";
+        module.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      module.disabled = onStage;
+      module.title = onStage ? _i18n("ui.controlnet.stageNoPreprocessor",
+        "Stage sends a finished map, so this unit uses no preprocessor. Choose what Stage draws with Map.") : "";
+    }
     const klein = this._el(`cnKleinBtn${n}`);
     if (klein) klein.hidden = this.mode !== "klein";
   },
@@ -795,7 +819,23 @@ const ControlNetPanel = {
     this._bound = true;
     this.UNITS.forEach(n => {
       this._el(`paramCN${n}Module`)?.addEventListener("change", () => this._syncUnit(n, true));
-      this._el(`paramCN${n}Source`)?.addEventListener("change", () => this._syncUnit(n, false));
+      this._el(`paramCN${n}Source`)?.addEventListener("change", () => {
+        if (this._el(`paramCN${n}Source`)?.value === "Stage") this._toStage(n);
+        this._syncUnit(n, false);
+      });
+      this._el(`cnStageBtn${n}`)?.addEventListener("click", () => window.StudioStage?.open());
+      this._el(`cnStageGet${n}`)?.addEventListener("click", () => this._getPoseModel(n));
+      // ST5. Choosing Depth by hand: depth carries the mannequin's build as well
+      // as its pose, so a unit still at full strength starts gentler.
+      this._el(`cnStageMap${n}`)?.addEventListener("change", () => {
+        if (this._stageMap(n) === "depth") {
+          const weight = this._el(`paramCN${n}Weight`), end = this._el(`paramCN${n}End`);
+          if (weight && parseFloat(weight.value) === 1) weight.value = "0.45";
+          if (end && parseFloat(end.value) === 1) end.value = "0.5";
+        }
+        if (this._el(`paramCN${n}Source`)?.value === "Stage") this._toStage(n);
+        window.StudioStage?.ensureReady?.().then(() => { this._watchStage(); this._stageRefresh?.(); }, () => {});
+      });
       // The owner's resolution, or a restored workflow's (restores fire
       // `input`/`change`), is sent; an untouched one is Neo's default.
       const res = this._el(`paramCN${n}Res`);
@@ -818,6 +858,11 @@ const ControlNetPanel = {
       this._el(`cnKleinBtn${n}`)?.addEventListener("click", () => this.toKlein(n));
     });
     this.sync();
+    // A unit restored on Stage (a remembered session) loads the figure now.
+    if (this.UNITS.some(n => this._el(`paramCN${n}Source`)?.value === "Stage")) {
+      window.StudioStage?.ensureReady?.().catch(() => {});
+      this._watchStage();
+    }
   },
 
   // WebP keeps transparency and stays small; the server flattens it onto
@@ -863,7 +908,140 @@ const ControlNetPanel = {
       const layer = window.StudioCore?.activeLayer?.();
       return layer && layer.canvas ? this._encode(layer.canvas) : null;
     }
+    if (source === "Stage") {
+      const map = window.StudioStage?.renderMap?.(
+        parseInt(this._el("paramWidth")?.value, 10) || 1024,
+        parseInt(this._el("paramHeight")?.value, 10) || 1024,
+        this._stageMap(n));
+      return map ? this._encode(map) : null;
+    }
     return null;
+  },
+
+  // ST1. A unit switched to Stage: the map is already a finished control
+  // picture, so no preprocessor, and on Anima the 3D-pose adapter it was made
+  // for, when that file is in the ControlNet folder. Stage starts loading now,
+  // so the map is ready by the time Generate asks for it.
+  _toStage(n) {
+    const module = this._el(`paramCN${n}Module`);
+    if (module && module.value !== "None") {
+      module.value = "None";
+      module.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    // ST5. The map follows the model family: the shaded figure for Anima's
+    // 3D-pose adapter; OpenPose sticks for SD 1.5 and SDXL (depth on request).
+    const mapSelect = this._el(`cnStageMap${n}`);
+    if (mapSelect) {
+      if (this.arch === "cosmos") mapSelect.value = "mesh";
+      else if (mapSelect.value === "mesh") mapSelect.value = "pose";
+    }
+    const model = this._el(`paramCN${n}Model`);
+    const pick = pattern => {
+      const found = [...(model?.options || [])].find(o => pattern.test(o.textContent || ""));
+      if (found && model.value !== found.value) {
+        model.value = found.value;
+        model.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return found;
+    };
+    if (model && this.arch === "cosmos") {
+      this._offerPoseModel(n, !pick(/anima_3dpose(?!_outline)/i));
+    } else if (model) {
+      this._offerPoseModel(n, false);
+      // A Union model takes both kinds; otherwise one made for this kind.
+      // Never an Anima model here: "anima_3dpose" contains "pose".
+      const kind = this._stageMap(n) === "depth" ? /depth/i : /openpose|pose/i;
+      const fits = text => !/anima/i.test(text) && (/union/i.test(text) || kind.test(text));
+      if (!fits(model.selectedOptions?.[0]?.textContent || "")) {
+        const options = [...model.options];
+        const found = options.find(o => !/anima/i.test(o.textContent || "") && /union/i.test(o.textContent || ""))
+          || options.find(o => fits(o.textContent || ""));
+        if (found) {
+          model.value = found.value;
+          model.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+    }
+    window.StudioStage?.ensureReady?.().catch(() => {
+      showToast(_i18n("ui.controlnet.stageFailed", "Stage could not load its figure. The console names the reason."), "error");
+    });
+    this._watchStage();
+  },
+
+  // ST5. What a Stage unit sends: "mesh", "pose" or "depth".
+  _stageMap(n) {
+    const value = this._el(`cnStageMap${n}`)?.value;
+    return value === "pose" || value === "depth" ? value : "mesh";
+  },
+
+  // ST5. A Union ControlNet learns the map's kind from the unit, since a
+  // Stage map has no preprocessor to say it (Neo's convert_control_type).
+  _stageControlType(n) {
+    if (this._el(`paramCN${n}Source`)?.value !== "Stage") return "";
+    return { pose: "OpenPose", depth: "Depth" }[this._stageMap(n)] || "";
+  },
+
+  // ST1c. On Anima without the 3D pose model, the unit offers to fetch it.
+  // Studio goes online only on this press; the file's licence is in the
+  // Codex's Licensing entry, which the note points to.
+  _offerPoseModel(n, missing) {
+    const get = this._el(`cnStageGet${n}`);
+    const note = this._el(`cnStageNote${n}`);
+    if (get) get.hidden = !missing;
+    if (note) {
+      note.hidden = !missing;
+      note.textContent = missing ? _i18n("ui.controlnet.poseModelNote",
+        "On Anima, Stage's figures need the 3D pose model (anima_3dpose_6200, 51 MB). It is free to use for non-commercial work: see Licensing in the Codex.") : "";
+    }
+  },
+
+  async _getPoseModel(n) {
+    const get = this._el(`cnStageGet${n}`);
+    const label = get?.textContent;
+    if (get) get.disabled = true;
+    try {
+      let status = await API.post("/studio/stage/pose_model", {});
+      while (status && status.state === "downloading") {
+        if (get) {
+          get.textContent = _i18n("ui.controlnet.poseModelProgress", "Downloading… {got} of {total} MB",
+            { got: Math.round(status.received / 1048576), total: Math.round(status.total / 1048576) });
+        }
+        await new Promise(r => setTimeout(r, 1000));
+        status = await API.get("/studio/stage/pose_model");
+      }
+      if (status && status.state === "failed") throw new Error(status.error);
+      await this.loadLists();
+      this.UNITS.forEach(u => { if (this._el(`paramCN${u}Source`)?.value === "Stage") this._toStage(u); });
+      showToast(_i18n("ui.controlnet.poseModelReady", "The 3D pose model is in your ControlNet folder."), "success");
+    } catch (error) {
+      showToast((error && error.message) || _i18n("ui.controlnet.poseModelFailed", "The 3D pose model could not be downloaded."), "error");
+    } finally {
+      if (get) { get.disabled = false; get.textContent = label; }
+    }
+  },
+
+  // The unit's thumbnail follows the scene.
+  _watchStage() {
+    if (this._stageWatched || !window.StudioStage) return;
+    this._stageWatched = true;
+    let timer = 0;
+    const refresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const w = parseInt(this._el("paramWidth")?.value, 10) || 1024;
+        const h = parseInt(this._el("paramHeight")?.value, 10) || 1024;
+        const scale = 96 / Math.max(w, h);
+        this.UNITS.forEach(n => {
+          const thumb = this._el(`cnStageThumb${n}`);
+          if (!thumb || this._el(`paramCN${n}Source`)?.value !== "Stage") return;
+          const map = window.StudioStage.renderMap(w * scale, h * scale, this._stageMap(n));
+          if (map) { thumb.src = map.toDataURL("image/png"); thumb.hidden = false; }
+        });
+      }, 250);
+    };
+    this._stageRefresh = refresh;
+    window.StudioStage.onChange(refresh);
+    window.StudioStage.ensureReady?.().then(refresh, () => {});
   },
 
   _number(id, fallback) {
@@ -888,6 +1066,7 @@ const ControlNetPanel = {
       threshold_b: slider("slider_2") ? this._number(`paramCN${n}ThrB`, -1) : -1,
       pixel_perfect: this._checked(`checkCN${n}PP`),
       hires_option: this._el(`paramCN${n}Hires`)?.value || "Both",
+      control_type: this._stageControlType(n),
     };
   },
 
@@ -901,6 +1080,15 @@ const ControlNetPanel = {
       const unit = this._settings(n);
       if (unit.processor_res < 64) unit.processor_res = -1;
       const image = this._ownImage(n);
+      // A Stage unit without its map would quietly read the canvas instead,
+      // which is never what the owner chose. It is left out, and said.
+      if (!image && this._el(`paramCN${n}Source`)?.value === "Stage") {
+        window.StudioStage?.ensureReady?.().catch(() => {});
+        this._watchStage();
+        showToast(_i18n("ui.controlnet.stageNotReady",
+          "ControlNet unit {n} uses Stage, which is still loading its figure, so it was left out of this picture.", { n }), "info");
+        return;
+      }
       if (image) unit.image = { data_url: image, origin: "canvas" };
       units.push(unit);
     });
@@ -4503,6 +4691,9 @@ function _collectCanvasSource(w, h) {
   // S1: with Soft Inpainting on, a named mask is sent as its grey.
   const softOn = !!document.getElementById("checkSoftInpaint")?.classList.contains("checked");
   const maskB64 = (eng.state._userMaskMode) ? eng.exportMask({ soft: softOn }) : "";
+  // ST2. Regions made by Stage follow their figures: re-drawn from the scene
+  // as it is now, at this document size, before they are sent.
+  try { window.StudioStage?.refreshLinkedRegions?.(); } catch (e) { console.warn("[Studio] Stage regions:", e); }
   const regionsJson = eng.serializeRegions();
   // `exportMask()` returns the STRING "null" when mask mode is on but nothing
   // has been painted (canvas-core.js:3250). That string is truthy, so

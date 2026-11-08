@@ -1125,6 +1125,7 @@
                       <option value="Canvas" data-i18n="ui.controlnet.source.canvas">Canvas</option>
                       <option value="Active Layer" data-i18n="ui.controlnet.source.layer">Active layer</option>
                       <option value="Upload" data-i18n="ui.controlnet.source.upload">Upload</option>
+                      <option value="Stage" data-i18n="ui.controlnet.source.stage">Stage</option>
                     </select>
                   </div>
                   <div class="param-cell" data-help="help.controlnet.weight"><label data-i18n="ui.controlnet.weight">Weight</label><input class="param-val" id="paramCN1Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
@@ -1135,6 +1136,17 @@
                   <img class="cn-upload-thumb" id="cnUploadThumb1" alt="" hidden>
                   <button class="cn-upload-clear" type="button" id="cnUploadClear1" data-i18n-title="ui.controlnet.removeUpload" title="Remove" hidden>&#x2715;</button>
                 </div>
+                <div class="cn-upload-row" id="cnStage1" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnStageBtn1" data-i18n="ui.controlnet.editInStage">Edit in Stage</button>
+                  <select class="param-select cn-stage-map" id="cnStageMap1" data-i18n-title="ui.controlnet.stageMapTitle" title="What Stage sends this unit">
+                    <option value="mesh" data-i18n="ui.controlnet.stageMap.mesh">3D figure</option>
+                    <option value="pose" data-i18n="ui.controlnet.stageMap.pose">Pose sticks</option>
+                    <option value="depth" data-i18n="ui.controlnet.stageMap.depth">Depth</option>
+                  </select>
+                  <img class="cn-upload-thumb" id="cnStageThumb1" alt="" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnStageGet1" data-i18n="ui.controlnet.getPoseModel" hidden>Get the 3D pose model</button>
+                </div>
+                <div class="cn-note" id="cnStageNote1" hidden></div>
                 <div class="cn-actions">
                   <button class="cn-upload-btn" type="button" id="cnPreviewBtn1" data-i18n="ui.controlnet.preview">Preview map</button>
                   <button class="cn-upload-btn" type="button" id="cnKleinBtn1" data-i18n="ui.controlnet.toKlein" hidden>Use as Klein reference</button>
@@ -1197,6 +1209,7 @@
                       <option value="Canvas" data-i18n="ui.controlnet.source.canvas">Canvas</option>
                       <option value="Active Layer" data-i18n="ui.controlnet.source.layer">Active layer</option>
                       <option value="Upload" data-i18n="ui.controlnet.source.upload">Upload</option>
+                      <option value="Stage" data-i18n="ui.controlnet.source.stage">Stage</option>
                     </select>
                   </div>
                   <div class="param-cell" data-help="help.controlnet.weight"><label data-i18n="ui.controlnet.weight">Weight</label><input class="param-val" id="paramCN2Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
@@ -1207,6 +1220,17 @@
                   <img class="cn-upload-thumb" id="cnUploadThumb2" alt="" hidden>
                   <button class="cn-upload-clear" type="button" id="cnUploadClear2" data-i18n-title="ui.controlnet.removeUpload" title="Remove" hidden>&#x2715;</button>
                 </div>
+                <div class="cn-upload-row" id="cnStage2" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnStageBtn2" data-i18n="ui.controlnet.editInStage">Edit in Stage</button>
+                  <select class="param-select cn-stage-map" id="cnStageMap2" data-i18n-title="ui.controlnet.stageMapTitle" title="What Stage sends this unit">
+                    <option value="mesh" data-i18n="ui.controlnet.stageMap.mesh">3D figure</option>
+                    <option value="pose" data-i18n="ui.controlnet.stageMap.pose">Pose sticks</option>
+                    <option value="depth" data-i18n="ui.controlnet.stageMap.depth">Depth</option>
+                  </select>
+                  <img class="cn-upload-thumb" id="cnStageThumb2" alt="" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnStageGet2" data-i18n="ui.controlnet.getPoseModel" hidden>Get the 3D pose model</button>
+                </div>
+                <div class="cn-note" id="cnStageNote2" hidden></div>
                 <div class="cn-actions">
                   <button class="cn-upload-btn" type="button" id="cnPreviewBtn2" data-i18n="ui.controlnet.preview">Preview map</button>
                   <button class="cn-upload-btn" type="button" id="cnKleinBtn2" data-i18n="ui.controlnet.toKlein" hidden>Use as Klein reference</button>
@@ -1269,6 +1293,7 @@
                       <option value="Canvas" data-i18n="ui.controlnet.source.canvas">Canvas</option>
                       <option value="Active Layer" data-i18n="ui.controlnet.source.layer">Active layer</option>
                       <option value="Upload" data-i18n="ui.controlnet.source.upload">Upload</option>
+                      <option value="Stage" data-i18n="ui.controlnet.source.stage">Stage</option>
                     </select>
                   </div>
                   <div class="param-cell" data-help="help.controlnet.weight"><label data-i18n="ui.controlnet.weight">Weight</label><input class="param-val" id="paramCN3Weight" data-min="0" data-max="2" data-step="0.05" value="1.0"></div>
@@ -1279,6 +1304,17 @@
                   <img class="cn-upload-thumb" id="cnUploadThumb3" alt="" hidden>
                   <button class="cn-upload-clear" type="button" id="cnUploadClear3" data-i18n-title="ui.controlnet.removeUpload" title="Remove" hidden>&#x2715;</button>
                 </div>
+                <div class="cn-upload-row" id="cnStage3" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnStageBtn3" data-i18n="ui.controlnet.editInStage">Edit in Stage</button>
+                  <select class="param-select cn-stage-map" id="cnStageMap3" data-i18n-title="ui.controlnet.stageMapTitle" title="What Stage sends this unit">
+                    <option value="mesh" data-i18n="ui.controlnet.stageMap.mesh">3D figure</option>
+                    <option value="pose" data-i18n="ui.controlnet.stageMap.pose">Pose sticks</option>
+                    <option value="depth" data-i18n="ui.controlnet.stageMap.depth">Depth</option>
+                  </select>
+                  <img class="cn-upload-thumb" id="cnStageThumb3" alt="" hidden>
+                  <button class="cn-upload-btn" type="button" id="cnStageGet3" data-i18n="ui.controlnet.getPoseModel" hidden>Get the 3D pose model</button>
+                </div>
+                <div class="cn-note" id="cnStageNote3" hidden></div>
                 <div class="cn-actions">
                   <button class="cn-upload-btn" type="button" id="cnPreviewBtn3" data-i18n="ui.controlnet.preview">Preview map</button>
                   <button class="cn-upload-btn" type="button" id="cnKleinBtn3" data-i18n="ui.controlnet.toKlein" hidden>Use as Klein reference</button>
@@ -2518,7 +2554,7 @@
   // Legacy paints everything. Kept on ONE line: other suites parse this
   // array with a non-DOTALL regex and a wrapped array is invisible to
   // them.
-  const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js", "studio-model-controls.js", "studio-dir-picker.js", "v2/brush-contracts.js", "v2/input.js", "v2/sampler.js", "v2/filters.js", "v2/dynamics.js", "v2/coverage.js", "v2/canvas-adapter.js"];
+  const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "stage.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js", "studio-model-controls.js", "studio-dir-picker.js", "v2/brush-contracts.js", "v2/input.js", "v2/sampler.js", "v2/filters.js", "v2/dynamics.js", "v2/coverage.js", "v2/canvas-adapter.js"];
   const v = "4.17.0";
   window.__STUDIO_V = v;
   for (const s of scripts) {

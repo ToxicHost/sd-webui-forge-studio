@@ -121,6 +121,12 @@ CONTROLNET_CONTROL_MODES = (
     "Balanced", "My prompt is more important", "ControlNet is more important")
 CONTROLNET_RESIZE_MODES = ("Just Resize", "Crop and Resize", "Resize and Fill")
 CONTROLNET_HIRES_OPTIONS = ("Both", "Low res only", "High res only")
+#: ST5. Which kind of map a unit carries, for a Union ControlNet: Neo's
+#: `UNION_CONTROLNET_TYPES` names (`backend/nn/cnets/control_types.py`). ""
+#: means "from the preprocessor", Forge's own pairing. A Stage unit has no
+#: preprocessor (its map is already made), so it names its type here.
+CONTROLNET_CONTROL_TYPES = ("", "OpenPose", "Depth", "Scribble/SoftEdge/Sketch", "Canny/Lineart/MLSD",
+                            "NormalMap", "Segmentation", "Tile", "Inpaint")
 
 #: RG1. How a job's regions are applied. "auto": Attention Couple on SD 1.5
 #: and SDXL (the Extension's mode there), masked conditioning everywhere else;
@@ -899,6 +905,9 @@ class ControlNetUnitSettings(Contract):
     threshold_b: float = -1.0
     pixel_perfect: bool = False
     hires_option: str = "Both"
+    #: ST5. A Union model's control type when the preprocessor cannot say it
+    #: (a Stage map). "" leaves it to the preprocessor, as before.
+    control_type: str = ""
 
 
 @dataclass(frozen=True)

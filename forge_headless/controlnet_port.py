@@ -593,6 +593,45 @@ def check(engine: Any, options: tuple[Any, ...], *, has_source: bool = True) -> 
                 "CONTROLNET_MODEL_MISSING",
                 f"ControlNet unit {number}: choose a model for "
                 f"{unit.preprocessor!r}.")
+        # ST5b. An Anima ControlNet on another family (or the reverse) failed
+        # mid-job with a bare AttributeError -- seen live 2026-11-08, a Stage
+        # unit still on anima_3dpose_6200 after an SDXL model was chosen.
+        if unit.model_path:
+            made_for_anima = is_anima_adapter(unit.model_path)
+            anima_loaded = type(engine).__name__ == "Anima"
+            name = getattr(unit, "model_name", "") or "this model"
+            if made_for_anima is True and not anima_loaded:
+                raise HeadlessError(
+                    "CONTROLNET_MODEL_FAMILY",
+                    f"ControlNet unit {number}: {name} is made for Anima models, and the "
+                    "loaded model is not Anima. Choose a ControlNet made for SD 1.5 or SDXL.")
+            if made_for_anima is False and anima_loaded:
+                raise HeadlessError(
+                    "CONTROLNET_MODEL_FAMILY",
+                    f"ControlNet unit {number}: {name} is not made for Anima. Anima takes "
+                    "Anima ControlNet-LLLite models (anima-lllite-..., anima_3dpose...).")
+
+
+def is_anima_adapter(path: str) -> bool | None:
+    """Neo's own test (`ControlLLLiteAnimaPatcher.try_build_from_state_dict`: a key
+    starting "lllite_dit"), read from the safetensors header alone, so no
+    weights are loaded. None when the file cannot say (not safetensors, unreadable).
+    """
+
+    import json
+    import struct
+
+    if not str(path).lower().endswith(".safetensors"):
+        return None
+    try:
+        with open(path, "rb") as handle:
+            size = struct.unpack("<Q", handle.read(8))[0]
+            if not 0 < size <= 64 * 1024 * 1024:
+                return None
+            header = json.loads(handle.read(size))
+    except (OSError, ValueError, struct.error):
+        return None
+    return any(str(key).startswith("lllite_dit") for key in header)
 
 
 #: Neo's Union ControlNet types (`backend/nn/cnets/control_types.py`), read
@@ -636,7 +675,10 @@ def neo_units(options: tuple[Any, ...]) -> list[Any]:
             model = _model_key(unit, taken)
             global_state.controlnet_filename_dict[model] = unit.model_path
         units.append(ControlNetUnit(
-            type_filter=type_filter(supported_preprocessors.get(unit.preprocessor)),
+            # ST5. A unit that names its type (a Stage map, no preprocessor)
+            # wins; otherwise Forge's pairing from the preprocessor's tags.
+            type_filter=(getattr(unit, "control_type", "") or
+                         type_filter(supported_preprocessors.get(unit.preprocessor))),
             enabled=True,
             module=unit.preprocessor,
             model=model,
@@ -711,8 +753,30 @@ class ControlNetRunner:
             self._script.process_before_every_sampling(p, *self._units, **kwargs)
 
     def postprocess_batch_list(self, p: Any, pp: Any, **kwargs: Any) -> None:
-        if self._script is not None:
-            self._script.postprocess_batch_list(p, pp, *self._units, **kwargs)
+        """Neo's `postprocess_batch_list`, with the units taken LAST FIRST.
+
+        Neo walks the units in the order it applied them. An Anima
+        Control-LLLite unit wraps each layer's `forward` and its "after" hook
+        puts back what it wrapped, so with two such units the second puts the
+        first one's wrapper back on the layer, and that wrapper's own original
+        is already gone. The next forward call raises TypeError: the rest of
+        the job (Auto Detail) and every later generation fail until Studio
+        restarts, ControlNet on or off. Seen live 2026-11-07, three jobs out of
+        three. Undoing in reverse order is the general rule for nested wraps.
+
+        Every other "after" hook is a no-op or touches only the finished
+        pictures (the inpaint preprocessor's blend), so each unit's own hooks
+        run as before; only the order across units changes. The call per unit
+        is Neo's own, with the arguments Neo gives it (`pp, *units`).
+        Review: `Evidence/source-review/CN2-stacked-restore.md`.
+        """
+        if self._script is None:
+            return
+        script = self._script
+        enabled = list(enumerate(script.get_enabled_units(self._units)))
+        for index, unit in reversed(enabled):
+            script.process_unit_after_every_sampling(
+                p, unit, script.current_params[index], pp, *self._units, **kwargs)
 
     def postprocess(self, p: Any, processed: Any, *_args: Any) -> None:
         if self._script is not None:

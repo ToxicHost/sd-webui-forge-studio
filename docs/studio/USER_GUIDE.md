@@ -33,7 +33,12 @@ Studio serves its pages to this computer only. It goes online only for:
   > About > Check for Updates (Git, to the repository you cloned), when you press
   them;
 - a ControlNet preprocessor's model, downloaded the first time you use that
-  preprocessor.
+  preprocessor;
+- Get the 3D pose model in a ControlNet unit set to Stage (one file from
+  huggingface.co, checked before it is kept), and Get the pose-reading model in
+  Stage's Pose section (one 2.8 GB file from huggingface.co, checked before it
+  is kept; the pictures you read poses from never leave this computer), when
+  you press them.
 
 Nothing updates automatically. Setup downloads dependencies.
 

@@ -231,6 +231,8 @@ class ControlNetUnitOptions:
     threshold_b: float = -1.0
     pixel_perfect: bool = False
     hires_option: str = "Both"
+    #: ST5. A Union model's control type; "" takes it from the preprocessor.
+    control_type: str = ""
 
 
 #: RG1. Mirrors `forge_studio.contracts.REGION_METHODS`.

@@ -753,6 +753,7 @@ def _translated_controlnet(units: Any) -> tuple[Any, ...]:
             threshold_b=float(getattr(unit, "threshold_b", -1.0)),
             pixel_perfect=bool(getattr(unit, "pixel_perfect", False)),
             hires_option=str(getattr(unit, "hires_option", "Both")),
+            control_type=str(getattr(unit, "control_type", "") or ""),
         ))
     return tuple(translated)
 
