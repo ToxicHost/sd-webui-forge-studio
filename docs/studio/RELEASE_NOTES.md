@@ -3,6 +3,20 @@
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. Studio is in public beta on Windows/NVIDIA.
 
+## 0.9.16: ControlNet fix — 2026-11-09
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **ControlNet works on a fresh install.** Every ControlNet job, including a
+  pose sent from Stage, failed with "ControlNet could not be loaded: No module
+  named 'gradio'" on any install made since ControlNet arrived. Studio doesn't
+  use Gradio, but part of the ControlNet code it borrows from Forge still asked
+  for it. That code no longer needs it.
+- **One press of Update brings any copy up to date.** A copy installed before
+  0.9.13 used to stop at 0.9.13 on its first update and needed a second press
+  to reach the newest version. Both release branches now carry each release.
+
 ## 0.9.15: Stage fixes, one name per picture — 2026-11-08
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import types
 from pathlib import Path
 from typing import Any, Callable
 
@@ -100,12 +101,17 @@ def resolve_model(model_id: str) -> tuple[str, str]:
 # -- registration ------------------------------------------------------------
 
 def _load(name: str, source: Path) -> Any:
+    import builtins
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(name, source)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {source.name}")
     module = importlib.util.module_from_spec(spec)
+    # The module's own import statements go through `_import_without_gradio`
+    # (`exec` keeps a `__builtins__` that is already there). Nothing else in
+    # the process is affected.
+    module.__dict__["__builtins__"] = {**builtins.__dict__, "__import__": _import_without_gradio}
     sys.modules[name] = module
     try:
         spec.loader.exec_module(module)
@@ -113,6 +119,104 @@ def _load(name: str, source: Path) -> Any:
         sys.modules.pop(name, None)
         raise
     return module
+
+
+# -- without Gradio ----------------------------------------------------------
+#
+# THE DEFECT (0.9.15, a tester's fresh install). Neo's `sd_forge_controlnet/
+# scripts/controlnet.py:5` and `lib_controlnet/infotext.py:1` do `import
+# gradio as gr` at module scope, and the script imports two Gradio-only
+# modules: its panel (`controlnet_ui/controlnet_ui_group.py`, which also needs
+# `gradio_rangeslider`) and its `--api` routes (`lib_controlnet/api.py`).
+# Studio does not install Gradio (Neo itself dropped it from requirements.txt
+# in 80fb8b33), so on a fresh install every ControlNet job failed with
+# "No module named 'gradio'". The dev venv still had Gradio from an older
+# Neo, so the CN1 probe and every test passed -- and each ControlNet job there
+# imported the real Gradio into Studio's runtime.
+#
+# WHAT IS USED. At runtime, nothing of Gradio: `gr` is read only in `ui()` and
+# `on_ui_settings`, which build Neo's panel and settings page (Studio calls
+# neither), and in one annotation inside a function body, which Python never
+# evaluates. Of the panel the script reads one class attribute,
+# `ControlNetUiGroup.GLOBAL_CONTROLNET_BATCH_DIR` (`controlnet.py:138`), a
+# folder set only from the panel, so always "" here. `controlnet_api` is
+# registered only under `--api`, which Studio never sets.
+#
+# SO. The files `_load` imports see a placeholder for Gradio and headless
+# stand-ins for those two modules, through their own `__import__`. Nothing
+# named `gradio` ever enters `sys.modules`, so `application.
+# gradio_modules_loaded` and the facade's check stay true to the process, and
+# Neo's files are not edited.
+
+_GRADIO_ROOTS = frozenset({"gradio", "gradio_client", "gradio_rangeslider", "gradio_imageslider"})
+#: Runtime modules that import Gradio for annotations only: loaded through
+#: `_load`, so their imports go through `_import_without_gradio` too.
+_GRADIO_NAMING = {"lib_controlnet.infotext": ("sd_forge_controlnet", "lib_controlnet", "infotext.py")}
+
+
+class _NoGradio(types.ModuleType):
+    """What `import gradio as gr` binds. Any use names why it cannot work."""
+
+    def __getattr__(self, attribute: str) -> Any:
+        if attribute.startswith("__"):
+            raise AttributeError(attribute)
+        raise AttributeError(
+            f"gradio.{attribute}: Studio runs without Gradio. This is Neo's ControlNet "
+            "panel code, which Studio never builds.")
+
+
+_NO_GRADIO = _NoGradio("gradio", "Studio's placeholder: Studio runs without Gradio.")
+
+
+class _ControlNetUiGroup:
+    """Headless stand-in for Neo's panel (`controlnet_ui_group.py:103`)."""
+
+    #: Set only by the panel's batch-folder box (`controlnet_ui_group.py:843`).
+    GLOBAL_CONTROLNET_BATCH_DIR: str = ""
+
+    @staticmethod
+    def on_after_component(component: Any, **_kwargs: Any) -> None:
+        return None
+
+    @staticmethod
+    def reset() -> None:
+        return None
+
+
+def _controlnet_api(*_args: Any, **_kwargs: Any) -> None:
+    """Neo's `lib_controlnet/api.py` registers HTTP routes under `--api` only."""
+
+    return None
+
+
+def _ui_standin(name: str) -> Any:
+    module = types.ModuleType(name, "Studio's headless stand-in (forge_headless/controlnet_port.py).")
+    if name.endswith("controlnet_ui_group"):
+        module.ControlNetUiGroup = _ControlNetUiGroup
+    else:
+        module.controlnet_api = _controlnet_api
+    return module
+
+
+_UI_ONLY: dict[str, Any] = {}
+
+
+def _import_without_gradio(name: str, globals_: Any = None, locals_: Any = None,
+                           fromlist: Any = (), level: int = 0) -> Any:
+    import builtins
+
+    if level == 0:
+        if name.partition(".")[0] in _GRADIO_ROOTS:
+            return _NO_GRADIO
+        if fromlist and name in ("lib_controlnet.api", "lib_controlnet.controlnet_ui.controlnet_ui_group"):
+            if name not in _UI_ONLY:
+                _UI_ONLY[name] = _ui_standin(name)
+            return _UI_ONLY[name]
+        if name in _GRADIO_NAMING and name not in sys.modules:
+            package, _, attribute = name.rpartition(".")
+            parent = builtins.__import__(package, fromlist=("__name__",))
+            setattr(parent, attribute, _load(name, _BUILTIN.joinpath(*_GRADIO_NAMING[name])))
+    return builtins.__import__(name, globals_, locals_, fromlist, level)
 
 
 def _decode_base64_to_image(encoding: str) -> Any:
