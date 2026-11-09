@@ -99,6 +99,34 @@ def rotation_to_quaternion(matrix: Any) -> list[float]:
     return [round(sign * v / norm, 6) for v in (x, y, z, w)]
 
 
+#: Studio's bundled person detectors (`forge_studio.detector_catalogue`),
+#: smaller first: one box per picture, so the small one is enough.
+PERSON_DETECTORS = ("person_yolov8n-seg.pt", "person_yolov8s-seg.pt")
+#: Below this confidence a detection is not trusted over the whole picture.
+PERSON_CONFIDENCE = 0.3
+
+
+def person_box(detector_path: Path | None, image: Any) -> list[float]:
+    """The largest detected person's box [x1, y1, x2, y2], or the whole picture
+    when there is no detector, no person, or the detector fails. Runs on the
+    CPU through Studio's one ultralytics door (`detector_adapter.detect`)."""
+
+    whole = [0.0, 0.0, float(image.width), float(image.height)]
+    if detector_path is None or not Path(detector_path).is_file():
+        return whole
+    try:
+        from forge_headless.detector_adapter import bbox_area, detect
+
+        found = detect(detector_path, image, confidence=PERSON_CONFIDENCE)
+    except Exception as error:  # noqa: BLE001 - the whole picture still reads
+        print(f"[Stage] Person detector unavailable, reading the whole picture: {type(error).__name__}",
+              file=sys.stderr)
+        return whole
+    if not found.bboxes:
+        return whole
+    return [float(v) for v in max(found.bboxes, key=bbox_area)]
+
+
 class PoseReader:
     """Loads the model once (on first read) and reads one picture at a time."""
 
@@ -110,10 +138,15 @@ class PoseReader:
     def loaded(self) -> bool:
         return self._model is not None
 
-    def read(self, model_path: Path | None, data_url: Any) -> dict[str, Any]:
+    def read(self, model_path: Path | None, data_url: Any,
+             detector_path: Path | None = None) -> dict[str, Any]:
         if model_path is None or not Path(model_path).is_file():
             raise PoseReadError("NO_MODEL", "The pose-reading model is not installed. Get it in Stage first.")
         image = decode_picture(data_url)
+        # F6. The person's own box, from Studio's bundled person detector: a
+        # small or off-centre person in a whole-picture box reaches the model
+        # as a few pixels. The model pads the box itself (1.25x).
+        box_xyxy = person_box(detector_path, image)
         with self._lock:
             model = self._load(Path(model_path))
             import numpy as np
@@ -124,7 +157,7 @@ class PoseReader:
 
             device = get_torch_device()
             frame = torch.from_numpy(np.asarray(image).copy())
-            box = torch.tensor([[0.0, 0.0, float(image.width), float(image.height)]])
+            box = torch.tensor([[float(v) for v in box_xyxy]])
             try:
                 model.to(device)
                 with torch.inference_mode():
@@ -134,8 +167,11 @@ class PoseReader:
                                     "The card ran out of memory reading the pose. Unload a model and try again.") from None
             finally:
                 model.to("cpu")
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                # Studio's one sanctioned cache clear (CUDA or MPS); a second
+                # clearing function is a guard breach (tier0 registry contract).
+                from forge_headless.controlled_device import release_cuda_cache
+
+                release_cuda_cache()
         people = []
         for person in frames[0] if frames else []:
             rotations = person.get("pred_global_rots")

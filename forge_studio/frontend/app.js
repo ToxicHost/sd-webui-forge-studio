@@ -913,7 +913,9 @@ const ControlNetPanel = {
         parseInt(this._el("paramWidth")?.value, 10) || 1024,
         parseInt(this._el("paramHeight")?.value, 10) || 1024,
         this._stageMap(n));
-      return map ? this._encode(map) : null;
+      // F1. PNG, not WebP: lossy WebP halves colour resolution, and the
+      // sticks' colours are their meaning. Exactly the pixels Stage drew.
+      return map ? KleinReferences._scaled(map, this.MAX_SIDE).toDataURL("image/png") : null;
     }
     return null;
   },
@@ -928,12 +930,27 @@ const ControlNetPanel = {
       module.value = "None";
       module.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    // ST5. The map follows the model family: the shaded figure for Anima's
-    // 3D-pose adapter; OpenPose sticks for SD 1.5 and SDXL (depth on request).
+    // ST5. The map starts from the model family: the shaded figure for Anima's
+    // 3D-pose adapter; OpenPose sticks for SD 1.5 and SDXL. Set only when the
+    // family changes (or an SD unit is first seen on the figure), never over
+    // the owner's own choice: Anima has lllite depth and pose models too, and
+    // a reset here snapped every pick back to the figure (owner, 2026-11-08).
     const mapSelect = this._el(`cnStageMap${n}`);
-    if (mapSelect) {
-      if (this.arch === "cosmos") mapSelect.value = "mesh";
-      else if (mapSelect.value === "mesh") mapSelect.value = "pose";
+    const family = this.arch === "cosmos" ? "anima" : "sd";
+    if (mapSelect && mapSelect.dataset.family !== family) {
+      const first = !mapSelect.dataset.family;
+      mapSelect.dataset.family = family;
+      if (family === "anima" && !first) mapSelect.value = "mesh";
+      else if (family === "sd" && mapSelect.value === "mesh") mapSelect.value = "pose";
+    }
+    // No sticks on Anima: its pose adapter (anima-lllite-pose) did not follow
+    // a pose at any weight, even from a real DWPose map (E0 run c, 2026-11-07).
+    const sticks = mapSelect?.querySelector('option[value="pose"]');
+    if (sticks) {
+      sticks.disabled = family === "anima";
+      sticks.title = family === "anima" ? _i18n("ui.controlnet.stageNoSticksAnima",
+        "Anima's pose model does not follow sticks. Use 3D figure or Depth.") : "";
+      if (sticks.disabled && mapSelect.value === "pose") mapSelect.value = "mesh";
     }
     const model = this._el(`paramCN${n}Model`);
     const pick = pattern => {
@@ -945,7 +962,12 @@ const ControlNetPanel = {
       return found;
     };
     if (model && this.arch === "cosmos") {
-      this._offerPoseModel(n, !pick(/anima_3dpose(?!_outline)/i));
+      // The figure goes to the 3D-pose adapter; depth to Anima's own depth
+      // model (anima-lllite-depth), when present.
+      if (this._stageMap(n) === "depth") {
+        this._offerPoseModel(n, false);
+        pick(/anima.*depth/i);
+      } else this._offerPoseModel(n, !pick(/anima_3dpose(?!_outline)/i));
     } else if (model) {
       this._offerPoseModel(n, false);
       // A Union model takes both kinds; otherwise one made for this kind.
@@ -5662,8 +5684,13 @@ function _makeResultDraggable(img, idx) {
       const url = new URL(entry.url, window.location.origin).href;
       // The extension the SERVER gave this result, not a guess: the delivery
       // handle carries it, and the media type travels beside it.
-      const tail = (entry.url.split("?")[0].split("/").pop() || "");
-      const ext = (tail.split(".").pop() || "png").toLowerCase();
+      const tail = decodeURIComponent(entry.url.split("?")[0].split("/").pop() || "");
+      // NM2. The extension from a name that HAS one, else from the media
+      // type: a result's address used to end in "/studio/file", which made
+      // every dragged result "<name>.file".
+      const EXT_OF = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/avif": "avif" };
+      const ext = (/\.([a-z0-9]{2,5})$/i.exec(tail) || [])[1]?.toLowerCase()
+        || EXT_OF[entry.mediaType] || "png";
       const mime = ({ png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
                       webp: "image/webp", avif: "image/avif" })[ext] || "image/png";
       const name = (entry.filename || tail || "result").replace(/[\\/:*?"<>|]/g, "_");

@@ -58,7 +58,11 @@
     queue: "/api/queue",
     reorderQueue: "/api/queue/reorder",
     clearQueue: "/api/queue/clear",
-    file: (handle) => `/studio/file?path=${encodeURIComponent(handle)}`,
+    // NM2. With a name, the address ENDS in it (`/studio/file/<name>?path=`):
+    // apps that name a dropped picture after its address get the real one.
+    // The server selects by the handle alone.
+    file: (handle, name) => (name ? `/studio/file/${encodeURIComponent(name)}` : "/studio/file")
+      + `?path=${encodeURIComponent(handle)}`,
     settings: "/studio/settings/model_roots",
     rememberSelection: "/studio/settings/model_selection",
   };
@@ -524,10 +528,14 @@
     // other job. Picture 1 is `result` itself, so the two shapes agree.
     const pictures = (Array.isArray(result.images) && result.images.length)
       ? result.images
-      : [{ image_handle: result.image_handle, metadata: result.metadata }];
+      : [{ image_handle: result.image_handle, image_filename: result.image_filename,
+           image_media_type: result.image_media_type, metadata: result.metadata }];
     const ts = Date.now();
     const entries = pictures.map((picture, index) => {
-      const url = API.file(picture.image_handle);
+      // NM2. The saved file's own name (the server sends the name only), so
+      // drag, Save, Save As and Copy all call it what the results folder does.
+      const fileName = String(picture.image_filename || "");
+      const url = API.file(picture.image_handle, fileName);
       const metadata = picture.metadata || {};
       const entry = {
         sessionId: (window.SESSION_ID || ""),
@@ -547,7 +555,9 @@
         // Seed, and both Recycle buttons, all of which parse it and all of
         // which were therefore dead.
         infotext: metadata.infotext || "",
-        filename: safeName(index === 0 ? job.job_id : `${job.job_id}-${index + 1}`),
+        filename: fileName.replace(/\.[^.]+$/, "")
+          || safeName(index === 0 ? job.job_id : `${job.job_id}-${index + 1}`),
+        mediaType: picture.image_media_type || "",
         contentHash: "",
         floatPath: "",
         maskPath: "",

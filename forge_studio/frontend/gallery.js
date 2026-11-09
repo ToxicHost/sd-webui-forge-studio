@@ -28,6 +28,18 @@ function _tp(key, count, fallback, params) {
 
 const TAG = "[Gallery]";
 const API_BASE = "/studio/gallery";
+// NM2. A picture's full-size address, ending in its own file name. The server
+// selects by id alone (`gallery_service`: the name is cosmetic); the name is
+// for apps that call a dropped picture after its address (Discord, Firefox),
+// which otherwise get the bare id ("5346363.png"). One builder, so a preload
+// and the lightbox ask for the same address and share the cache.
+function _fullUrl(imgOrId) {
+    const img = (imgOrId && typeof imgOrId === "object") ? imgOrId
+        : ((typeof G !== "undefined" && G.images) ? G.images.find(i => i.id === imgOrId) : null);
+    const id = img ? img.id : imgOrId;
+    const name = img && img.filename ? "/" + encodeURIComponent(img.filename) : "";
+    return API_BASE + "/full/" + id + name;
+}
 const VERSION = "1.1";
 
 // ========================================================================
@@ -856,6 +868,10 @@ function copyToClipboard() {
     G.clipboard = { ids, mode: "copy" };
     updateClipboardUI();
     toast(ids.length + " item" + (ids.length > 1 ? "s" : "") + " copied", "success");
+    // NM2. The same pictures as files for pasting outside Studio (Explorer,
+    // Discord), named as they are on disk. Fire and forget: the Gallery's own
+    // copy-and-paste between folders does not depend on it.
+    _copyAsFiles(ids);
 }
 function cutToClipboard() {
     const ids = Array.from(G.selectedImages);
@@ -1463,11 +1479,13 @@ async function _asPng(blob) {
 // allow the clipboard only briefly after a click, and fetching and converting
 // first could outlast that. A browser that will not take a promise gets the
 // finished PNG instead.
-async function _copyImageUrl(url, label) {
+// `quiet`: report nothing and answer whether it worked, for a caller that
+// says the outcome itself.
+async function _copyImageUrl(url, label, quiet) {
     if (!window.isSecureContext || !navigator.clipboard || !navigator.clipboard.write
         || typeof ClipboardItem === "undefined") {
-        toast("This browser can't copy images here. Open Studio at 127.0.0.1 or localhost, or use Download.");
-        return;
+        if (!quiet) toast("This browser can't copy images here. Open Studio at 127.0.0.1 or localhost, or use Download.");
+        return false;
     }
     const png = _imageBlobOf(url).then(_asPng);
     try {
@@ -1477,12 +1495,33 @@ async function _copyImageUrl(url, label) {
             if (!(e instanceof TypeError)) throw e;
             await navigator.clipboard.write([new ClipboardItem({ "image/png": await png })]);
         }
-        toast("Copied" + (label ? " " + label : "") + " to clipboard", "success");
-    } catch (e) { toast("Copy failed: " + ((e && e.message) || e)); }
+        if (!quiet) toast("Copied" + (label ? " " + label : "") + " to clipboard", "success");
+        return true;
+    } catch (e) {
+        if (!quiet) toast("Copy failed: " + ((e && e.message) || e));
+        return false;
+    }
 }
-function copyImageToClipboard(imgId) {
+// NM2. The saved files themselves on the computer's clipboard, names and all,
+// as Explorer's Copy puts them: Explorer pastes the file, Discord uploads it
+// under its own name, and an image editor still gets the pixels. The server
+// does it (a page can only copy pixels), on Windows and only for a browser on
+// the same computer; false otherwise, and the page's own copy stands.
+async function _copyAsFiles(ids) {
+    try {
+        const r = await api("/copy-files", { method: "POST", body: JSON.stringify({ ids: ids }) });
+        return !!(r && r.copied);
+    } catch (_) { return false; }
+}
+async function copyImageToClipboard(imgId) {
     const img = G.images.find(i => i.id === imgId);
-    return _copyImageUrl(API_BASE + "/full/" + imgId, img ? img.filename : "");
+    const label = img ? img.filename : "";
+    // The page's copy first, inside the click (browsers allow the clipboard
+    // only then), and FINISHED before the server's, which replaces it.
+    const pixels = await _copyImageUrl(_fullUrl(img || imgId), label, true);
+    const asFile = await _copyAsFiles([imgId]);
+    if (asFile || pixels) toast("Copied" + (label ? " " + label : "") + " to clipboard", "success");
+    else toast("Copy failed. Use Download instead.");
 }
 async function downloadImage(imgId) {
     const img = G.images.find(i => i.id === imgId);
@@ -1783,7 +1822,7 @@ async function scanDuplicates() {
             const thumbUrl = API_BASE + "/thumb/" + item.id + "?v=" + item.fphash;
             html += '<label class="gal-dup-item">';
             html += '<input type="checkbox" class="gal-dup-item-check" data-img-id="' + item.id + '" />';
-            html += '<img src="' + thumbUrl + '" alt="" loading="lazy" draggable="true" data-img-id="' + item.id + '" data-full-url="' + API_BASE + '/full/' + item.id + '" />';
+            html += '<img src="' + thumbUrl + '" alt="" loading="lazy" draggable="true" data-img-id="' + item.id + '" data-full-url="' + _fullUrl(item) + '" />';
             html += '<div class="gal-dup-item-info">';
             html += '<div class="gal-dup-item-name" title="' + esc(item.filepath || item.filename) + '">' + esc(item.filename) + '</div>';
             html += '<div class="gal-dup-item-folder">' + esc(item.folder) + '</div>';
@@ -1864,7 +1903,7 @@ function onGalleryDragStart(e, imgId) {
         if (img && img.filename) {
             const ext = img.filename.split(".").pop().toLowerCase();
             const mime = _mimeForExt(ext);
-            const fullUrl = window.location.origin + API_BASE + "/full/" + img.id;
+            const fullUrl = window.location.origin + _fullUrl(img);
             // Chromium/Edge/Brave honor DownloadURL.
             e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
             // Firefox ignores DownloadURL and falls back to the <img> src
@@ -1998,7 +2037,7 @@ function renderFolderSidebar() {
 
 function cardMediaHtml(img) {
     const u = API_BASE + "/thumb/" + img.id + "?h=" + img.fphash;
-    const fullUrl = API_BASE + "/full/" + img.id;
+    const fullUrl = _fullUrl(img);
     // <img> is the drag source, not the outer card div. Firefox's native
     // image-drag path (nsContentAreaDragDrop) only attaches the
     // x-moz-file-promise flavor carrying the image bytes when the drag
@@ -2066,7 +2105,7 @@ function showDetailOverlay() {
     // carry it). Same pixels as /full/{id} for any saved image, but
     // avoids a re-fetch flicker when an ephemeral row is upgraded
     // in place to DB-backed mode.
-    const mediaSrc = img.b64Url || (API_BASE + "/full/" + img.id);
+    const mediaSrc = img.b64Url || _fullUrl(img);
     const ext = img.filename.split(".").pop().toLowerCase();
     let mediaHtml;
     if (img.is_video && BROWSER_VIDEO[ext]) mediaHtml = '<video id="gal-detail-video" src="' + mediaSrc + '" controls autoplay style="max-width:100%;max-height:100%;object-fit:contain"></video>';
@@ -2103,7 +2142,7 @@ function _preloadFull(id) {
     if (!id || G._fullCache.has(id)) return;
     const im = new Image();
     im.decoding = "async";
-    im.src = API_BASE + "/full/" + id;
+    im.src = _fullUrl(id);
     G._fullCache.set(id, im);
     while (G._fullCache.size > _FULL_CACHE_MAX) {
         const oldestId = G._fullCache.keys().next().value;
@@ -2176,7 +2215,7 @@ function _wireDetailEvents(ov, img) {
             detailImg.addEventListener("dragstart", e => {
                 const ext = img.filename.split(".").pop().toLowerCase();
                 const mime = _mimeForExt(ext);
-                const fullUrl = window.location.origin + API_BASE + "/full/" + img.id;
+                const fullUrl = window.location.origin + _fullUrl(img);
                 e.dataTransfer.effectAllowed = "copy";
                 e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
                 e.dataTransfer.setData("text/uri-list", fullUrl);
@@ -2609,7 +2648,7 @@ function _upgradeOverlayInPlace(img) {
     // pixels, browser usually serves from disk/HTTP cache so the swap
     // is near-imperceptible.
     const detailImg = ov.querySelector("#gal-detail-img");
-    if (detailImg) detailImg.src = API_BASE + "/full/" + img.id;
+    if (detailImg) detailImg.src = _fullUrl(img);
 }
 async function renameFile() {
     const inp = document.getElementById("gal-rename-input");

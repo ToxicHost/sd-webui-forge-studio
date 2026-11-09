@@ -75,9 +75,9 @@ See [what works and what doesn't](docs/studio/FEATURE_STATUS.md).
   the whole limb, a hip handle crouches or leans. Six preset poses, Mirror, and
   rings for fine turning.
 - **Body types:** Adult, Teen, Child and Small child, plus a Height slider.
-- **What ControlNet gets:** a shaded 3D figure on Anima, pose sticks (OpenPose) or
-  depth on SD 1.5 and SDXL. The Anima model is a 51 MB download you start with
-  **Get the 3D pose model**.
+- **What ControlNet gets:** a shaded 3D figure or depth on Anima, pose sticks
+  (OpenPose) or depth on SD 1.5 and SDXL. The Anima model is a 51 MB download you
+  start with **Get the 3D pose model**.
 - **Regions and masks per figure:** each figure gets a region for its own prompt,
   which follows it, and masks for its body, head and hands.
 - **Drawing guide:** the figures shown faintly over the Canvas to draw over,

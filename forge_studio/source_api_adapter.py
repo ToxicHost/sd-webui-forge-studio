@@ -918,12 +918,19 @@ class SourceFrontendAdapter:
 
             import contextlib
 
+            from forge_headless.stage_pose_reader import PERSON_DETECTORS
+
+            from .detector_catalogue import resolve_detector_path
+
             body = payload if isinstance(payload, Mapping) else {}
             path = PICTURE_FETCHER.installed_path(picture_model_folder(self._model_roots))
+            # F6. The bundled person detector finds the person's box first.
+            detector = next((found for found in (resolve_detector_path(name, self._model_roots)
+                                                 for name in PERSON_DETECTORS) if found), None)
             hold = getattr(self._presentation, "gpu_side_task", None)
             try:
                 with (hold("stage-pose") if hold is not None else contextlib.nullcontext()):
-                    return READER.read(path, body.get("image"))
+                    return READER.read(path, body.get("image"), detector)
             except StudioError as error:
                 raise SourceFrontendAdapterError(error.error.message, http_status=409) from None
             except PoseReadError as error:

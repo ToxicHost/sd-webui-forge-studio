@@ -253,6 +253,9 @@ class GalleryService:
         #: set by the server, which owns the preference that moves the store.
         #: None on a host without one: the trash then empties as before.
         self.attention_roots: Callable[[], tuple[Path, Path]] | None = None
+        #: NM2. What puts files on the computer's clipboard: None is the
+        #: operating system's (`os_clipboard`); tests set a fake.
+        self.clipboard_writer: Callable[[dict[Any, bytes]], bool] | None = None
 
     # -- capability and store ---------------------------------------------
 
@@ -694,7 +697,10 @@ class GalleryService:
             return self._image_route(parts)
         if parts[:1] == ["thumb"] and len(parts) == 2:
             return self._thumbnail(parts[1])
-        if parts[:1] == ["full"] and len(parts) == 2:
+        # NM2. `/full/<id>/<name>` is the same picture: the name is cosmetic,
+        # for apps that name a dropped picture after the address. The id
+        # alone selects it; the header still carries the file's own name.
+        if parts[:1] == ["full"] and len(parts) in (2, 3):
             return self._full(parts[1])
         return _not_found()
 
@@ -997,6 +1003,8 @@ class GalleryService:
         if route == "/scan/cancel":
             self._scan.cancel()
             return Reply(payload={"ok": True})
+        if route == "/copy-files":
+            return self._copy_files(payload)
         if route == "/pick-folder":
             return self._pick_folder()
         if route == "/unlink-folder":
@@ -1500,6 +1508,25 @@ class GalleryService:
             if Path(str(configured["path"])).name == head:
                 return str(configured["path"])
         return ""
+
+    def _copy_files(self, payload: dict[str, Any]) -> Reply:
+        """NM2. Put these pictures on the computer's clipboard as their own
+        files, names and all, as Explorer's Copy does. Ids in, never paths;
+        the reply says only whether it worked. The server only routes this
+        here for a browser on this computer (`presentation._serve_gallery`).
+        """
+
+        from .os_clipboard import copy_files
+
+        raw = payload.get("ids")
+        ids = [value for value in (raw if isinstance(raw, list) else [])[:500]
+               if isinstance(value, int) and not isinstance(value, bool)]
+        paths = [Path(found) for found in (self._path_of(str(i)) for i in ids) if found]
+        paths = [path for path in paths if path.suffix.lower() in MEDIA_SUFFIXES]
+        if not paths:
+            return _not_found()
+        copied = copy_files(paths, writer=self.clipboard_writer)
+        return Reply(payload={"copied": copied, "count": len(paths) if copied else 0})
 
     def _pick_folder(self) -> Reply:
         """Ask the owner for a folder, with the system's own dialog.

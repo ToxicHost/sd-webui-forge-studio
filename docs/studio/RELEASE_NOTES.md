@@ -3,6 +3,45 @@
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. Studio is in public beta on Windows/NVIDIA.
 
+## 0.9.15: Stage fixes, one name per picture — 2026-11-08
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **A picture keeps its saved name wherever it leaves Studio.** It used to come
+  out as `file.png`, a bare number, `studio_…` or a random code, depending on
+  where you dragged or saved it from. Dragging a result, Save, Save As and the
+  Gallery now all use the saved file's name (`Studio-00012-<seed>.png`), including
+  in apps that name a dropped picture themselves, like Discord or Firefox.
+  - **Copy in the Gallery** (the button, or Ctrl+C on selected pictures) also puts
+    the file itself on the Windows clipboard, the way Explorer's Copy does, so it
+    pastes into an Explorer folder and uploads to Discord under its name. One
+    copied picture still pastes as a picture into image editors. This only works
+    when your browser runs on the same computer as Studio.
+  - Canvas downloads and PSD exports use the document's name.
+- **Stage:**
+  - **Your Map choice stays put.** On Anima, picking Depth used to snap straight
+    back to 3D figure.
+  - **Depth works on Anima**, with the `anima-lllite-depth` model when you have it.
+    Pose sticks aren't offered on Anima, because Anima's pose model doesn't follow
+    them.
+  - **Depth keeps more of the figure.** Its range is now set by the skin the camera
+    actually sees, and its edges are no longer blended with the background. Before,
+    the figure was squeezed into a narrow band of near-white, which read as a smooth
+    white bodysuit.
+  - **Pose sticks leave out the eyes, ears and nose the camera can't see**, as
+    OpenPose does. A three-quarter view shows one ear, which tells the model which
+    way the face turns. A new option under *Use in ControlNet* does the same for
+    hidden hands and limbs (off by default).
+  - With several figures, the nearer figure's sticks are drawn on top.
+  - Stage's maps are sent as PNG, exactly as drawn, instead of lossy WebP.
+  - **Pose from a picture finds the person first**, with Studio's bundled person
+    detector, so a small or off-centre person in a large picture reads properly.
+  - Regions made by Stage stay linked to their figures after you switch documents
+    or Studio restores your work after a restart.
+  - These Stage changes are checked with tests and in the browser, but not yet on
+    real GPU runs.
+
 ## 0.9.14: Stage — 2026-11-08
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

@@ -983,6 +983,16 @@ function mirrorPose() {
 // (owner, 2026-11-07: "the rings still suck"); dragging a part swings it.
 var _rings = false;
 
+// F4. Which hidden points the sticks leave out: "face" (eyes, ears, nose:
+// always) or "all" (hands and limbs too). Off by default until X1 decides.
+var _stickHidden = "face";
+
+function setStickHidden(mode) {
+  _stickHidden = mode === "all" ? "all" : "face";
+  if (_els.hiddenBox) _els.hiddenBox.checked = _stickHidden === "all";
+  _changed(true);
+}
+
 function setRings(on) {
   _rings = !!on;
   if (_els.ringsBox) _els.ringsBox.checked = _rings;
@@ -1134,14 +1144,17 @@ function renderMap(width, height, mode) {
   return _renderMesh(width, height);
 }
 
-// The shaded figures, the training recipe.
-function _renderMesh(width, height) {
+// The shaded figures, the training recipe. `samples` 0 draws without
+// multisampling, for maps whose pixel values are measurements (depth): a
+// blended edge pixel is a depth no surface has.
+function _renderMesh(width, height, samples) {
   if (!_renderer || !_mesh) return null;
   width = Math.max(64, Math.round(width)); height = Math.max(64, Math.round(height));
-  var key = width + "x" + height;
+  samples = samples === 0 ? 0 : 4;
+  var key = width + "x" + height + "x" + samples;
   var target = _targets[key];
   if (!target) {
-    target = new T.WebGLRenderTarget(width, height, { samples: 4 });
+    target = new T.WebGLRenderTarget(width, height, { samples: samples });
     _targets[key] = target;
   }
   var cam = _mapCamera(width, height);
@@ -1203,29 +1216,24 @@ function _renderDepth(width, height) {
       uniforms: { invNear: { value: 1 }, invFar: { value: 0.1 } },
     });
   }
-  // Near and far from the figures' skinned bounds, in the map camera's view.
+  // F3. Near and far from the skinned vertices the map camera sees, so the
+  // eight bits go to the skin in the picture; a close-up no longer spends them
+  // on legs out of frame (the bounding box did).
   _refreshSkin();
-  var cam = _mapCamera(width, height), view = cam.matrixWorldInverse;
-  var near = Infinity, far = 0;
-  _figures.forEach(function (f) {
-    var box = new T.Box3().setFromObject(f.mesh, true);
-    [box.min.x, box.max.x].forEach(function (x) { [box.min.y, box.max.y].forEach(function (y) {
-      [box.min.z, box.max.z].forEach(function (z) {
-        var d = -new T.Vector3(x, y, z).applyMatrix4(view).z;
-        if (d > 0.01) { near = Math.min(near, d); far = Math.max(far, d); }
-      });
-    }); });
-  });
-  if (!isFinite(near) || far <= near) { near = 0.5; far = 10; }
-  _depthMaterial.uniforms.invNear.value = 1 / near;
-  _depthMaterial.uniforms.invFar.value = 1 / far;
+  var cam = _mapCamera(width, height);
+  var range = _viewDepthRange(cam);
+  _depthMaterial.uniforms.invNear.value = 1 / range.near;
+  _depthMaterial.uniforms.invFar.value = 1 / range.far;
   var saved = _figures.map(function (f) { return f.mesh.material; });
   _figures.forEach(function (f) { f.mesh.material = _depthMaterial; });
-  var map = _renderMesh(width, height);
+  // No multisampling: a silhouette pixel blended with the black background
+  // was the darkest "skin" the stretch below found, so the real skin was
+  // squeezed into a narrow bright band (a flat white bodysuit to the model).
+  var map = _renderMesh(width, height, 0);
   _figures.forEach(function (f, i) { f.mesh.material = saved[i]; });
-  // The bounds reach nearer and farther than the skin, so the values do not
-  // span the range. Stretch them (still linear in inverse depth): nearest
-  // skin white, farthest skin well clear of the black background.
+  // Hidden vertices count above, so the visible skin does not span the whole
+  // range. Stretch it (still linear in inverse depth): nearest visible skin
+  // white, farthest DEPTH_FLOOR, clear of the black background.
   if (map) {
     var ctx = map.getContext("2d"), img = ctx.getImageData(0, 0, width, height), d = img.data;
     var lo = 255, hi = 0, i;
@@ -1242,6 +1250,100 @@ function _renderDepth(width, height) {
   return map;
 }
 var DEPTH_FLOOR = 32;
+
+// Nearest and farthest skinned vertex inside the camera's view, in metres
+// along its axis. Falls back to 0.5..10 m when no vertex is in view.
+function _viewDepthRange(cam) {
+  var near = Infinity, far = 0, p = new T.Vector3();
+  var view = cam.matrixWorldInverse, proj = cam.projectionMatrix;
+  _figures.forEach(function (f) {
+    var count = f.mesh.geometry.attributes.position.count;
+    for (var i = 0; i < count; i++) {
+      f.mesh.getVertexPosition(i, p);
+      p.applyMatrix4(f.mesh.matrixWorld).applyMatrix4(view);
+      var d = -p.z;
+      if (d <= cam.near) continue;
+      p.applyMatrix4(proj);   // to the view's -1..1 square
+      if (p.x < -1 || p.x > 1 || p.y < -1 || p.y > 1) continue;
+      if (d < near) near = d;
+      if (d > far) far = d;
+    }
+  });
+  if (!isFinite(near) || far <= near) return { near: 0.5, far: 10 };
+  return { near: near, far: far };
+}
+
+// F4. How far the camera sees through each pixel, in metres (0 where no
+// figure is), for the sticks' hidden-point test. Read from a float target;
+// null when the card cannot render one, and then every point is drawn.
+var SURFACE_FRAGMENT = [
+  "varying vec3 vNormalView;",
+  "varying vec3 vViewPos;",
+  "varying float vPart;",
+  "void main() {",
+  "  gl_FragColor = vec4(vViewPos.z, 0.0, 0.0, 1.0);",
+  "}",
+].join("\n");
+var _surfaceMaterial = null, _surfaceTargets = {};
+
+function _surfaceDepth(cam, width, height) {
+  if (!_renderer || !_renderer.extensions.has("EXT_color_buffer_float")) return null;
+  if (!_surfaceMaterial) {
+    _surfaceMaterial = new T.ShaderMaterial({ vertexShader: VERTEX, fragmentShader: SURFACE_FRAGMENT, side: T.DoubleSide });
+  }
+  var key = width + "x" + height;
+  var target = _surfaceTargets[key];
+  if (!target) {
+    target = new T.WebGLRenderTarget(width, height, { type: T.FloatType, samples: 0 });
+    _surfaceTargets[key] = target;
+  }
+  var helper = _gizmo ? _gizmo.getHelper() : null;
+  var hidden = [_grid, helper].concat(_handles.map(function (h) { return h.mesh; }))
+    .concat(_figures.map(function (f) { return f.ring; }), _figures.map(function (f) { return f.knob; }))
+    .filter(Boolean).map(function (o) { var v = o.visible; o.visible = false; return [o, v]; });
+  var saved = _figures.map(function (f) { return f.mesh.material; });
+  _figures.forEach(function (f) { f.mesh.material = _surfaceMaterial; });
+  var prevTarget = _renderer.getRenderTarget();
+  var data = new Float32Array(width * height * 4);
+  try {
+    _renderer.setRenderTarget(target);
+    _renderer.setClearColor(0x000000, 1);
+    _renderer.clear();
+    _renderer.render(_scene, cam);
+    _renderer.readRenderTargetPixels(target, 0, 0, width, height, data);
+  } catch (e) {
+    console.warn(TAG, "hidden-point test unavailable:", e);
+    data = null;
+  } finally {
+    _renderer.setRenderTarget(prevTarget);
+    _figures.forEach(function (f, i) { f.mesh.material = saved[i]; });
+    hidden.forEach(function (pair) { pair[0].visible = pair[1]; });
+  }
+  return data ? { data: data, width: width, height: height } : null;
+}
+
+// Whether a point `depth` metres along the view, at page pixel (x, y), can be
+// seen: some surface within 1 px reaches back to within `tolerance` of it, or
+// there is no surface there at all. Joints sit inside the body, so each kind
+// of point has its own tolerance (OCCLUSION_TOLERANCE).
+function _seen(surface, x, y, depth, tolerance) {
+  if (!surface) return true;
+  var cx = Math.round(x), cy = surface.height - 1 - Math.round(y);   // GL rows run bottom-up
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      var px = cx + dx, py = cy + dy;
+      if (px < 0 || py < 0 || px >= surface.width || py >= surface.height) return true;
+      var s = surface.data[(py * surface.width + px) * 4];
+      if (!(s > 0) || s >= depth - tolerance) return true;
+    }
+  }
+  return false;
+}
+// Metres a point may sit behind the nearest surface and still count as seen:
+// face points are on (or 1 cm inside) the skin; finger joints about 1 cm and
+// the wrist 2-3 cm inside; shoulders, hips and knees up to 8-10 cm.
+var OCCLUSION_TOLERANCE = { face: 0.025, hand: 0.04, body: 0.1 };
+var FACE_POINTS = [0, 14, 15, 16, 17];   // nose, eyes, ears (COCO-18, 0-based)
 
 // OpenPose: Neo's own drawing (`annotator/openpose/util.py` draw_bodypose,
 // draw_handpose), drawn at the map's size with Neo's widths scaled from the
@@ -1278,10 +1380,13 @@ function _figureKeypoints(figure, cam, width, height) {
   if (!_faceVertices) _findFaceVertices();
   figure.mesh.updateMatrixWorld(true);
   figure.mesh.skeleton.update();
+  // [x, y] in map pixels, plus the point's distance along the view (metres)
+  // for the hidden-point test.
   var toPx = function (world) {
+    var depth = -world.clone().applyMatrix4(cam.matrixWorldInverse).z;
     var p = world.clone().project(cam);
     if (p.z > 1 || p.z < -1) return null;
-    return [(p.x + 1) / 2 * width, (1 - p.y) / 2 * height];
+    return [(p.x + 1) / 2 * width, (1 - p.y) / 2 * height, depth];
   };
   var joint = function (name) { return toPx(_worldPos(figure.boneByName[name])); };
   var vertex = function (index) {
@@ -1316,8 +1421,27 @@ function _renderPose(width, height) {
   var ctx = out.getContext("2d");
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
   var s = Math.min(width, height) / 512;
-  _figures.forEach(function (figure) {
+  // F4. OpenPose leaves out what the camera cannot see: which ear shows is
+  // what tells the model where the face points. Face points always; hands and
+  // limbs only with the Stage option (X1 decides the default).
+  var surface = _surfaceDepth(cam, width, height);
+  var keep = function (p, tolerance) { return p && _seen(surface, p[0], p[1], p[2], tolerance) ? p : null; };
+  // F5. Far to near, so a nearer figure's crossing arm is drawn on top.
+  var camPos = cam.position;
+  var order = _figures.slice().sort(function (a, b) {
+    return _worldPos(b.boneByName.root).distanceTo(camPos) - _worldPos(a.boneByName.root).distanceTo(camPos);
+  });
+  order.forEach(function (figure) {
     var k = _figureKeypoints(figure, cam, width, height);
+    k.body = k.body.map(function (p, i) {
+      if (FACE_POINTS.indexOf(i) >= 0) return keep(p, OCCLUSION_TOLERANCE.face);
+      return _stickHidden === "all" ? keep(p, OCCLUSION_TOLERANCE.body) : p;
+    });
+    if (_stickHidden === "all") {
+      k.hands = k.hands.map(function (points) {
+        return points.map(function (p) { return keep(p, OCCLUSION_TOLERANCE.hand); });
+      });
+    }
     POSE_LIMBS.forEach(function (limb, i) {
       var a = k.body[limb[0] - 1], b = k.body[limb[1] - 1];
       if (!a || !b) return;
@@ -1615,6 +1739,7 @@ function _save() {
       localStorage.setItem(STORE_KEY, JSON.stringify({
         v: 2, focal: _focal, current: _current, guide: { on: _guide.on, opacity: _guide.opacity },
         regionMargin: _regionMargin,
+        stickHidden: _stickHidden,
         figures: _figures.map(_figurePose),
         camera: _camera.position.toArray(), target: _orbit.target.toArray(),
       }));
@@ -1657,6 +1782,10 @@ function _restore() {
         _els.marginSlider.value = String(Math.round(_regionMargin * 100));
         _els.marginValue.textContent = _els.marginSlider.value + "%";
       }
+    }
+    if (saved.stickHidden === "all") {
+      _stickHidden = "all";
+      if (_els.hiddenBox) _els.hiddenBox.checked = true;
     }
     if (saved.guide && saved.guide.on) setTimeout(function () { setGuide(true); }, 0);
     if (saved.camera && saved.target) {
@@ -1872,6 +2001,18 @@ function _buildUI(container) {
   useHint.className = "stage-hint";
   useHint.textContent = _t("stage.useHint", "The unit renders this scene at the picture's size each time you generate.");
   use.appendChild(useHint);
+  var hiddenRow = document.createElement("label");
+  hiddenRow.className = "stage-check";
+  _els.hiddenBox = document.createElement("input");
+  _els.hiddenBox.type = "checkbox";
+  _els.hiddenBox.id = "stageStickHidden";
+  _els.hiddenBox.checked = _stickHidden === "all";
+  _els.hiddenBox.addEventListener("change", function () { setStickHidden(_els.hiddenBox.checked ? "all" : "face"); });
+  var hiddenLabel = document.createElement("span");
+  hiddenLabel.textContent = _t("stage.stickHidden", "Pose sticks: leave out hands and limbs the camera can't see");
+  hiddenRow.appendChild(_els.hiddenBox);
+  hiddenRow.appendChild(hiddenLabel);
+  use.appendChild(hiddenRow);
   panel.appendChild(use);
 
   var guide = _section(_t("stage.guide", "Drawing guide"));
@@ -2057,6 +2198,9 @@ window.StudioStage = {
   },
   // ST4. Rotation rings on or off (off by default).
   setRings: function (on) { setRings(on); return _rings; },
+  // F4. "face" (default) or "all": which hidden points the sticks leave out.
+  setStickHidden: function (mode) { setStickHidden(mode); return _stickHidden; },
+  stickHidden: function () { return _stickHidden; },
   // A point in metres to page pixels, through the viewport camera.
   toScreen: function (position) {
     if (!_renderer) return null;

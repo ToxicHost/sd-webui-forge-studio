@@ -148,7 +148,9 @@ function _describePixels(doc, pixels) {
     return Object.assign({
       id: r.id, color: r.color,
       prompt: r.prompt || "", negPrompt: r.negPrompt || "",
-      weight: r.weight, denoise: r.denoise
+      weight: r.weight, denoise: r.denoise,
+      // F7. The Stage figure a region follows (ST2), kept so it still does.
+      stageFigure: r.stageFigure != null ? r.stageFigure : null
     }, pixels(r.ctx));
   });
 }
@@ -314,7 +316,8 @@ function _loadDoc(idx) {
     return {
       id: saved.id, color: saved.color, canvas: c, ctx: ctx,
       prompt: saved.prompt || "", negPrompt: saved.negPrompt || "",
-      weight: saved.weight, denoise: saved.denoise
+      weight: saved.weight, denoise: saved.denoise,
+      stageFigure: saved.stageFigure != null ? saved.stageFigure : null
     };
   });
   S.activeRegionId = doc.activeRegionId;

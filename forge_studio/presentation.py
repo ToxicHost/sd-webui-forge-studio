@@ -547,6 +547,23 @@ def _canonical_body(payload: Any) -> dict[str, Any]:
     return flattened
 
 
+def _file_name_only(value: Any) -> str:
+    """NM2. The last part of a saved file's path: a name, never a folder.
+    "" when there is no saved file."""
+
+    text = str(value or "").replace("\\", "/").rstrip("/")
+    return text.rsplit("/", 1)[-1] if text else ""
+
+
+def _cosmetic_name(segment: str) -> str:
+    """NM2. A file name taken from an address, made safe for a header: its
+    last part, plain characters only (as `output_save._stem`), at most 120."""
+
+    text = unquote(str(segment or "")).replace("\\", "/").rsplit("/", 1)[-1]
+    text = re.sub(r"[^\w\-. ()]", "_", text, flags=re.ASCII).strip(" .")
+    return text[:120]
+
+
 def _validated_request_payload(payload: Any) -> dict[str, Any]:
     payload = _canonical_body(payload)
 
@@ -2745,7 +2762,10 @@ class StudioPresentation:
         # Only a batch: its metadata names how many pictures it asked for.
         if int((result.get("metadata") or {}).get("pictures") or 0) < 2:
             return
-        result.pop("output_path", None)
+        # NM2. The saved file's NAME (never its folder), so every way out of
+        # Studio -- drag, Save, Save As, Copy -- calls the picture what the
+        # results folder calls it.
+        result["image_filename"] = _file_name_only(result.pop("output_path", None))
         result.pop("metadata_path", None)
         asset = self.result_asset(backend_id)
         if asset is None:
@@ -2797,7 +2817,7 @@ class StudioPresentation:
             # Backend paths are internal ownership references. Delivery goes
             # through an opaque handle instead; the generic HTTP contract must
             # never disclose filesystem paths to the browser.
-            result.pop("output_path", None)
+            result["image_filename"] = _file_name_only(result.pop("output_path", None))
             result.pop("metadata_path", None)
             asset = self.result_asset(job_id)
             if asset is not None:
@@ -2827,6 +2847,7 @@ class StudioPresentation:
             "image_handle": result["image_handle"],
             "image_media_type": result.get("image_media_type"),
             "image_byte_length": result.get("image_byte_length"),
+            "image_filename": result.get("image_filename") or "",
             "metadata": result.get("metadata") or {},
         }]
         for picture, asset in zip(pictures, assets):
@@ -2836,6 +2857,7 @@ class StudioPresentation:
                 "image_handle": asset.handle,
                 "image_media_type": asset.media_type,
                 "image_byte_length": asset.byte_length,
+                "image_filename": _file_name_only(picture.get("output_path")),
                 "metadata": dict(picture.get("metadata") or {}),
             })
         result["images"] = images
@@ -3397,6 +3419,11 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             return False
         if method == "GET" and self._path().endswith("/gallery/events"):
             self._stream_gallery_events(gallery)
+            return True
+        # NM2. Files go on THIS computer's clipboard, so only for a browser on
+        # this computer; a remote one keeps the page's own copy (pixels).
+        if self._path().endswith("/gallery/copy-files") and not self._client_is_local():
+            self._send_json(HTTPStatus.OK, {"copied": False, "count": 0})
             return True
         reply = (
             gallery.get(self.path) if method == "GET"
@@ -3960,7 +3987,10 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             saved.path, media_type=saved.media_type)
         handle = getattr(asset, "handle", None)
         if handle:
-            reply["url"] = "/studio/file?path=" + quote(str(handle), safe="")
+            # NM2. The address ends in the saved name, so the opened picture
+            # keeps it for Save-As and drag-out.
+            reply["url"] = ("/studio/file/" + quote(saved.filename, safe="") + "?path="
+                            + quote(str(handle), safe=""))
         self._send_json(HTTPStatus.OK, reply)
 
     def _workshop_route(self, method: str, path: str) -> None:
@@ -4170,7 +4200,8 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             raise PresentationError("The image payload is not valid base64.") from None
 
-    def _send_result_bytes(self, media_type: str, content: bytes) -> None:
+    def _send_result_bytes(self, media_type: str, content: bytes,
+                           filename: str = "") -> None:
         """Send owned result bytes under a deliberately inert policy.
 
         Results are attacker-influenced content served same-origin. The page
@@ -4188,6 +4219,11 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Content-Type", media_type)
+        if filename:
+            # NM2. The name a drop target or Save-As uses: the cosmetic
+            # last segment of the address, already reduced to plain
+            # characters by `_cosmetic_name`.
+            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
         self.send_header("Cache-Control", "private, no-store")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
@@ -4198,7 +4234,13 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
         """Serve one opaque result handle, or report it missing."""
 
         parsed = urlsplit(str(path))
-        if parsed.path != "/studio/file":
+        # NM2. `/studio/file/<name>?path=<handle>` serves the same handle: the
+        # name is COSMETIC, so apps that name a dropped picture after the
+        # address (Discord, Firefox) use the real one. It selects nothing.
+        name = ""
+        if parsed.path.startswith("/studio/file/"):
+            name = _cosmetic_name(parsed.path[len("/studio/file/"):])
+        elif parsed.path != "/studio/file":
             return False
         handles = parse_qs(parsed.query, keep_blank_values=True).get("path", [])
         handle = handles[0] if handles else ""
@@ -4216,7 +4258,7 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
             )
             self._send_json(status, {"error": _plain(owned)})
             return True
-        self._send_result_bytes(payload.media_type, payload.content)
+        self._send_result_bytes(payload.media_type, payload.content, name)
         return True
 
     def _send_api_error(self, exc: Exception) -> None:
@@ -4255,6 +4297,16 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
 
     def _path(self) -> str:
         return unquote(urlsplit(self.path).path)
+
+    def _client_is_local(self) -> bool:
+        """NM2. Whether the browser asking is on this computer."""
+
+        import ipaddress
+
+        try:
+            return ipaddress.ip_address(str(self.client_address[0]).split("%", 1)[0]).is_loopback
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return False
 
     def _allowed_origins(self) -> set[str]:
         port = self.server.server_address[1]

@@ -2875,7 +2875,9 @@ async function savePSD() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `studio_${S.W}x${S.H}.psd`;
+    // NM2. The document's name, like every other save of it.
+    const psdName = (window.StudioDocs?.activeDoc?.name || "").trim().replace(/[\\/:*?"<>|]/g, "_");
+    a.download = (psdName || `studio_${S.W}x${S.H}`) + ".psd";
     document.body.appendChild(a); a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
     console.log("[StudioUI] PSD saved:", a.download);
@@ -5214,7 +5216,8 @@ async function _ctxSaveCanvas(fmt, applyWm) {
         // file extension must match regardless of the user's chosen format.
         const a = document.createElement("a");
         a.href = dataUrl;
-        a.download = `studio_${Date.now()}.png`;
+        // NM2. The document's name, as the server save would have used.
+        a.download = (docName ? docName.replace(/[\\/:*?"<>|]/g, "_") : `studio_${Date.now()}`) + ".png";
         document.body.appendChild(a); a.click();
         setTimeout(() => document.body.removeChild(a), 100);
         if (window.showToast) window.showToast(`Saved locally (server unavailable)`, "info");
