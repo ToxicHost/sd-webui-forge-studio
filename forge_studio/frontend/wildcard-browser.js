@@ -645,7 +645,10 @@
       samples.forEach((s, i) => {
         const el = document.createElement("div");
         el.className = "wc-preview-res";
-        el.textContent = (i + 1) + ". " + (s.expanded || "");
+        // DP1. A wildcard can resolve to nothing (`{3::|hat}`). Say so: a
+        // bare number reads as a row that failed to load.
+        const text = String(s.expanded || "");
+        el.textContent = (i + 1) + ". " + (text.trim() ? text : _t("wildcard.nothing", "(nothing)"));
         if (s.warnings && s.warnings.length) el.title = s.warnings.join("; ");
         box.appendChild(el);
       });

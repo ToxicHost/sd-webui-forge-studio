@@ -23,8 +23,11 @@ What differs from the Extension, each deliberately:
   * The journal lives in `<state root>/workshop/`.
   * Progress is polled at `/status` (the page already polls every 2 s); the
     Extension also pushed it over its WebSocket.
+  * The listings also say each file's `folder` (WF1), which the page groups
+    by; the Extension's lists are flat.
 
-Source review: Evidence/source-review/W1-workshop.md
+Source review: Evidence/source-review/W1-workshop.md,
+Evidence/source-review/WF1-workshop-folders.md
 """
 
 from __future__ import annotations
@@ -140,10 +143,21 @@ class WorkshopService:
         return named
 
     def listing(self, role: str) -> list[dict[str, Any]]:
+        """`filename` is the value every merge and bake names a file by.
+
+        `folder` (WF1) is what the page groups by: `model_folder`, the same
+        helper `/studio/models` and `/studio/vaes` take theirs from, so a
+        file has one folder name in Generate and in Workshop. It says nothing
+        `filename` does not already say.
+        """
+
+        from .model_browser import model_folder
+
         out = []
         for name, entry in self._named(role):
             size = int(getattr(entry, "size_bytes", 0) or 0)
-            item = {"filename": name, "basename": PurePosixPath(name).name}
+            item = {"filename": name, "basename": PurePosixPath(name).name,
+                    "folder": model_folder(entry, role)}
             if role == "checkpoint":
                 item["size_gb"] = round(size / (1024 ** 3), 2)
             else:

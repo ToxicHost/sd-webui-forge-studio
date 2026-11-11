@@ -7,6 +7,11 @@
  * current scene at the picture's size when Generate is pressed.
  * Review: Evidence/source-review/ST1-stage.md
  *
+ * ST9 (2026-11-10): the hips are free. A figure can be lifted, tipped over and
+ * rolled, so it may lie, crawl or hang upside down; "on the floor" is read from
+ * its skin, not its hips' height. Figures share the camera and nothing else.
+ * Review: Evidence/source-review/ST9-stage-free-root.md
+ *
  * The figure is MHR LOD 1 (Apache-2.0, stage/LICENSE-MHR.txt), exported once by
  * scripts/export_stage_body.py into stage/body.json + body.bin: rest mesh,
  * 127-joint skeleton, MHR's own skin weights, presets as local joint rotations.
@@ -198,20 +203,70 @@ function _makeBody(body, material) {
   return { mesh: mesh, bones: bones, byName: byName };
 }
 
-// The body's head and whole-figure scales, the figure's height on top. The
-// hips' height scales with it, so the feet stay on the floor; any crouch the
-// owner made is kept.
-function _applyBodyScale(figure, oldScale) {
+// The body's head and whole-figure scales, the figure's height on top. With
+// `stand` the hips go to this body's standing height; otherwise they stay
+// where they are, and the caller keeps the figure resting where it rested.
+function _applyBodyScale(figure, stand) {
   var body = _bodies[figure.body] || _bodies.adult;
   var scale = body.scale * (figure.height || 1);
   figure.boneByName.c_head.scale.setScalar(body.head);
   var root = figure.boneByName.root;
-  var restY = body.rootRest.y - (body.floor || 0);
-  var offset = oldScale ? root.position.y - restY * oldScale : 0;
   root.scale.setScalar(scale);
-  root.position.y = restY * scale + offset;
+  if (stand) root.position.y = (body.rootRest.y - (body.floor || 0)) * scale;
   figure.scale = scale;
   figure.mesh.updateMatrixWorld(true);
+}
+
+// ── the floor ────────────────────────────────────────────────────────────
+// ST9. The hips are free: a figure may lie down, hang upside down or be lifted
+// off the floor, so "on the floor" can no longer be read off the hips' height.
+// It is read off the skin instead.
+var ON_FLOOR = 0.015;     // metres: a lowest point this close to the floor is on it
+var FLOOR_SNAP = 0.04;    // metres: a dragged figure this close to the floor settles on it
+var _skinRows = null;
+
+// How far a figure's lowest point is above the floor, in metres. The skinning
+// the card does, done here for the height alone (one row of each joint's
+// matrix), over the skin and not the joints: a back or a knee is up to 10 cm
+// from its nearest joint. The mesh itself never moves, only its bones, so a
+// skinned point is a world point.
+function _lowestPoint(figure) {
+  var mesh = figure.mesh, bones = mesh.skeleton.bones, inverses = mesh.skeleton.boneInverses;
+  mesh.updateMatrixWorld(true);
+  if (!_skinRows || _skinRows.length !== bones.length * 4) _skinRows = new Float64Array(bones.length * 4);
+  var rows = _skinRows, matrix = new T.Matrix4();
+  for (var b = 0; b < bones.length; b++) {
+    var e = matrix.multiplyMatrices(bones[b].matrixWorld, inverses[b]).elements;
+    rows[b * 4] = e[1]; rows[b * 4 + 1] = e[5]; rows[b * 4 + 2] = e[9]; rows[b * 4 + 3] = e[13];
+  }
+  var attributes = mesh.geometry.attributes;
+  var at = attributes.position.array, joint = attributes.skinIndex.array, weight = attributes.skinWeight.array;
+  var lowest = Infinity;
+  for (var v = 0, count = at.length / 3; v < count; v++) {
+    var x = at[v * 3], y = at[v * 3 + 1], z = at[v * 3 + 2], height = 0;
+    for (var k = 0; k < 4; k++) {
+      var w = weight[v * 4 + k];
+      if (!w) continue;
+      var r = joint[v * 4 + k] * 4;
+      height += w * (rows[r] * x + rows[r + 1] * y + rows[r + 2] * z + rows[r + 3]);
+    }
+    if (height < lowest) lowest = height;
+  }
+  return lowest;
+}
+
+// Where a figure rests: 0 on the floor, otherwise the height of its lowest point.
+function _resting(figure) {
+  var lowest = _lowestPoint(figure);
+  return Math.abs(lowest) < ON_FLOOR ? 0 : lowest;
+}
+
+// Move a figure straight up or down until its lowest point is at `height`.
+// The hips' parent sits at the origin unrotated: a world offset is local.
+function _settle(figure, height) {
+  var root = figure.boneByName.root;
+  root.position.y += (height || 0) - _lowestPoint(figure);
+  root.updateMatrixWorld(true);
 }
 
 function _addFigure(initial, bodyName) {
@@ -253,7 +308,7 @@ function _addFigure(initial, bodyName) {
   _scene.add(knob);
   var figure = { mesh: mesh, bones: bones, boneByName: byName, material: material, colorIndex: colorIndex,
                  ring: ring, knob: knob, body: body, height: 1, scale: 1 };
-  _applyBodyScale(figure, 0);
+  _applyBodyScale(figure, true);
   _figures.push(figure);
   _setCurrent(_figures.length - 1);
   if (!initial) {
@@ -266,37 +321,37 @@ function _addFigure(initial, bodyName) {
   return figure;
 }
 
-// ST6. Give a figure another body type. Its pose, place on the floor and the
-// way it faces carry over; so does a crouch, in proportion.
+// ST6. Give a figure another body type. Its pose, its place and the way it is
+// turned carry over, and it rests where it rested: feet, knees or back on the
+// floor, or as high above it as it was (ST9; a crouch scales with the body).
 function setBody(index, body) {
   var figure = _figures[index];
   if (!figure || !_bodies[body] || figure.body === body) return false;
-  var pose = _figurePose(figure);
-  var oldBody = _bodies[figure.body] || _bodies.adult;
-  var crouch = (figure.boneByName.root.position.y - (oldBody.rootRest.y - (oldBody.floor || 0)) * figure.scale) / (figure.scale || 1);
+  var pose = _figurePose(figure), rested = _lowestPoint(figure);
   if (_gizmo) _gizmo.detach();
   _scene.remove(figure.mesh);
   var made = _makeBody(body, figure.material);
   figure.mesh = made.mesh; figure.bones = made.bones; figure.boneByName = made.byName; figure.body = body;
   _scene.add(figure.mesh);
   figure.bones.forEach(function (b) { var q = pose.rotations[b.name]; if (q) b.quaternion.fromArray(q); });
-  _applyBodyScale(figure, 0);
-  var root = figure.boneByName.root;
-  root.position.x = pose.root[0]; root.position.z = pose.root[2];
-  root.position.y += crouch * figure.scale;
+  _applyBodyScale(figure, false);
+  figure.boneByName.root.position.fromArray(pose.root);
+  _settle(figure, rested);
   if (index === _current) _setCurrent(index);
   _renderFigureList();
   _changed(true);
   return true;
 }
 
-// ST6. A figure's height on top of its body type: 80-120%.
+// ST6. A figure's height on top of its body type: 80-120%. It grows from
+// whatever it rests on, as setBody does.
 function setHeight(index, share) {
   var figure = _figures[index];
   if (!figure) return false;
-  var old = figure.scale;
+  var rested = _lowestPoint(figure);
   figure.height = Math.max(0.8, Math.min(1.2, share));
-  _applyBodyScale(figure, old);
+  _applyBodyScale(figure, false);
+  _settle(figure, rested);
   _changed(true);
   return true;
 }
@@ -450,11 +505,7 @@ function _build(bin) {
     });
     var rootIndex = joints.findIndex(function (j) { return j.name === "root"; });
     _bodies[name] = { geometry: g, restMatrices: matrices, head: spec.head || 1, scale: spec.scale || 1, floor: spec.floor || 0,
-                      rootRest: new T.Vector3().setFromMatrixPosition(matrices[rootIndex]),
-                      // ST7. The lowest joint standing at rest, for setting a read pose down
-                      // (MHR's `body_world`, the one parentless joint, sits at the origin: not a body part).
-                      lowest: Math.min.apply(null, matrices.filter(function (m, i) { return joints[i].parent >= 0; })
-                        .map(function (m) { return m.elements[13]; })) };
+                      rootRest: new T.Vector3().setFromMatrixPosition(matrices[rootIndex]) };
   });
 
   _scene = new T.Scene();
@@ -495,7 +546,9 @@ function _build(bin) {
 // ── drag-to-pose handles ─────────────────────────────────────────────────
 // Hands and feet: drag one and its limb solves to reach it (two-bone IK),
 // bending only the way it already bends. Hips: drag to move the body while the
-// feet stay where they are. Handles show in the viewport, never in the map.
+// feet stay where they are. Head (ST9): drag to tip the whole figure about its
+// hips. Handles show in the viewport, never in the map.
+var TIP_JOINT = "c_head_null";   // the crown of the head
 var LIMBS = {
   l_wrist: { upper: "l_uparm", lower: "l_lowarm", bend: -1 },
   r_wrist: { upper: "r_uparm", lower: "r_lowarm", bend: -1 },
@@ -507,9 +560,10 @@ var _drag = null;    // the drag in progress
 
 function _buildHandles() {
   var geometry = new T.SphereGeometry(0.032, 16, 12);
-  ["l_wrist", "r_wrist", "l_foot", "r_foot", "root"].forEach(function (joint) {
+  // Blue moves a limb; pink moves the whole body.
+  ["l_wrist", "r_wrist", "l_foot", "r_foot", "root", "c_head_null"].forEach(function (joint) {
     var material = new T.MeshBasicMaterial({
-      color: joint === "root" ? 0xd4537e : 0x7b8fff, depthTest: false, transparent: true, opacity: 0.85,
+      color: LIMBS[joint] ? 0x7b8fff : 0xd4537e, depthTest: false, transparent: true, opacity: 0.85,
     });
     var mesh = new T.Mesh(geometry, material);
     mesh.renderOrder = 10;
@@ -531,13 +585,29 @@ function _placeHandles() {
   });
 }
 
-// Which way a figure faces on the floor: +Z at rest, turned with its hips.
+// How far a figure's hips are turned and tipped from rest, in the world.
+function _turned(figure) {
+  var root = figure.boneByName.root;
+  return _worldQuat(root).multiply(_restWorld[figure.bones.indexOf(root)].clone().invert());
+}
+
+// Which way a figure faces along the floor: +Z at rest, turned with its hips.
+// A figure lying down faces the floor or the ceiling, so there its length
+// says which way it lies: towards its head face down, towards its feet face
+// up. That is the way it would face if it stood up, and the two readings
+// blend, so the knob does not jump as a figure is tipped over.
 function _facing(figure) {
-  var rootIndex = figure.bones.indexOf(figure.boneByName.root);
-  var turned = _worldQuat(figure.boneByName.root).multiply(_restWorld[rootIndex].clone().invert());
-  var dir = new T.Vector3(0, 0, 1).applyQuaternion(turned);
-  dir.y = 0;
+  var turned = _turned(figure);
+  var front = new T.Vector3(0, 0, 1).applyQuaternion(turned), up = new T.Vector3(0, 1, 0).applyQuaternion(turned);
+  var dir = new T.Vector3(front.x - front.y * up.x, 0, front.z - front.y * up.z);
   return dir.lengthSq() > 1e-8 ? dir.normalize() : new T.Vector3(0, 0, 1);
+}
+
+// The figure's own frame for left and right: the turn about the vertical that
+// faces it the way it faces.
+function _heading(figure) {
+  var facing = _facing(figure);
+  return new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), Math.atan2(facing.x, facing.z));
 }
 
 function _worldQuat(bone) { return bone.getWorldQuaternion(new T.Quaternion()); }
@@ -618,7 +688,8 @@ function _onHandleDown(e) {
     if (distance < bestDistance) { best = h; bestDistance = distance; }
   });
   if (best) {
-    _beginHandleDrag(e, best);
+    if (best.joint === TIP_JOINT) _beginTip(e, best);
+    else _beginHandleDrag(e, best);
     return;
   }
   // ST4. Then a figure's turn knob, then a body part, then a floor ring.
@@ -633,7 +704,7 @@ function _onHandleDown(e) {
     var part = _mesh.geometry.attributes.partId.getX(hit.face.a);
     _select(part);
     // Grabbing the hips moves the whole figure; any other part swings.
-    if (PARTS[part].joint === "root") _beginFigureDrag(e, index, "move");
+    if (PARTS[part].joint === "root") _beginLift(e, index, hit.point);
     else _beginSwing(e, part, hit.point);
     return;
   }
@@ -689,6 +760,107 @@ function _beginHandleDrag(e, best) {
     _drag.endWorld = _worldQuat(_boneByName[joint]);
   }
   _claim(e);
+}
+
+// ST9. The hips themselves: the whole figure goes where they are dragged, up
+// and down too. Up on the screen is up in the world (a vertical plane facing
+// the camera), so a drag never sends the figure off into the distance. Seen
+// from nearly straight above or below there is no such plane, and the figure
+// slides level instead. A press on a figure is always taken here: before, one
+// from hip height met no floor and fell through to the camera, which swung
+// and moved every figure on the screen together (owner, 2026-11-10).
+var LIFT_MIN_LEVEL = 0.35;   // how level the camera must look for "up" to be up
+
+// The upright plane facing the camera, as its normal; null when the camera
+// looks too steeply down or up for one.
+function _uprightNormal() {
+  var look = _camera.getWorldDirection(new T.Vector3());
+  var level = new T.Vector3(look.x, 0, look.z);
+  return level.length() > LIFT_MIN_LEVEL ? level.normalize() : null;
+}
+
+function _beginLift(e, index, grabbed) {
+  _drag = {
+    kind: "lift", index: index, start: grabbed.clone(),
+    plane: new T.Plane().setFromNormalAndCoplanarPoint(_uprightNormal() || new T.Vector3(0, 1, 0), grabbed),
+    rootStart: _figures[index].boneByName.root.position.clone(),
+  };
+  _claim(e);
+}
+
+// ST9. The pink dot on the head: the whole figure tips about its hips so its
+// head follows the cursor, all the way to lying down or upside down. With
+// Shift it rolls about its own length instead. A figure on the floor stays on
+// the floor while it tips; one in the air turns where it hangs. The head moves
+// in the same upright plane the hips are dragged in, so from a camera that
+// looks a little down a figure still tips straight over, not towards the lens.
+var TIP_ROUNDS = 24, TIP_SETTLED = 2e-4;   // at most this many rounds; done within a hundredth of a degree
+var SNAP_ANGLE = 4 * Math.PI / 180;
+
+function _beginTip(e, best) {
+  var figure = _figures[_current], root = _boneByName.root;
+  _mesh.updateMatrixWorld(true);
+  var at = best.mesh.position.clone();
+  var plane = new T.Plane().setFromNormalAndCoplanarPoint(_uprightNormal() || _camera.getWorldDirection(new T.Vector3()), at);
+  var grabbed = _pointerRay(e).ray.intersectPlane(plane, new T.Vector3()) || at.clone();
+  _drag = {
+    kind: "tip", index: _current, plane: plane, grab: grabbed.sub(at),
+    from: at.clone().sub(_worldPos(root)).normalize(),
+    axis: new T.Vector3(0, 1, 0).applyQuaternion(_turned(figure)),
+    startWorld: _worldQuat(root), x0: e.clientX,
+    onFloor: _resting(figure) === 0,
+  };
+  _claim(e);
+}
+
+// A figure tipped to within a few degrees of upright, level or upside down
+// settles exactly there. `world` is the hips' world rotation.
+function _snapTip(figure, world) {
+  var rest = _restWorld[figure.bones.indexOf(figure.boneByName.root)];
+  var up = new T.Vector3(0, 1, 0).applyQuaternion(world.clone().multiply(rest.clone().invert()));
+  var goal = null;
+  if (Math.abs(up.y) < Math.sin(SNAP_ANGLE)) goal = new T.Vector3(up.x, 0, up.z).normalize();
+  else if (Math.abs(up.y) > Math.cos(SNAP_ANGLE)) goal = new T.Vector3(0, up.y > 0 ? 1 : -1, 0);
+  return goal ? new T.Quaternion().setFromUnitVectors(up, goal).multiply(world) : world;
+}
+
+// A lying figure rolled to within a few degrees of its front, back or side
+// settles exactly there. Rolling an upright figure is turning it: no settling.
+function _snapRoll(figure, world) {
+  var rest = _restWorld[figure.bones.indexOf(figure.boneByName.root)];
+  var turned = world.clone().multiply(rest.clone().invert());
+  var up = new T.Vector3(0, 1, 0).applyQuaternion(turned), front = new T.Vector3(0, 0, 1).applyQuaternion(turned);
+  var above = new T.Vector3(0, 1, 0).addScaledVector(up, -up.y);
+  if (above.length() < 0.5) return world;
+  above.normalize();
+  var side = new T.Vector3().crossVectors(up, above);
+  var goals = [above, above.clone().negate(), side, side.clone().negate()];
+  for (var i = 0; i < goals.length; i++) {
+    if (front.dot(goals[i]) > Math.cos(SNAP_ANGLE)) return new T.Quaternion().setFromUnitVectors(front, goals[i]).multiply(world);
+  }
+  return world;
+}
+
+function _tip(drag, point, e) {
+  var figure = _figures[drag.index], root = figure.boneByName.root;
+  if (e.shiftKey) {
+    var roll = new T.Quaternion().setFromAxisAngle(drag.axis, (e.clientX - drag.x0) * 0.012);
+    _setWorldQuat(root, _snapRoll(figure, roll.multiply(drag.startWorld.clone())));
+    if (drag.onFloor) _settle(figure, 0);
+    return;
+  }
+  // On the floor the hips sink or rise as the figure tips, which changes
+  // where the head has to point. Rounds that each go half the way settle the
+  // two together (about 0.2 ms a round); in the air the first round is exact.
+  for (var round = 0; round < (drag.onFloor ? TIP_ROUNDS : 1); round++) {
+    var to = point.clone().sub(_worldPos(root));
+    if (to.lengthSq() < 1e-8) return;
+    var goal = _snapTip(figure, new T.Quaternion().setFromUnitVectors(drag.from, to.normalize()).multiply(drag.startWorld));
+    var now = _worldQuat(root), settled = round > 0 && now.angleTo(goal) < TIP_SETTLED;
+    _setWorldQuat(root, round ? now.slerp(goal, 0.5) : goal);
+    if (drag.onFloor) _settle(figure, 0);
+    if (settled) break;
+  }
 }
 
 // Slide a whole figure on the floor, or turn it about its hips.
@@ -747,6 +919,14 @@ function _onHandleMove(e) {
         point.clone().sub(_drag.pivot).normalize());
     }
     _setWorldQuat(_drag.bone, q.multiply(_drag.startWorld.clone()));
+  } else if (_drag.kind === "lift") {
+    var lifted = _figures[_drag.index], raised = lifted.boneByName.root;
+    raised.position.copy(_drag.rootStart).add(point).sub(_drag.start);
+    raised.updateMatrixWorld(true);
+    var low = _lowestPoint(lifted);
+    if (Math.abs(low) < FLOOR_SNAP) { raised.position.y -= low; raised.updateMatrixWorld(true); }
+  } else if (_drag.kind === "tip") {
+    _tip(_drag, point.sub(_drag.grab), e);
   } else if (_drag.kind === "move") {
     // The root's parent sits at the origin unrotated: a world offset is local.
     var root = _figures[_drag.index].boneByName.root;
@@ -784,24 +964,43 @@ function _onHandleUp() {
 
 // ── posing ───────────────────────────────────────────────────────────────
 // A whole pose: every joint's rotation, and where the hips are. Without a
-// position the figure stays where it stands and keeps facing the way it
-// faces (a preset or Reset changes the pose, not the staging); the hips go to
-// their resting height for this figure's body.
-function _setLocal(rotations, rootPosition) {
+// position the figure stays where it is and keeps the way its hips are turned
+// and tipped (a preset changes the pose, not the staging), and it rests where
+// it rested: a figure on the floor is set down on the floor in its new pose,
+// one lifted off it stays as high (ST9; before, the hips went to standing
+// height, so a kneeling or sitting figure hung in the air). With `stand` the
+// figure is stood up instead: upright, facing the way it faced, hips at
+// standing height.
+function _setLocal(rotations, rootPosition, stand) {
   var figure = _figures[_current], root = _boneByName.root;
-  var turn = root.quaternion.clone(), x = root.position.x, z = root.position.z;
+  var turn = root.quaternion.clone();
+  var upright = figure && stand ? _uprightTurn(figure) : null;
+  var rested = figure && !rootPosition && !stand ? _resting(figure) : 0;
   _bones.forEach(function (bone, index) {
     var q = rotations && rotations[bone.name];
     if (q) bone.quaternion.fromArray(q);
     else bone.quaternion.copy(_restLocal[index]);
   });
-  if (!(rotations && rotations.root)) root.quaternion.copy(turn);
+  if (!(rotations && rotations.root)) {
+    root.quaternion.copy(turn);
+    if (upright) _setWorldQuat(root, upright);
+  }
   if (rootPosition) {
     root.position.fromArray(rootPosition);
-  } else if (figure) {
+  } else if (figure && stand) {
     var body = _bodies[figure.body] || _bodies.adult;
-    root.position.set(x, (body.rootRest.y - (body.floor || 0)) * (figure.scale || 1), z);
+    root.position.y = (body.rootRest.y - (body.floor || 0)) * (figure.scale || 1);
+  } else if (figure) {
+    _settle(figure, rested);
   }
+}
+
+// The hips' world rotation for the figure standing upright, facing the way it
+// faces now; null when it is upright already, so its rotation is kept to the bit.
+function _uprightTurn(figure) {
+  var up = new T.Vector3(0, 1, 0).applyQuaternion(_turned(figure));
+  if (up.y > 1 - 1e-12) return null;
+  return _heading(figure).multiply(_restWorld[figure.bones.indexOf(figure.boneByName.root)]);
 }
 
 function applyPreset(id) {
@@ -812,18 +1011,48 @@ function applyPreset(id) {
   return true;
 }
 
-function resetPose() { _setLocal(null); _changed(true); }
+// Reset starts the figure over: the rest pose, standing upright on the floor
+// where it is, facing the way it faced.
+function resetPose() { _setLocal(null, null, true); _changed(true); }
 
 // ST7. A pose read from a picture (`/studio/stage/pose_from_picture`): every
 // MHR joint's rotation in the picture's camera space (x right, y up, z toward
 // the camera), in bone order. Each bone takes its rotation relative to its
-// parent. The figure stays upright where it stands and turns to face Stage's
-// camera the way the person faced the picture's; the tilt of the picture's own
-// camera is not the figure's. Then it is set down so its lowest joint is where
-// a standing figure's is, so a kneeling or sitting pose does not float.
+// parent.
+//
+// The hips' rotation is the person's whole turn as the picture shows it. One
+// person's joints cannot say how the camera was pitched: leaning back 60
+// degrees seen level, and lying flat seen from 30 degrees above, read the
+// same. So (ST9c, owner 2026-11-10):
+// - a person within READ_LYING of upright is stood upright, facing Stage's
+//   camera the way they faced theirs; the tilt is taken to be the camera's
+//   (ST7's rule);
+// - a person farther over (lying, on all fours, falling, upside down) keeps
+//   the whole turn, the picture taken as level.
+// "Farther over" is judged by the hips AND by the line of the torso, hips to
+// neck, whichever leans more. The reader shares a lean between the pelvis and
+// the spine as it sees fit: on synthetic pictures it read a mannequin on all
+// fours with its hips at 53 degrees (true: 95) and its torso at 92, and one
+// lying seen from beyond its feet with hips at 44 (true: 61) and torso at 52.
+// The torso's line was within 2 degrees of the truth in eight of nine reads.
+// Either way the figure turns with Stage's camera about the vertical, stays
+// where it stood, and is set down with its lowest point on the floor. That
+// point is of its skin: ST7 used the lowest joint, and a knee or a back sank.
+var READ_LYING = 50 * Math.PI / 180;   // the plan's first guess (P5); not tuned
+
 function _yawOnly(q) {
   var t = new T.Quaternion(0, q.y, 0, q.w);
   return t.lengthSq() < 1e-12 ? new T.Quaternion() : t.normalize();
+}
+
+// How far the read torso leans from the picture's up: the angle of the line
+// from the hips to the neck, the read rotations on this figure's own bones.
+function _readTorsoLean(read) {
+  var line = new T.Vector3(), base = read[0].clone().invert();
+  for (var bone = _boneByName.c_neck; bone && bone !== _boneByName.root; bone = bone.parent) {
+    line.add(bone.position.clone().applyQuaternion(base.clone().multiply(read[_bones.indexOf(bone.parent)])));
+  }
+  return line.lengthSq() > 1e-12 ? Math.acos(Math.max(-1, Math.min(1, line.normalize().y))) : 0;
 }
 
 function applyReadPose(world) {
@@ -835,19 +1064,14 @@ function applyReadPose(world) {
     var p = _bones.indexOf(bone.parent);
     if (p >= 0) rotations[bone.name] = read[p].clone().invert().multiply(read[i]).toArray();
   });
-  var root = _boneByName.root;
-  var facing = _yawOnly(new T.Quaternion().fromArray(rotations.root || [0, 0, 0, 1]));
-  rotations.root = _yawOnly(_camera.getWorldQuaternion(new T.Quaternion())).multiply(facing).toArray();
+  var turn = new T.Quaternion().fromArray(rotations.root || [0, 0, 0, 1]);
+  var rest = _restLocal[_bones.indexOf(_boneByName.root)];
+  var up = new T.Vector3(0, 1, 0).applyQuaternion(turn.clone().multiply(rest.clone().invert()));
+  var lying = Math.max(Math.acos(Math.max(-1, Math.min(1, up.y))), _readTorsoLean(read)) > READ_LYING;
+  var toStage = _yawOnly(_camera.getWorldQuaternion(new T.Quaternion()));
+  rotations.root = toStage.multiply(lying ? turn : _yawOnly(turn)).toArray();
   _setLocal(rotations);
-  var body = _bodies[figure.body] || _bodies.adult;
-  _mesh.updateMatrixWorld(true);
-  var lowest = Infinity, at = new T.Vector3();
-  _bones.forEach(function (b) {
-    if (!(b.parent && b.parent.isBone)) return;   // body_world: the origin, not a body part
-    b.getWorldPosition(at);
-    if (at.y < lowest) lowest = at.y;
-  });
-  if (isFinite(lowest)) root.position.y += (body.lowest - (body.floor || 0)) * (figure.scale || 1) - lowest;
+  _settle(figure, 0);
   _changed(true);
   return true;
 }
@@ -944,6 +1168,15 @@ function _showPictureButton() {
   if (_els.pictureBtn) _els.pictureBtn.disabled = !(_pictureModel && _pictureModel.installed) || !_mesh;
 }
 
+// ST9. Set a figure down where it is: its lowest point on the floor.
+function toFloor(index) {
+  var figure = _figures[index];
+  if (!figure) return false;
+  _settle(figure, 0);
+  _changed(true);
+  return true;
+}
+
 function resetPart() {
   if (_selected < 0) return;
   var bone = _boneByName[PARTS[_selected].joint];
@@ -951,13 +1184,19 @@ function resetPart() {
   _changed(true);
 }
 
-// Mirror left and right through the figure's middle. Worked in world space,
-// so it holds whatever rest frames MHR gives each side:
-//   new_world[j] = M(world[partner]) * M(rest[partner])^-1 * rest[j],
+// Mirror left and right through the figure's middle. Worked with whole
+// rotations, so it holds whatever rest frames MHR gives each side:
+//   new[j] = M(turn[partner]) * M(rest[partner])^-1 * rest[j],
 // with M the reflection x -> -x, which maps (x, y, z, w) to (x, -y, -z, w).
+// The rotations are taken in the figure's own heading (ST9): the mirror stands
+// upright through the hips along the way the figure faces, so a turned figure
+// keeps facing where it faced and a lean to its left becomes a lean to its
+// right. Before, the mirror was the world's x = 0 plane, which turned a figure
+// facing 40 degrees left to face 40 degrees right.
 function mirrorPose() {
   _mesh.updateMatrixWorld(true);
-  var world = _bones.map(function (b) { return b.getWorldQuaternion(new T.Quaternion()); });
+  var heading = _heading(_figures[_current]), unturn = heading.clone().invert();
+  var world = _bones.map(function (b) { return unturn.clone().multiply(b.getWorldQuaternion(new T.Quaternion())); });
   var reflect = function (q) { return new T.Quaternion(q.x, -q.y, -q.z, q.w); };
   var index = {};
   _bones.forEach(function (b, i) { index[b.name] = i; });
@@ -971,9 +1210,13 @@ function mirrorPose() {
     if (p === undefined) p = i;
     return reflect(world[p]).multiply(reflect(_restWorld[p]).invert()).multiply(_restWorld[i]);
   });
-  var meshWorld = _mesh.getWorldQuaternion(new T.Quaternion());
+  // The hips and everything below them. What the hips hang from (MHR's
+  // `body_world`, the scene's origin) is no part of the body and stays put.
+  var rootIndex = _bones.indexOf(_boneByName.root);
   _bones.forEach(function (b, i) {
-    var parentWorld = b.parent && b.parent.isBone ? next[_bones.indexOf(b.parent)] : meshWorld;
+    if (!(b.parent && b.parent.isBone)) return;
+    var p = _bones.indexOf(b.parent);
+    var parentWorld = i === rootIndex ? world[p] : next[p];
     b.quaternion.copy(parentWorld.clone().invert().multiply(next[i]));
   });
   _changed(true);
@@ -1747,7 +1990,9 @@ function _save() {
   }, 300);
 }
 
-// One figure as data: its changed joint rotations and where its hips are.
+// One figure as data: its changed joint rotations and where its hips are. The
+// hips' own rotation is one of the joints', so a figure lying down or upside
+// down is saved in the same shape as one that was only turned (ST9).
 function _figurePose(figure) {
   var rotations = {};
   figure.bones.forEach(function (b, i) {
@@ -1769,7 +2014,7 @@ function _restore() {
       if (index > 0) _addFigure(true, body);
       else if (body !== "adult") setBody(0, body);
       var figure = _figures[index];
-      if (typeof pose.height === "number") { figure.height = Math.max(0.8, Math.min(1.2, pose.height)); _applyBodyScale(figure, 0); }
+      if (typeof pose.height === "number") { figure.height = Math.max(0.8, Math.min(1.2, pose.height)); _applyBodyScale(figure, true); }
       _setCurrent(index);
       _setLocal(pose.rotations || {}, Array.isArray(pose.root) && pose.root.length === 3 ? pose.root : null);
     });
@@ -1909,10 +2154,15 @@ function _buildUI(container) {
   poseActions.appendChild(_button(_t("stage.mirror", "Mirror"), mirrorPose));
   poseActions.appendChild(_button(_t("stage.reset", "Reset"), resetPose));
   pose.appendChild(poseActions);
+  // ST9. A figure lifted off the floor, or left a little above it, set back down.
+  var floorRow = document.createElement("div");
+  floorRow.className = "stage-row";
+  floorRow.appendChild(_button(_t("stage.toFloor", "Put on the floor"), function () { if (_mesh) toFloor(_current); }));
+  pose.appendChild(floorRow);
   var handleHint = document.createElement("p");
   handleHint.className = "stage-hint";
   handleHint.textContent = _t("stage.handleHint",
-    "Drag a blue dot to move a hand or foot; the limb follows. Drag the pink dot to move the hips while the feet stay put.");
+    "Drag a blue dot to move a hand or foot; the limb follows. Drag the pink dot on the hips to move the hips while the feet stay put. Drag the pink dot on the head to tip the whole figure over, as far as lying down or upside down; hold Shift to roll it over.");
   pose.appendChild(handleHint);
   // ST7. Pose from a picture: the owner chooses the picture; the model is opt-in.
   var picture = document.createElement("div");
@@ -1951,7 +2201,7 @@ function _buildUI(container) {
   var partHint = document.createElement("p");
   partHint.className = "stage-hint";
   partHint.textContent = _t("stage.partHint",
-    "Drag a body part to swing it from its joint; hold Shift while dragging to twist it. Drag a figure's ring on the floor to move it; drag the knob on the ring to turn it.");
+    "Drag a body part to swing it from its joint; hold Shift while dragging to twist it. Drag the hips to move the whole figure, up and down too. Drag a figure's ring on the floor to slide it along the floor; drag the knob on the ring to turn it.");
   part.appendChild(partHint);
   _els.resetPart = _button(_t("stage.resetPart", "Reset this part"), resetPart);
   part.appendChild(_els.resetPart);
@@ -2170,7 +2420,7 @@ window.StudioStage = {
   removeFigure: function (index) { return removeFigure(index); },
   selectFigure: function (index) { if (_figures[index]) { _setCurrent(index); _draw(); return true; } return false; },
   figureCount: function () { return _figures.length; },
-  // Put figure `index`'s hips at a point in metres (as dragging its pink dot).
+  // Put figure `index`'s hips at a point in metres, the whole figure with them.
   placeFigure: function (index, position) {
     var figure = _figures[index];
     if (!figure) return false;
@@ -2179,6 +2429,11 @@ window.StudioStage = {
     _changed(true);
     return true;
   },
+  // ST9. Set a figure down on the floor; how far its lowest point is above it.
+  toFloor: function (index) { return _mesh ? toFloor(index == null ? _current : index) : false; },
+  lowestPoint: function (index) { var f = _figures[index]; return f ? _lowestPoint(f) : null; },
+  // "Frame the figure": fit every figure in the picture.
+  frame: function () { if (!_mesh) return false; _frameFigure(); return true; },
   currentFigure: function () { return _current; },
   renderCoverage: renderCoverage,
   makeRegionsAndMasks: makeRegionsAndMasks,

@@ -97,9 +97,10 @@ class ModelSummary(Contract):
 #: or canvas with room to spare.
 MAX_SOURCE_IMAGE_BYTES = 256 * 1024 * 1024
 
-#: What Studio will decode. Narrow on purpose: the Canvas emits JPEG for the
-#: source and PNG for the mask, and every additional format is another decoder
-#: reachable from a browser request.
+#: What Studio will decode. Narrow on purpose: the Canvas emits PNG for the
+#: source (CL1; it was JPEG) and for the mask, references may be WebP or JPEG,
+#: and every additional format is another decoder reachable from a browser
+#: request.
 SOURCE_IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp")
 
 #: KR1. How many reference images one Klein job may carry. Neo's ImageStitch

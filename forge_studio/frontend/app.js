@@ -4284,30 +4284,47 @@ const RegionMethod = {
     if (!ok && select.value === "attention_couple") select.value = "auto";
   },
 
+  // RL1. A region's LoRA list as tags, with nothing between or before them:
+  // the engine deletes each tag where it stands, so the words left are the
+  // region's own. `<lora:...>` in prompt text is the one way a LoRA reaches a
+  // pass (`ad-lora-stack.js` says why), so a listed LoRA and a typed tag are
+  // the same thing to the engine.
+  loraTags(r) {
+    return (Array.isArray(r?.loras) ? r.loras : [])
+      .filter(l => l && l.name)
+      .map(l => `<lora:${l.name}:${Number.isFinite(+l.weight) ? +l.weight : 1}>`)
+      .join("");
+  },
+
+  // A region the engine repaints with its own LoRAs: listed, or typed.
+  hasLora(r) {
+    return !!this.loraTags(r) || /<(?:lora|lyco):[^<>]+>/i.test(String(r?.prompt || ""));
+  },
+
   requestField(regionsJson) {
     if (!regionsJson) return {};
     let parsed;
     try { parsed = JSON.parse(_cleanRegionsJson(regionsJson)); } catch (_) { return {}; }
-    const regions = (parsed?.regions || [])
-      .filter(r => r && r.visible !== false && String(r.prompt || "").trim() && r.mask_b64)
-      .map(r => ({
-        name: String(r.name || ""),
-        prompt: String(r.prompt || ""),
-        negative_prompt: String(r.negPrompt || ""),
-        weight: Number.isFinite(+r.weight) ? +r.weight : 1.0,
-        mask: { data_url: r.mask_b64 },
-      }));
+    // A region of LoRAs alone is sent too: it gets its LoRA pass and nothing else.
+    const kept = (parsed?.regions || [])
+      .filter(r => r && r.visible !== false
+        && (String(r.prompt || "").trim() || this.loraTags(r)) && r.mask_b64);
+    const regions = kept.map(r => ({
+      name: String(r.name || ""),
+      prompt: String(r.prompt || "") + this.loraTags(r),
+      negative_prompt: String(r.negPrompt || ""),
+      weight: Number.isFinite(+r.weight) ? +r.weight : 1.0,
+      mask: { data_url: r.mask_b64 },
+    }));
     if (!regions.length) return {};
     let method = document.getElementById("regionMethod")?.value || "auto";
-    // RG3. Each region's own denoise, read only by one-pass-per-region.
-    if (method === "per_region") {
-      const kept = (parsed?.regions || [])
-        .filter(r => r && r.visible !== false && String(r.prompt || "").trim() && r.mask_b64);
-      kept.forEach((r, i) => {
-        const value = +r.denoising;
-        if (Number.isFinite(value)) regions[i].denoising_strength = Math.min(1, Math.max(0.05, value));
-      });
-    }
+    // RG3. Each region's own denoise, read by one-pass-per-region. RL1: and by
+    // the LoRA pass of a region that has LoRAs, under every other method.
+    kept.forEach((r, i) => {
+      if (method !== "per_region" && !this.hasLora(r)) return;
+      const value = +r.denoising;
+      if (Number.isFinite(value)) regions[i].denoising_strength = Math.min(1, Math.max(0.05, value));
+    });
     if (method === "attention_couple" && !this.COUPLE_ARCHES.includes(this.arch)) method = "auto";
     return { regions, ...(method !== "auto" ? { region_method: method } : {}) };
   },

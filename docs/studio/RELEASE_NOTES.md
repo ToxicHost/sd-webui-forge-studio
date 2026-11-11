@@ -3,6 +3,64 @@
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. Studio is in public beta on Windows/NVIDIA.
 
+## 0.9.17: A LoRA on one region, colour fix, freer Stage poses — 2026-11-11
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Colours no longer fade when you inpaint the same picture again and again.**
+  The Canvas sent each picture to Generate as a JPEG, and everything outside the
+  mask came back from that JPEG, so the untouched part of the picture lost a
+  little colour on every round. Reds showed it first. The Canvas now sends a
+  lossless picture. A picture that has already faded stays faded: start again
+  from the original in the Gallery.
+- **A LoRA can act on one region.** Each row in the Regions panel has **+ LoRA**
+  (a list, each with its weight) and, once it has one, a **LoRA pass** slider. A
+  `<lora:...>` tag typed into the region's prompt counts the same. After the
+  picture is made, Hires included, the region is repainted with its own words and
+  its LoRAs at that strength (0.55 to start), and Auto Detail runs after it. The
+  rest of the picture stays as it was, apart from a narrow blend at the region's
+  edge. This is for a character LoRA that should shape one figure and not the
+  one beside it, for example on regions made from Stage figures. The main
+  prompt's LoRAs still act on the pass. The picture's parameters list them as
+  `Region LoRAs`. "One pass per region" doesn't need it: there each region's
+  tags already act in its own pass.
+- **A LoRA no longer carries over into the next picture's regions.** After a job
+  with a LoRA that changes the text encoder (many character LoRAs do), the
+  regions of the next job were read through that LoRA, so the same seed gave a
+  different picture than before the LoRA was used. Fixed. A LoRA in the main
+  prompt now also reaches the regions' own prompts, which it did not before, so
+  a picture made with regions and such a LoRA can come out a little different.
+- **Regions keep their name, their eye and their Denoise** when you switch
+  document tabs or recover a document; all three used to be lost. Renaming a
+  region works now: double-click its name, or use the pencil.
+- **Document tabs sit at the top of the Canvas,** above the options bar.
+- **Wildcards: weights, and "sometimes nothing".** In a choice group a number and
+  two colons is a weight: `{3::red|blue}` picks red three times in four. A blank
+  choice writes nothing, and takes its comma with it: `{3::|hat}` leaves the hat
+  out three times in four. Weights work inside `{2$$a|b|c}` too. Until now
+  `3::red` reached the prompt as text. One change to watch for: a stray blank,
+  as in `{a|b|}`, is now a third choice. The Codex's Wildcards article has a
+  Choices section.
+- **Stage: no pose is off limits.**
+  - Dragging the hips moves the whole figure, up and down too. A figure can be
+    raised off the floor, and it settles on the floor when it comes close.
+  - A new pink dot on the head tips the whole figure about its hips, as far as
+    lying down or upside down. Shift rolls it about its own length.
+  - **Put on the floor** sets the current figure down. A pose preset keeps what
+    the figure rests on, so Kneeling and Sitting no longer hang in the air.
+  - Figures are independent. A drag on one figure's hips used to be taken by the
+    camera, so every figure crossed the screen together.
+  - Mirror keeps the way a turned figure faces.
+  - **Pose from a picture** keeps a person who is lying or on all fours that way
+    (anyone leaning more than 50 degrees), and sets the figure down on its skin,
+    not its lowest joint.
+  - Checked on a real GPU on Anima with the 3D figure: all-fours and lying poses
+    are followed. Pose sticks on SDXL have not been run with these poses.
+- **Workshop lists group by folder.** Its model, LoRA and VAE lists show the same
+  folding folder headers as the Generate panel's Model list. What a merge or a
+  bake does is unchanged. A list's filter now finds a folder by its name too, in the Generate panel's model lists as well.
+
 ## 0.9.16: ControlNet fix — 2026-11-09
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

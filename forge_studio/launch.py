@@ -869,6 +869,10 @@ def _runtime_from(arguments: Any) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # GF1: harnesses call this directly, without `launch_studio.py`.
+    from .no_gradio import install as _refuse_gradio
+
+    _refuse_gradio()
     parser = argparse.ArgumentParser(
         description="Launch Forge Studio from a configuration file."
     )

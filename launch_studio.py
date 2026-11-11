@@ -43,6 +43,11 @@ def _mock_arguments(arguments: list[str]) -> list[str]:
 
 
 if __name__ == "__main__":
+    # GF1: before anything else imports, so a development venv that still has
+    # Gradio behaves as a tester's install does (forge_studio/no_gradio.py).
+    import forge_studio.no_gradio
+
+    forge_studio.no_gradio.install()
     arguments = sys.argv[1:]
     if "--mock" in arguments:
         import forge_studio.presentation

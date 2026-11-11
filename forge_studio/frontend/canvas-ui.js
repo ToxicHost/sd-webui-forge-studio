@@ -4698,19 +4698,49 @@ function renderRegionPanel() {
         const nm = document.createElement("span");
         nm.style.cssText = "font-size:10px;font-weight:600;flex:1;color:var(--text-1);cursor:pointer;user-select:none;";
         nm.textContent = r.name;
-        // Double-click to rename (single-click selects region)
-        nm.addEventListener("dblclick", e => {
-            e.stopPropagation();
+        nm.title = _i18n("region.rename.hint", "Double-click to rename");
+        // RN1. Double-click to rename, or the pencil button. A click on the
+        // name used to bubble to the row, whose handler rebuilds the whole
+        // panel: the second click of a double-click then landed on a new
+        // element, so renaming never started (measured in the browser). A
+        // click on the name now selects after the double-click interval, and
+        // a double-click cancels that; on the selected region it does nothing.
+        const startRename = () => {
+            clearTimeout(pendingSelect);
+            const before = r.name;
             nm.contentEditable = "true";
             nm.focus();
-            // Select all text
             const range = document.createRange();
             range.selectNodeContents(nm);
             const sel = window.getSelection();
             sel.removeAllRanges(); sel.addRange(range);
+            nm.onblur = () => {
+                nm.onblur = null;
+                nm.contentEditable = "false";
+                r.name = nm.textContent.trim().slice(0, 60) || before;
+                nm.textContent = r.name;
+            };
+            nm.onkeydown = e => {
+                e.stopPropagation();
+                if (e.key === "Enter") { e.preventDefault(); nm.blur(); }
+                else if (e.key === "Escape") { e.preventDefault(); nm.textContent = before; nm.blur(); }
+            };
+        };
+        let pendingSelect = null;
+        nm.addEventListener("click", e => {
+            e.stopPropagation();
+            if (nm.isContentEditable || (S.activeRegionId === r.id && S.regionMode)) return;
+            clearTimeout(pendingSelect);
+            pendingSelect = setTimeout(() => row.click(), 300);
         });
-        nm.addEventListener("blur", () => { nm.contentEditable = "false"; r.name = nm.textContent.trim() || r.name; });
-        nm.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); nm.blur(); } e.stopPropagation(); });
+        nm.addEventListener("dblclick", e => { e.stopPropagation(); startRename(); });
+
+        const renBtn = document.createElement("button");
+        renBtn.style.cssText = "font-size:9px;padding:1px 4px;background:none;border:1px solid var(--border);border-radius:3px;color:var(--text-3);cursor:pointer;";
+        renBtn.textContent = "✎";
+        renBtn.title = _i18n("region.rename.tooltip", "Rename region");
+        renBtn.setAttribute("aria-label", renBtn.title);
+        renBtn.addEventListener("click", e => { e.stopPropagation(); startRename(); });
 
         const eyeBtn = document.createElement("button");
         eyeBtn.style.cssText = "font-size:10px;padding:1px 4px;background:none;border:1px solid var(--border);border-radius:3px;color:var(--text-3);cursor:pointer;";
@@ -4744,7 +4774,7 @@ function renderRegionPanel() {
             }
         };
 
-        hdr.appendChild(dot); hdr.appendChild(nm); hdr.appendChild(balEl); hdr.appendChild(eyeBtn); hdr.appendChild(clrBtn); hdr.appendChild(delBtn);
+        hdr.appendChild(dot); hdr.appendChild(nm); hdr.appendChild(balEl); hdr.appendChild(renBtn); hdr.appendChild(eyeBtn); hdr.appendChild(clrBtn); hdr.appendChild(delBtn);
 
         // Prompt textarea
         const prompt = document.createElement("textarea");
@@ -4804,7 +4834,105 @@ function renderRegionPanel() {
         });
         denRow.appendChild(denLbl); denRow.appendChild(denSlider); denRow.appendChild(denVal);
 
+        // RL1. The region's own LoRAs (owner, 2026-11-09: "a character that
+        // needs one in a specific section"). Chips with a weight each, added
+        // from the LoRA browser. After the picture is made the engine
+        // repaints this region with them, at the strength below; a tag typed
+        // into the region's prompt counts the same.
+        if (!Array.isArray(r.loras)) r.loras = [];
+        const loraRow = document.createElement("div");
+        loraRow.className = "region-loras";
+        loraRow.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:3px;";
+        for (const item of r.loras) {
+            const chip = document.createElement("span");
+            chip.className = "region-lora-chip";
+            chip.style.cssText = "display:inline-flex;align-items:center;gap:3px;max-width:100%;font-size:9px;padding:1px 4px;border:1px solid var(--border);border-radius:9px;background:var(--bg-surface);color:var(--text-2);";
+            chip.addEventListener("click", e => e.stopPropagation());
+            const label = document.createElement("span");
+            label.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;";
+            label.textContent = String(item.name || "").replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, "");
+            label.title = item.name;
+            const weight = document.createElement("input");
+            weight.type = "number"; weight.min = "-10"; weight.max = "10"; weight.step = "0.05";
+            weight.value = String(item.weight);
+            weight.title = _i18n("region.loras.weight.tooltip", "LoRA weight");
+            weight.setAttribute("aria-label", weight.title);
+            weight.style.cssText = "width:42px;font-size:9px;padding:0 2px;background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:3px;";
+            weight.addEventListener("click", e => e.stopPropagation());
+            weight.addEventListener("keydown", e => e.stopPropagation());
+            weight.addEventListener("input", () => {
+                const value = parseFloat(weight.value);
+                if (isFinite(value)) item.weight = Math.round(Math.min(10, Math.max(-10, value)) * 100) / 100;
+            });
+            const drop = document.createElement("button");
+            drop.style.cssText = "font-size:9px;padding:0 3px;background:none;border:none;color:var(--text-3);cursor:pointer;";
+            drop.textContent = "✕";
+            drop.title = _i18n("region.loras.remove.tooltip", "Remove this LoRA from the region");
+            drop.setAttribute("aria-label", drop.title);
+            drop.addEventListener("click", e => {
+                e.stopPropagation();
+                r.loras = r.loras.filter(other => other !== item);
+                renderRegionPanel();
+            });
+            chip.appendChild(label); chip.appendChild(weight); chip.appendChild(drop);
+            loraRow.appendChild(chip);
+        }
+        const addLora = document.createElement("button");
+        addLora.className = "region-lora-add";
+        addLora.style.cssText = "font-size:9px;padding:1px 5px;background:none;border:1px dashed var(--border);border-radius:9px;color:var(--text-3);cursor:pointer;";
+        addLora.textContent = _i18n("region.loras.add", "+ LoRA");
+        addLora.title = _i18n("region.loras.add.tooltip", "Add a LoRA that acts on this region only");
+        addLora.addEventListener("click", e => {
+            e.stopPropagation();
+            if (!window.LoraBrowser?.openPick) return;
+            window.LoraBrowser.openPick((lora, picked) => {
+                const name = String((lora && lora.name) || lora || "").split("/").pop();
+                if (!name) return;
+                if (r.loras.some(other => other.name === name)) {
+                    window.showToast?.(window.I18N?.t
+                        ? window.I18N.t("region.loras.already", "{name} is already on this region", { name })
+                        : name + " is already on this region", "info");
+                    return;
+                }
+                const value = typeof picked === "number" ? picked
+                    : (lora && lora.preferred_weight > 0 ? lora.preferred_weight : 1.0);
+                r.loras.push({ name, weight: Math.round(value * 100) / 100 });
+                renderRegionPanel();
+            });
+        });
+        loraRow.appendChild(addLora);
+
+        // The LoRA pass's strength: the region's Denoise. "One pass per
+        // region" already shows that slider above, and its pass IS the LoRA's.
+        const hasLora = () => r.loras.length > 0 || /<(?:lora|lyco):[^<>]+>/i.test(r.prompt || "");
+        const loraDen = document.createElement("div");
+        loraDen.className = "region-lora-strength";
+        loraDen.style.cssText = "align-items:center;gap:4px;margin-top:3px;";
+        loraDen.title = _i18n("region.loras.denoise.tooltip",
+            "After the picture is made, this region is repainted with its LoRAs. Higher changes more of it.");
+        const loraDenLbl = document.createElement("span");
+        loraDenLbl.style.cssText = "font-size:9px;color:var(--text-4);white-space:nowrap;";
+        loraDenLbl.textContent = _i18n("region.loras.denoise", "LoRA pass:");
+        const loraDenSlider = document.createElement("input");
+        loraDenSlider.type = "range"; loraDenSlider.min = "10"; loraDenSlider.max = "100"; loraDenSlider.step = "5";
+        loraDenSlider.value = Math.round((isFinite(r.denoising) ? r.denoising : 0.55) * 100);
+        loraDenSlider.setAttribute("aria-label", loraDen.title);
+        loraDenSlider.style.cssText = `flex:1;height:3px;accent-color:${r.color};`;
+        loraDenSlider.addEventListener("click", e => e.stopPropagation());
+        const loraDenVal = document.createElement("span");
+        loraDenVal.style.cssText = "font-size:9px;color:var(--text-2);min-width:28px;text-align:right;";
+        loraDenVal.textContent = (isFinite(r.denoising) ? r.denoising : 0.55).toFixed(2);
+        loraDenSlider.addEventListener("input", () => {
+            r.denoising = +loraDenSlider.value / 100;
+            loraDenVal.textContent = r.denoising.toFixed(2);
+        });
+        loraDen.appendChild(loraDenLbl); loraDen.appendChild(loraDenSlider); loraDen.appendChild(loraDenVal);
+        const syncLoraDen = () => { loraDen.style.display = (!isEditRegional && hasLora()) ? "flex" : "none"; };
+        syncLoraDen();
+        prompt.addEventListener("input", syncLoraDen);
+
         row.appendChild(hdr); row.appendChild(prompt); row.appendChild(neg); row.appendChild(denRow);
+        row.appendChild(loraRow); row.appendChild(loraDen);
 
         // Click row to select/deselect region (toggle)
         row.addEventListener("click", () => {

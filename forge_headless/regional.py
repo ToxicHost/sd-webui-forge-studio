@@ -76,8 +76,10 @@ def feather(mask: Any, short_side: int) -> Any:
 def region_text(global_prompt: str, region_prompt: str) -> str:
     """The text a region is encoded with: the global prompt, then the
     region's (the Extension prepends it the same way). LoRA and other
-    `<name:...>` tags are removed: they act on the whole job through the
-    global prompt, and encoded here they would be read as words."""
+    `<name:...>` tags are removed: encoded here they would be read as words,
+    and a LoRA patches the whole model for a pass, never one cond of it. The
+    global prompt's act on the whole job; a region's get a pass of their own
+    after the picture is made (RL1, `lora_pass_text`)."""
 
     text = _EXTRA_NETWORK.sub("", region_prompt or "").strip().strip(",").strip()
     glob = _EXTRA_NETWORK.sub("", global_prompt or "").strip()
@@ -86,6 +88,119 @@ def region_text(global_prompt: str, region_prompt: str) -> str:
     if not glob:
         return text
     return glob + (" " if glob.endswith(",") else ", ") + text
+
+
+_LORA_TAG = re.compile(r"<(?:lora|lyco):[^<>]+>", re.IGNORECASE)
+
+
+def lora_tags(prompt: str) -> tuple[str, ...]:
+    """RL1. The LoRA tags a region's prompt carries, in the order typed."""
+
+    return tuple(_LORA_TAG.findall(prompt or ""))
+
+
+def own_text(prompt: str) -> str:
+    """RL1. A region's prompt as words alone: every `<name:...>` tag removed,
+    as `region_text` reads the region's half."""
+
+    return _EXTRA_NETWORK.sub("", prompt or "").strip().strip(",").strip()
+
+
+def lora_pass_text(global_prompt: str, region_prompt: str) -> str:
+    """RL1. The prompt of a region's LoRA pass.
+
+    The region's own words, then the main prompt's LoRA tags (a style LoRA
+    acts on every pass of the job), then the region's, with nothing before
+    them: Neo deletes each tag where it stands (`extra_networks.parse_prompt`).
+
+    RL1b. The main prompt's WORDS are left out when the region has its own.
+    They describe the whole picture ("two men standing side by side"), and a
+    pass over one region drew the whole picture again inside it: small extra
+    figures in the region's background at 0.40, 0.55 and 0.70, on Anima and
+    on SDXL (Evidence/regional-lora-2026-11-09, first GPU run). Auto Detail's
+    rule for a face inside a region is the same (`_region_face_prompt`). A
+    region of tags and no words has nothing else to go by and keeps the main
+    prompt."""
+
+    glob = (global_prompt or "").strip()
+    words = own_text(region_prompt)
+    region_tags = lora_tags(region_prompt)
+    if not words:
+        return glob + "".join(region_tags)
+    main_tags = tuple(tag for tag in lora_tags(glob) if tag not in region_tags)
+    return words + "".join(main_tags) + "".join(region_tags)
+
+
+def lora_pass_blur(image_size: tuple[int, int], blur: int) -> tuple[int, int]:
+    """RL1b. The mask blur of a region's LoRA pass, and how far it reaches.
+
+    The job's own blur, or 1/128 of the picture's short side when that is
+    more (8 px at 1024): a repainted region meets the rest of the picture
+    along its whole edge, often across flat sky, and 4 px shows as a line.
+    The reach is Neo's kernel (`processing.py` `init`: `int(2.5 * blur + 0.5)`
+    either side of the edge)."""
+
+    blur = max(int(blur), int(round(min(int(image_size[0]), int(image_size[1])) / 128)))
+    return blur, (int(2.5 * blur + 0.5) if blur > 0 else 0)
+
+
+def grown(mask: Any, reach: int) -> Any:
+    """RL1b. A 2-D mask (anything above 0 is inside), grown by `reach` pixels.
+
+    Neo's blend is centred on the mask's edge and ends `reach` pixels beyond
+    it. Pasting a repainted region back through this keeps that transition
+    whole and leaves every pixel past it exactly as it was, the rule
+    `_clip_to_mask` follows for an inpaint. A square window, summed along each
+    axis in turn: exact, and linear in the picture's size."""
+
+    import numpy as np
+
+    out = np.asarray(mask) > 0
+    reach = int(reach)
+    if reach <= 0:
+        return out
+    size = 2 * reach + 1
+    for axis in (0, 1):
+        pad = [(reach, reach) if a == axis else (0, 0) for a in (0, 1)]
+        sums = np.cumsum(np.pad(out, pad).astype(np.int32), axis=axis)
+        sums = np.insert(sums, 0, 0, axis=axis)
+        count = sums.shape[axis]
+        out = (np.take(sums, range(size, count), axis=axis)
+               - np.take(sums, range(0, count - size), axis=axis)) > 0
+    return out
+
+
+def lora_pass_size(image_size: tuple[int, int], box: tuple[int, int, int, int],
+                   base_size: tuple[int, int], *, margin: int = 0) -> tuple[int, int]:
+    """RL1. The width and height a region's LoRA pass works at.
+
+    Neo's Only masked crops the picture around the mask, widens the crop to
+    the pass's shape and resizes it to the pass's size (`processing.py`
+    `init`, `masking.expand_crop_region`). At the job's base size that
+    shrinks a region of a Hires picture before repainting it, and the result
+    comes back soft. So the pass takes:
+
+    * the crop's own shape, no thinner than 1:2 either way (a thin region
+      keeps some of the picture around it);
+    * never fewer pixels than the crop has (a Hires picture is repainted at
+      its own size);
+    * never fewer than the job's base size has (a small region is enlarged,
+      as Auto Detail enlarges a face).
+
+    `margin` is what Neo adds around the mask (padding, and the blur's
+    reach). Both sides are multiples of 8, at least 64."""
+
+    image_w, image_h = (int(v) for v in image_size)
+    x1, y1, x2, y2 = (int(v) for v in box)
+    crop_w = float(min(image_w, max(8, (x2 - x1) + 2 * int(margin))))
+    crop_h = float(min(image_h, max(8, (y2 - y1) + 2 * int(margin))))
+    if crop_w > 2 * crop_h:
+        crop_h = min(float(image_h), crop_w / 2)
+    elif crop_h > 2 * crop_w:
+        crop_w = min(float(image_w), crop_h / 2)
+    base_area = float(max(1, int(base_size[0]) * int(base_size[1])))
+    scale = max(1.0, math.sqrt(base_area / (crop_w * crop_h)))
+    return (max(64, int(round(crop_w * scale)) // 8 * 8), max(64, int(round(crop_h * scale)) // 8 * 8))
 
 
 def scale_strengths(conds: list[dict], before: float) -> None:
@@ -213,7 +328,17 @@ class MaskedRegionsRunner(_RegionalRunner):
         self._pixels: Any = None
         self._cache: dict[tuple, Any] = {}
 
-    def process(self, p: Any, *_args: Any, **_kwargs: Any) -> None:
+    def process_batch(self, p: Any, *_args: Any, **_kwargs: Any) -> None:
+        # RL1c. `process_batch`, NOT `process`. Neo calls `scripts.process`
+        # (`processing.py` 928) BEFORE it puts the model's pristine objects
+        # back (958) and applies this job's LoRAs (981, 983), so text encoded
+        # there went through whatever the PREVIOUS pass left on the text
+        # encoder. After a pass with a LoRA that has text-encoder weights,
+        # every region of the next job was encoded through that LoRA
+        # (measured: a regions job changed by 9/255 after one region LoRA
+        # pass, and a job without regions did not), and a job's own
+        # main-prompt LoRA never reached its regions' text. `process_batch`
+        # (986) is the first hook after both, and before `setup_conds` (988).
         try:
             self._encoded = _EncodedRegions(p, self.regions)
             self._pixels = _pixel_masks(self.regions, p.width, p.height)
@@ -299,7 +424,8 @@ class AttentionCoupleRunner(_RegionalRunner):
         self._pixels: Any = None
         self._scales: list[float] = []
 
-    def process(self, p: Any, *_args: Any, **_kwargs: Any) -> None:
+    def process_batch(self, p: Any, *_args: Any, **_kwargs: Any) -> None:
+        # RL1c. After the job's LoRAs are applied, as `MaskedRegionsRunner`.
         import torch
 
         try:
@@ -521,6 +647,12 @@ __all__ = (
     "MaskedRegionsRunner",
     "feather",
     "is_unet",
+    "grown",
+    "lora_pass_blur",
+    "lora_pass_size",
+    "lora_pass_text",
+    "lora_tags",
+    "own_text",
     "region_text",
     "runner_for",
     "scale_strengths",

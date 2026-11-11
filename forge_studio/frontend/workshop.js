@@ -650,7 +650,8 @@ function _removeRecipeLora(idx) {
 }
 
 function _getLoraOpts() {
-    return '<option value="">— Select LoRA —</option>' + WS.loras.map(l => '<option value="' + _esc(l.filename) + '">' + _esc(l.filename) + '</option>').join("");
+    return '<option value="">— Select LoRA —</option>'
+        + _folderGroupsHtml(WS.loras, (l, label) => '<option value="' + _esc(l.filename) + '" title="' + _attr(l.filename) + '">' + _esc(label) + '</option>');
 }
 
 function _renderRecipeLoras() {
@@ -676,7 +677,7 @@ function _bindLoraEvents() {
         if (WS.recipeLoras[idx]?.filename) sel.value = WS.recipeLoras[idx].filename;
         sel.addEventListener("change", () => { WS.recipeLoras[idx].filename = sel.value || null; _updateActionButtons(); });
         if (window.StudioSearchableSelect) {
-            window.StudioSearchableSelect.attach(sel, { placeholder: "— Select LoRA —", searchPlaceholder: "Filter LoRAs…" });
+            window.StudioSearchableSelect.attach(sel, { placeholder: "— Select LoRA —", searchPlaceholder: "Filter LoRAs…", foldKey: "wsLoras" });
         }
     });
     _els.loraList.querySelectorAll(".ws-rl-strength").forEach(slider => {
@@ -1760,12 +1761,49 @@ function _modelOptionsForRow(rowIdx, currentValue, includeNoneLabel) {
         }
         html += '</optgroup>';
     }
-    html += '<optgroup label="Models on disk">';
-    for (const m of WS.models) {
+    html += _folderGroupsHtml(WS.models, (m, label) => {
         const sel = currentValue === m.filename ? ' selected' : '';
-        html += '<option value="' + _esc(m.filename) + '"' + sel + ' title="' + m.size_gb + ' GB">' + _esc(m.filename) + ' (' + m.size_gb + ' GB)</option>';
+        return '<option value="' + _esc(m.filename) + '"' + sel + ' title="' + _attr(m.filename) + '">' + _esc(label) + ' (' + m.size_gb + ' GB)</option>';
+    }, "Models on disk");
+    return html;
+}
+
+// ========================================================================
+// FOLDER GROUPS (WF1) — the Generate lists' grouping, for Workshop's lists
+// ========================================================================
+//
+// `items` are /models, /loras or /vaes rows: {filename, basename, folder}.
+// Top-level files first, then one folding <optgroup> per folder, through the
+// same `groupByFolder` and `data-collapsible` markup as the Model list on
+// Generate. `optionHtml(item, label)` renders one <option>; its value stays
+// `filename`, which is what a merge or a bake names the file by.
+//
+// `topLabel` puts the top-level files under a plain header. The model lists
+// pass "Models on disk": "Previous outputs" sits above them, and files with
+// no header would read as part of it.
+
+function _attr(s) { return _esc(s).replace(/"/g, "&quot;"); }
+
+function _hasFolders(items) { return (items || []).some(it => it && it.folder); }
+
+function _folderGroupsHtml(items, optionHtml, topLabel) {
+    items = items || [];
+    const group = window.StudioSearchableSelect && window.StudioSearchableSelect.groupByFolder;
+    // Without the widget nothing folds: the flat list, the folder in the label.
+    const groups = group ? group(items, it => it.folder) : [{ folder: "", items: items }];
+    // A name two files share keeps its folder in the label, so two closed
+    // boxes never read the same while holding different files.
+    const count = {};
+    for (const it of items) count[it.basename] = (count[it.basename] || 0) + 1;
+    const label = it => (group && it.basename && count[it.basename] === 1) ? it.basename : it.filename;
+    let html = "";
+    for (const g of groups) {
+        if (!g.items.length) continue;
+        const options = g.items.map(it => optionHtml(it, label(it))).join("");
+        const header = g.folder || topLabel;
+        if (!header) { html += options; continue; }
+        html += '<optgroup label="' + _attr(header) + '"' + (g.folder ? ' data-collapsible' : '') + '>' + options + '</optgroup>';
     }
-    html += '</optgroup>';
     return html;
 }
 
@@ -1899,15 +1937,23 @@ function _populatePresetSelectForRow(rowIdx) {
 
 function _populateGlobalVaeSelect() {
     if (!_els.recipeVae) return;
-    let html = '<option value="">— None —</option>';
-    for (const v of WS.vaes) {
-        const sel = WS.recipeVae === v.filename ? ' selected' : '';
-        html += '<option value="' + _esc(v.filename) + '"' + sel + '>' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>';
+    _els.recipeVae.innerHTML = '<option value="">— None —</option>' + _vaeOptionsHtml(WS.recipeVae);
+    if (_vaeListIsSearchable()) {
+        window.StudioSearchableSelect.attach(_els.recipeVae, { placeholder: "— None —", searchPlaceholder: "Filter VAEs…", foldKey: "wsVaes" });
     }
-    _els.recipeVae.innerHTML = html;
-    if (WS.vaes.length >= 10 && window.StudioSearchableSelect) {
-        window.StudioSearchableSelect.attach(_els.recipeVae, { placeholder: "— None —", searchPlaceholder: "Filter VAEs…" });
-    }
+}
+
+function _vaeOptionsHtml(currentValue) {
+    return _folderGroupsHtml(WS.vaes, (v, label) => {
+        const sel = currentValue === v.filename ? ' selected' : '';
+        return '<option value="' + _esc(v.filename) + '"' + sel + ' title="' + _attr(v.filename) + '">' + _esc(label) + ' (' + v.size_mb + ' MB)</option>';
+    });
+}
+
+// A long list is searchable (10 or more, as before). So is one with folders,
+// whatever its length: only the searchable select folds them.
+function _vaeListIsSearchable() {
+    return !!window.StudioSearchableSelect && (WS.vaes.length >= 10 || _hasFolders(WS.vaes));
 }
 
 function _populateRowVae(rowIdx) {
@@ -1915,15 +1961,20 @@ function _populateRowVae(rowIdx) {
     if (!sel) return;
     const r = WS.rows[rowIdx];
     // null → use global; a filename → per-row override
-    let html = '<option value="">— Use global —</option>';
-    for (const v of WS.vaes) {
-        const selected = r && r.vae === v.filename ? ' selected' : '';
-        html += '<option value="' + _esc(v.filename) + '"' + selected + '>' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>';
+    sel.innerHTML = '<option value="">— Use global —</option>' + _vaeOptionsHtml(r ? r.vae : null);
+    if (_vaeListIsSearchable()) {
+        window.StudioSearchableSelect.attach(sel, { placeholder: "— Use global —", searchPlaceholder: "Filter VAEs…", foldKey: "wsVaes" });
+        _showRowVae(sel, !!(r && r.bakeVae));
     }
-    sel.innerHTML = html;
-    if (WS.vaes.length >= 10 && window.StudioSearchableSelect) {
-        window.StudioSearchableSelect.attach(sel, { placeholder: "— Use global —", searchPlaceholder: "Filter VAEs…" });
-    }
+}
+
+// The row's VAE box shows only while "Bake VAE after this row" is ticked.
+// Once the searchable select wraps it, its button is what the owner sees
+// and the <select> itself is always hidden, so both are shown or hidden.
+function _showRowVae(sel, show) {
+    sel.style.display = show ? "" : "none";
+    const trigger = sel.previousElementSibling;
+    if (trigger && trigger.classList.contains("ssel-trigger")) trigger.style.display = show ? "" : "none";
 }
 
 // ========================================================================
@@ -1998,9 +2049,10 @@ function _bindRowEvents(rowIdx) {
     // select on panel open/close, so the ref-source highlight wiring
     // above keeps working untouched.
     if (window.StudioSearchableSelect) {
-        if (primarySel) window.StudioSearchableSelect.attach(primarySel, { placeholder: "— Primary —", searchPlaceholder: "Filter models…" });
-        if (secSel) window.StudioSearchableSelect.attach(secSel, { placeholder: "— Secondary —", searchPlaceholder: "Filter models…" });
-        if (terSel) window.StudioSearchableSelect.attach(terSel, { placeholder: "— Tertiary —", searchPlaceholder: "Filter models…" });
+        // WF1: one fold memory for every model box, on every row.
+        if (primarySel) window.StudioSearchableSelect.attach(primarySel, { placeholder: "— Primary —", searchPlaceholder: "Filter models…", foldKey: "wsModels" });
+        if (secSel) window.StudioSearchableSelect.attach(secSel, { placeholder: "— Secondary —", searchPlaceholder: "Filter models…", foldKey: "wsModels" });
+        if (terSel) window.StudioSearchableSelect.attach(terSel, { placeholder: "— Tertiary —", searchPlaceholder: "Filter models…", foldKey: "wsModels" });
     }
 
     // Method
@@ -2074,7 +2126,7 @@ function _bindRowEvents(rowIdx) {
     if (bakeVaeChk) {
         bakeVaeChk.addEventListener("change", () => {
             row.bakeVae = bakeVaeChk.checked;
-            if (vaeSel) vaeSel.style.display = row.bakeVae ? "" : "none";
+            if (vaeSel) _showRowVae(vaeSel, row.bakeVae);
             _applyRowMethodVisibility(rowIdx);
             _updateActionButtons();
         });

@@ -147,8 +147,14 @@ function _describePixels(doc, pixels) {
   doc.regions = S.regions.map(function (r) {
     return Object.assign({
       id: r.id, color: r.color,
+      // RN2. The name, the eye and the Denoise are the region's as well.
+      // They were not kept (the Denoise under a field no region has), so a
+      // switch of document tab or a recovery brought regions back unnamed.
+      name: r.name || "", visible: r.visible !== false,
       prompt: r.prompt || "", negPrompt: r.negPrompt || "",
-      weight: r.weight, denoise: r.denoise,
+      weight: r.weight, denoising: r.denoising,
+      // RL1. The region's own LoRAs, copied: the list outlives this region.
+      loras: (r.loras || []).map(function (l) { return { name: l.name, weight: l.weight }; }),
       // F7. The Stage figure a region follows (ST2), kept so it still does.
       stageFigure: r.stageFigure != null ? r.stageFigure : null
     }, pixels(r.ctx));
@@ -315,8 +321,12 @@ function _loadDoc(idx) {
     if (saved.imageData) ctx.putImageData(saved.imageData, 0, 0);
     return {
       id: saved.id, color: saved.color, canvas: c, ctx: ctx,
+      // RN2. A snapshot from before these were kept gets a region's defaults.
+      name: saved.name || ("Region " + saved.id), visible: saved.visible !== false,
       prompt: saved.prompt || "", negPrompt: saved.negPrompt || "",
-      weight: saved.weight, denoise: saved.denoise,
+      weight: isFinite(+saved.weight) && saved.weight != null ? +saved.weight : 1.0,
+      denoising: isFinite(+saved.denoising) && saved.denoising != null ? +saved.denoising : 0.55,
+      loras: (saved.loras || []).map(function (l) { return { name: l.name, weight: l.weight }; }),
       stageFigure: saved.stageFigure != null ? saved.stageFigure : null
     };
   });

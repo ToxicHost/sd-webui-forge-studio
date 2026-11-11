@@ -52,6 +52,24 @@ BRACE = re.compile(r"\{([^{}]*)\}")
 #: `{ 2 $$a|b|c}` parses -- an owner who spaces it out is not wrong.
 MULTI = re.compile(r"^\s*(\d+)\s*\$\$(.*)$", re.DOTALL)
 
+#: DP1. The `W::` in front of one option of a group: its share of the draw.
+#: `{3::cat|dog}` is cat three times in four. A decimal is allowed, and spaces
+#: around the number and after the colons, like every space around an option.
+WEIGHT = re.compile(r"^\s*(\d+(?:\.\d*)?|\.\d+)\s*::(.*)$", re.DOTALL)
+
+#: DP1. A weight larger than this is this. Keeps the sum a number.
+MAX_WEIGHT = 1e9
+
+#: DP1. Stands where a drawn "nothing" was until the prompt is settled, so the
+#: comma it would leave behind can be found. Never in a returned prompt.
+_NOTHING = "\x00"
+_N = re.escape(_NOTHING)
+_NOTHING_RUN = re.compile(_N + r"(?:\s*" + _N + r")+")
+_NOTHING_BETWEEN = re.compile(r",\s*" + _N + r"\s*(?=,)")
+_NOTHING_FIRST = re.compile(r"^\s*" + _N + r"\s*(?:,\s*)?")
+_NOTHING_LAST = re.compile(r"\s*(?:,\s*)?" + _N + r"\s*$")
+_NOTHING_INSIDE = re.compile(r"(?<=\S)[^\S\n]+" + _N + r"[^\S\n]+(?=\S)")
+
 #: What a wildcard file is.
 WILDCARD_SUFFIX = ".txt"
 
@@ -121,6 +139,61 @@ class Expansion:
             # because `prompt` is what this tree's own tests already read.
             "expanded": self.text,
         }
+
+
+def _settle(text: str) -> str:
+    """The prompt as it would have been typed without the group. DP1.
+
+    A drawn "nothing" takes one comma with it: `1boy, <nothing>, smile` is
+    `1boy, smile`, at the start it takes the comma after it and at the end the
+    one before. Between words it leaves one space. Only ever run on a text
+    that drew a nothing, so every other prompt is returned byte for byte.
+    """
+
+    text = _NOTHING_RUN.sub(_NOTHING, text)
+    text = _NOTHING_BETWEEN.sub("", text)
+    text = _NOTHING_FIRST.sub("", text)
+    text = _NOTHING_LAST.sub("", text)
+    text = _NOTHING_INSIDE.sub(" ", text)
+    return text.replace(_NOTHING, "")
+
+
+def _options(body: str) -> tuple[list[str], list[float], bool]:
+    """A group's options, their weights, and whether any weight was written.
+
+    An option is what stands between two bars, spaces around it ignored. A
+    blank one is a choice like any other: it means nothing is written. An
+    option with no `W::` weighs 1, as in the Dynamic Prompts syntax guide
+    ("If you omit a weight, it is assumed to be 1").
+    """
+
+    texts: list[str] = []
+    weights: list[float] = []
+    weighted = False
+    for part in body.split("|"):
+        weight = 1.0
+        marked = WEIGHT.match(part)
+        if marked is not None:
+            weighted = True
+            weight = min(float(marked.group(1)), MAX_WEIGHT)
+            part = marked.group(2)
+        if _NOTHING in part:
+            # A group inside this option already drew a nothing.
+            part = _settle(part)
+        texts.append(part.strip())
+        weights.append(weight)
+    return texts, weights, weighted
+
+
+def _draw(chooser: random.Random, indices: list[int], weights: list[float]) -> int:
+    """One of `indices`, each in proportion to its weight. One number drawn."""
+
+    point = chooser.random() * sum(weights[index] for index in indices)
+    for index in indices:
+        point -= weights[index]
+        if point < 0:
+            return index
+    return indices[-1]
 
 
 class WildcardLibrary:
@@ -253,7 +326,8 @@ class WildcardLibrary:
 
         self.load()
         chooser = random.Random(seed if seed is not None and seed >= 0 else None)
-        text = prompt
+        # DP1. The marker for a drawn "nothing" is Studio's alone.
+        text = prompt.replace(_NOTHING, "")
         for depth in range(MAX_DEPTH):
             if not TOKEN.search(text) and not BRACE.search(text):
                 break
@@ -282,7 +356,8 @@ class WildcardLibrary:
             # the bound. Either way it stops here and says so.
             result.truncated = True
 
-        result.text = text
+        # DP1. Only a prompt that drew a nothing is touched.
+        result.text = _settle(text) if _NOTHING in text else text
         result.missing = sorted(set(result.missing))
         # One complaint per distinct problem. A prompt with a bad group in it
         # can survive several passes, and saying the same thing four times
@@ -313,13 +388,20 @@ class WildcardLibrary:
                     result: Expansion) -> str:
         """One level of `{a|b|c}` and `{N$$a|b|c}`.
 
-        Semantics are the Extension's, read from
-        `scripts/studio_dynamic_prompts.py` rather than recalled: options are
-        stripped and empties dropped, a multi-select picks `min(N, len)` unique
-        options and joins them with ", " in their ORIGINAL order, and anything
-        that does not look like a choice is returned untouched.
+        The Extension's shape, read from `scripts/studio_dynamic_prompts.py`
+        rather than recalled: a multi-select picks `min(N, len)` unique options
+        and joins them with ", " in their ORIGINAL order, and anything that
+        does not look like a choice is returned untouched.
 
-        That last rule is the load-bearing one. A group with no `|` is left
+        DP1 (owner and Moritz, 2026-11-10) goes past the Extension, which
+        dropped a blank option and read `3::cat` as a word. Here `W::` is an
+        option's weight and a blank option is "nothing":
+        `{3::|dog}` writes nothing three times in four. A group with no weight
+        and no blank draws exactly as it always has -- same call on the same
+        chooser -- so an old prompt and seed still give the old words.
+        Source review: `Evidence/source-review/DP1-weighted-choices.md`.
+
+        The untouched rule is the load-bearing one. A group with no `|` is left
         exactly as written, because `{...}` also carries attention and template
         syntax, and eating those would corrupt prompts that never asked for a
         wildcard. Same for a body containing a second `$$` -- that is full
@@ -340,35 +422,49 @@ class WildcardLibrary:
                 except ValueError:  # pragma: no cover - the regex is digits
                     result.warnings.append("Invalid multi-select count")
                     return token
-                options = [part.strip() for part in body.split("|")]
-                options = [part for part in options if part]
-                if not options:
+                texts, weights, weighted = _options(body)
+                # A weight of 0 is never drawn.
+                live = [index for index, weight in enumerate(weights) if weight > 0]
+                if not any(texts[index] for index in live):
                     result.warnings.append("Empty multi-select")
                     return token
                 if count <= 0:
                     result.warnings.append("Invalid multi-select count")
                     return token
-                indices = list(range(len(options)))
-                chooser.shuffle(indices)
+                take = min(count, len(live))
+                if weighted:
+                    pool, drawn = list(live), []
+                    for _ in range(take):
+                        index = _draw(chooser, pool, weights)
+                        pool.remove(index)
+                        drawn.append(index)
+                else:
+                    drawn = list(live)
+                    chooser.shuffle(drawn)
+                    drawn = drawn[:take]
                 # SORTED, so the result reads in the order the owner wrote the
-                # options rather than in draw order.
-                picked = sorted(indices[:min(count, len(options))])
-                chosen = [options[index] for index in picked]
-                result.choices.append(("choice", ", ".join(chosen)))
+                # options rather than in draw order. A drawn blank adds nothing
+                # to the list.
+                joined = ", ".join(texts[index] for index in sorted(drawn)
+                                   if texts[index])
+                result.choices.append(("choice", joined))
                 result.substituted = True
-                return ", ".join(chosen)
+                return joined or _NOTHING
 
             if "|" not in inner:
                 return token
-            options = [part.strip() for part in inner.split("|")]
-            options = [part for part in options if part]
-            if not options:
+            texts, weights, weighted = _options(inner)
+            live = [index for index, weight in enumerate(weights) if weight > 0]
+            if not any(texts[index] for index in live):
                 result.warnings.append("Empty inline choice")
                 return token
-            chosen = options[chooser.randrange(len(options))]
+            if weighted:
+                chosen = texts[_draw(chooser, live, weights)]
+            else:
+                chosen = texts[live[chooser.randrange(len(live))]]
             result.choices.append(("choice", chosen))
             result.substituted = True
-            return chosen
+            return chosen or _NOTHING
 
         return BRACE.sub(replace, text)
 
@@ -426,6 +522,7 @@ __all__ = (
     "MAX_FILE_BYTES",
     "MAX_WILDCARDS",
     "TOKEN",
+    "WEIGHT",
     "WILDCARD_SUFFIX",
     "Expansion",
     "Wildcard",

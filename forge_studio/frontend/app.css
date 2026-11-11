@@ -804,7 +804,7 @@ body {
 .options-dock .ctx-drag-handle { display: none; }
 /* The dynamics flyout opens below the bar now that the presets are up here. */
 #canvasArea #dynamicsPanel {
-  top: calc(var(--options-dock-h, 40px) + 8px) !important; bottom: auto !important;
+  top: calc(var(--doc-strip-h, 0px) + var(--options-dock-h, 40px) + 8px) !important; bottom: auto !important;
 }
 .context-bar {
   position: relative;

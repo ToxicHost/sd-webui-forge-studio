@@ -330,8 +330,11 @@ function _snapshot(doc, fresh) {
     var R = doc.regions[r];
     regions.push({
       id: R.id, color: R.color, prompt: R.prompt || "",
+      // RN2. With the name, the eye and the Denoise (`studio-docs.js`).
+      name: R.name || "", visible: R.visible !== false,
       negPrompt: R.negPrompt || "", weight: R.weight,
-      denoise: R.denoise, blob: pixels(_blobName("region", R.id), R.ctx, R.imageData),
+      denoising: R.denoising, blob: pixels(_blobName("region", R.id), R.ctx, R.imageData),
+      loras: R.loras || [],     // RL1
       stageFigure: R.stageFigure != null ? R.stageFigure : null,
     });
   }
@@ -449,7 +452,9 @@ async function _deserialize(manifest, blobData, docId) {
     var R = manifest.regions[r];
     regions.push({
       id: R.id, color: R.color, prompt: R.prompt || "",
-      negPrompt: R.negPrompt || "", weight: R.weight, denoise: R.denoise,
+      name: R.name || "", visible: R.visible !== false,
+      negPrompt: R.negPrompt || "", weight: R.weight, denoising: R.denoising,
+      loras: R.loras || [],     // RL1
       stageFigure: R.stageFigure != null ? R.stageFigure : null,
       imageData: R.blob ? await _decode(blobData[R.blob], W, H) : null,
     });

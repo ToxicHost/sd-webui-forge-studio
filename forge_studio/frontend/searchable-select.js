@@ -24,8 +24,9 @@
  * folds the options away on click, and what is folded is remembered per
  * select id and folder in localStorage. The folder holding the selected
  * option opens whenever the panel opens; typing in the filter searches
- * folded folders too and shows the matches open. Plain optgroups (the
- * Hires upscaler's Latent / Image) are unchanged.
+ * folded folders too and shows the matches open, and a folder's own name
+ * matches every file in it (WF1b). Plain optgroups (the Hires upscaler's
+ * Latent / Image) are unchanged.
  *
  * API:
  *   const handle = StudioSearchableSelect.attach(selectEl, opts?);
@@ -37,6 +38,8 @@
  * Options:
  *   placeholder        — text shown when value is empty/missing
  *   searchPlaceholder  — placeholder for the filter input
+ *   foldKey            — remember folded folders under this name instead of
+ *                        the select's id; selects sharing it fold together
  */
 (function () {
 "use strict";
@@ -106,7 +109,15 @@ function _visibleItems(all, state) {
             continue;
         }
         if (!item.inGroup) group = null;
-        if (q && !item.text.toLowerCase().includes(q)) continue;
+        if (q) {
+            // WF1b. Inside a folder the filter reads "<folder>/<name>", so
+            // a folder's name finds its files and so does a piece of the
+            // path. Neo and the Extension had the folder in the label,
+            // where the filter found it. A plain optgroup is a heading,
+            // not a folder: its label does not match.
+            const hay = (group && group.collapsible ? group.label + "/" : "") + item.text;
+            if (!hay.toLowerCase().includes(q)) continue;
+        }
         if (group && !group.entry) {
             group.entry = { kind: "group", label: group.label, collapsible: group.collapsible,
                             folded: false, searching: !!q, count: 0 };
@@ -192,6 +203,18 @@ function _saveFolded(id, folded) {
     } catch (_) { /* in-memory only */ }
 }
 
+// WF1. One folded set per key, so selects that share a key fold together:
+// Workshop's Primary / Secondary / Tertiary boxes are rebuilt on every row
+// change and have no id, and a folder folded in one should be folded in all.
+// A select with neither a key nor an id folds in memory, for itself only.
+const _foldedByKey = new Map();
+
+function _foldedFor(key) {
+    if (!key) return new Set();
+    if (!_foldedByKey.has(key)) _foldedByKey.set(key, _loadFolded(key));
+    return _foldedByKey.get(key);
+}
+
 function _currentLabel(select, placeholder) {
     const opt = select.options[select.selectedIndex];
     if (!opt || opt.value === "") return placeholder || "— Select —";
@@ -227,9 +250,11 @@ function attach(select, opts) {
     let listEl = null;
     let searchEl = null;
     let kbIdx = -1;     // index into the *flat visible* option list
-    // MF1. Folded folders, remembered per select id; and the folder held
-    // open for this opening of the panel because it holds the selection.
-    const folded = _loadFolded(select.id);
+    // MF1. Folded folders, remembered per select id (or per `foldKey`, WF1);
+    // and the folder held open for this opening of the panel because it
+    // holds the selection.
+    const foldKey = opts.foldKey || select.id;
+    const folded = _foldedFor(foldKey);
     let forcedOpen = null;
 
     function _close() {
@@ -366,7 +391,7 @@ function attach(select, opts) {
         // Folding the selection's own folder is the owner's choice and
         // wins over the open-on-open rule for the rest of this opening.
         if (label === forcedOpen) forcedOpen = null;
-        _saveFolded(select.id, folded);
+        _saveFolded(foldKey, folded);
         _renderList();
     }
 
@@ -524,7 +549,7 @@ function attachAll(root, opts) {
 // The underscored ones are exported for the Node tests, not for callers.
 window.StudioSearchableSelect = {
     attach, attachAll, groupByFolder,
-    _visibleItems, _folderOf, _nextOptIdx, _loadFolded, _saveFolded,
+    _visibleItems, _folderOf, _nextOptIdx, _loadFolded, _saveFolded, _foldedFor,
 };
 
 })();

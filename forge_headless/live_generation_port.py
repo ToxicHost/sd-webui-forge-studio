@@ -1076,6 +1076,53 @@ def _per_region(request: Any) -> bool:
         str(getattr(request, "region_method", "auto") or "auto") == "per_region"
 
 
+#: RL1. How strongly a region's LoRA pass repaints its region when the region
+#: carries no Denoise of its own. The page's default for a new region
+#: (`canvas-core.js` `addRegion`).
+REGION_LORA_DENOISE = 0.55
+
+
+def _lora_hashes(infotext: str) -> dict[str, str]:
+    """RL1. The `Lora hashes` a parameter string names, as name -> hash."""
+
+    import json
+    import re
+
+    found = re.search(r'Lora hashes: ("(?:[^"\\]|\\.)*"|[^,\n]+)', infotext or "")
+    if not found:
+        return {}
+    raw = found.group(1)
+    if raw.startswith('"'):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    pairs = (part.split(":", 1) for part in str(raw).split(","))
+    return {name.strip(): value.strip() for name, value in (p for p in pairs if len(p) == 2)
+            if name.strip() and value.strip()}
+
+
+def _with_lora_hashes(infotext: str, others: list[str]) -> str:
+    """RL1. `infotext` with its `Lora hashes` naming the LoRAs of `others`
+    (the parameter strings of a job's region passes) as well as its own, the
+    way MH2 names the main prompt's and the Refiner's (`refiner_port.
+    _merge_lora_hashes`). Unchanged when the passes add none."""
+
+    import re
+
+    own = _lora_hashes(infotext)
+    merged = dict(own)
+    for other in others:
+        merged.update({k: v for k, v in _lora_hashes(other).items() if k not in merged})
+    if merged == own:
+        return infotext
+    value = _infotext_value(", ".join(f"{name}: {digest}" for name, digest in merged.items()))
+    if own:
+        return re.sub(r'Lora hashes: ("(?:[^"\\]|\\.)*"|[^,\n]+)',
+                      lambda _match: f"Lora hashes: {value}", infotext, count=1)
+    return _with_setting(infotext, "Lora hashes", value)
+
+
 def _with_setting(infotext: str, key: str, value: str) -> str:
     """`key: value` at the end of the settings line (`Steps: N, ...`); the
     text unchanged when there is none or the key is already there."""
@@ -1276,6 +1323,21 @@ def _inpaint_kwargs(request: Any, source: Any) -> dict[str, Any]:
         # the target, 1 flips it.
         "inpainting_mask_invert": 1 if getattr(options, "invert", False) else 0,
     }
+
+
+def _region_face_prompt(region_prompt: str, main: str) -> str:
+    """RG2, RL1. The prompt of an Auto Detail pass on a face inside a region.
+
+    The region's own prompt as typed, tags and all (RG2: the Extension's
+    `ad_prompt`), so a LoRA the region carries reaches its face as well. A
+    region of LoRA tags and no words would leave that pass an empty prompt:
+    it details with the main prompt and the region's tags instead."""
+
+    from . import regional
+
+    if regional.own_text(region_prompt):
+        return region_prompt
+    return main + "".join(regional.lora_tags(region_prompt))
 
 
 def _latent_aligned(value: Any) -> int:
@@ -2198,9 +2260,15 @@ class StudioLiveGenerationPort:
             if regions:
                 from . import controlnet_port, regional
 
+                # RL1. A region of LoRA tags and no words has nothing to
+                # condition the main pass with (its text would be the global
+                # prompt again): it gets its LoRA pass afterwards, and only
+                # the regions with words ride this one.
+                worded = tuple(r for r in regions
+                               if regional.own_text(str(getattr(r, "prompt", "") or "")))
                 processing.scripts = controlnet_port.compose(  # type: ignore[attr-defined]
                     processing.scripts,
-                    regional.runner_for(engine, regions,
+                    regional.runner_for(engine, worded,
                                         str(getattr(request, "region_method", "auto") or "auto")))
             if live:
                 _reuse_live_conditioning(processing)
@@ -2332,6 +2400,15 @@ class StudioLiveGenerationPort:
                 hires_steps=int(getattr(processing, "hr_second_pass_steps", 0) or 0),
                 upscaler=str(getattr(processing, "hr_upscaler", "") or ""),
             )
+
+            # RL1. A region whose prompt carries LoRA tags is repainted with
+            # them HERE: after the picture is whole (Hires included, which
+            # for text-to-image runs inside `process_images_inner` above) and
+            # before Auto Detail, whose face pass then reads the same region's
+            # prompt and tags (RG2). The clip after Auto Detail follows it, so
+            # an inpaint's untouched area stays untouched. A job without such a
+            # region does nothing here and times nothing.
+            self._region_lora_passes(request, processing, processed, progress)
 
             # `prepare_detail` opens here and closes when the first region
             # actually starts denoising, so the unload/reload churn between
@@ -2916,7 +2993,7 @@ class StudioLiveGenerationPort:
         if not str(getattr(slot, "prompt", "") or "").strip():
             matched = _region_prompts_for(request, mask)
             if matched is not None:
-                prompt = matched[0]
+                prompt = _region_face_prompt(matched[0], main)
                 if matched[1]:
                     negative = matched[1]
         # ADetailer's seed (`get_seed`, `fix_p2`, `get_each_tab_seed` with
@@ -2933,6 +3010,11 @@ class StudioLiveGenerationPort:
         # post-Hires one; these are the base dimensions.
         _detail_width = _latent_aligned(getattr(request, "width", 0) or image.width)
         _detail_height = _latent_aligned(getattr(request, "height", 0) or image.height)
+        # RL1. A region's LoRA pass names its own size (`regional.
+        # lora_pass_size`); every other caller leaves these unset.
+        if getattr(slot, "pass_width", 0) and getattr(slot, "pass_height", 0):
+            _detail_width = _latent_aligned(slot.pass_width)
+            _detail_height = _latent_aligned(slot.pass_height)
         telemetry = getattr(self, "telemetry", None)
         if telemetry is not None:
             # A SETUP CALL, not an encode. Neo's conditioning cache is
@@ -3018,6 +3100,136 @@ class StudioLiveGenerationPort:
         # A pass that produced nothing leaves the image it was given, rather
         # than replacing a real picture with None.
         return images[0] if images else image
+
+    def _region_lora_passes(self, request: Any, processing: Any, processed: Any,
+                            progress: Any) -> int:
+        """RL1. Repaint each region whose prompt carries LoRA tags, with them.
+
+        Owner, 2026-11-09: "what if they want to generate a character that
+        needs one in a specific section". A LoRA patches the model for a whole
+        pass (`sd_forge_lora/networks.py` `load_networks`: one set per
+        `process_images_inner`, read from that pass's prompt), so a region
+        cannot carry one inside the main pass. It gets a pass of its own
+        instead, after the picture is whole: an inpaint over the region with
+        the region's own words and its tags (`regional.lora_pass_text`), at
+        the region's Denoise, pasted back through the region's mask grown by
+        the blend's reach, so nothing past that band moves. The next pass
+        without the tags is rebuilt without them. Measured on a GPU:
+        Evidence/regional-lora-2026-11-09 and the RL1b part of the review.
+
+        Returns how many passes ran. Nothing runs for: a job with no such
+        region; One pass per region, where every region already has its own
+        pass and its tags act there; a Live frame; the base half of a model
+        handoff; and a handoff to another family, whose model the base
+        model's LoRAs do not fit (said in the console, as MH1 drops them).
+        """
+
+        from . import regional
+
+        tagged = [(number, region)
+                  for number, region in enumerate(tuple(getattr(request, "regions", ()) or ()), start=1)
+                  if regional.lora_tags(str(getattr(region, "prompt", "") or ""))]
+        if not tagged or _per_region(request) or _is_live(request):
+            return 0
+        stage = str(getattr(request, "handoff_stage", "") or "")
+        if stage == "base":
+            return 0
+        log = logging.getLogger("studio.generation")
+        if stage == "hires":
+            from .family_shift import preset_for
+
+            base_family = str(getattr(request, "handoff_base_family", "") or "")
+            hires_family = preset_for(self._engine) or ""
+            if base_family and hires_family and base_family != hires_family:
+                log.warning(
+                    "REGION LORAS skipped: Hires ran on a %s model and the regions' LoRAs "
+                    "are for the %s model the picture started on.", hires_family, base_family)
+                return 0
+        images = list(getattr(processed, "images", []) or [])
+        if not images:
+            return 0
+
+        from types import SimpleNamespace
+
+        import numpy as np
+        from PIL import Image
+
+        options = getattr(request, "inpaint", None)
+        asked_blur = int(getattr(options, "mask_blur", 4)) if options is not None else 4
+        padding = int(getattr(options, "padding", 32)) if options is not None else 32
+        glob = self._refiner_main_prompt(str(getattr(request, "positive_prompt", "") or ""))
+        base_size = (int(getattr(request, "width", 0) or images[0].width),
+                     int(getattr(request, "height", 0) or images[0].height))
+        telemetry = getattr(self, "telemetry", None)
+        if telemetry is not None:
+            telemetry.start("region_loras")
+        results: list[Any] = []
+        notes: list[str] = []
+        ran = 0
+        try:
+            for index, image in enumerate(images):
+                for number, region in tagged:
+                    if _job_cancelled(progress):
+                        break
+                    mask = Image.fromarray(
+                        ((np.asarray(region.mask) > 0.5) * 255).astype(np.uint8), mode="L")
+                    if mask.size != image.size:
+                        mask = mask.resize(image.size, Image.NEAREST)
+                    box = mask.getbbox()
+                    if box is None:
+                        continue
+                    denoise = getattr(region, "denoising_strength", None)
+                    denoise = float(REGION_LORA_DENOISE if denoise is None else denoise)
+                    # RL1b. This pass's blur, and how far Neo's blend reaches
+                    # past the region's edge. What Neo adds around the mask
+                    # before it crops is the padding and that reach
+                    # (`processing.py` `init`).
+                    blur, reach = regional.lora_pass_blur(image.size, asked_blur)
+                    margin = padding + reach
+                    width, height = regional.lora_pass_size(
+                        image.size, box, base_size, margin=margin)
+                    slot = SimpleNamespace(
+                        prompt=regional.lora_pass_text(glob, str(region.prompt)),
+                        negative_prompt=str(getattr(region, "negative_prompt", "") or ""),
+                        denoising_strength=denoise,
+                        mask_blur=blur, inpaint_padding=padding, steps=0, cfg=0.0,
+                        region_index=0, image_index=index,
+                        pass_width=width, pass_height=height)
+                    began = time.monotonic()
+                    painted = self._detail_pass(request, processing, image, mask, slot,
+                                                results=results)
+                    # RL1b. Through the mask GROWN by the blend's reach, so
+                    # Neo's own transition (centred on the region's edge) is
+                    # whole and every pixel past it is exactly as it was:
+                    # `_clip_to_mask`'s rule. Through the hard mask, the outer
+                    # half of that transition was cut and the edge showed as
+                    # a line (first GPU run, Anima and SDXL).
+                    keep = Image.fromarray(
+                        (regional.grown(np.asarray(mask), reach) * 255).astype(np.uint8), mode="L")
+                    composite = image.copy()
+                    composite.paste(painted, (0, 0), keep)
+                    image = composite
+                    ran += 1
+                    name = str(getattr(region, "name", "") or "").strip() or f"Region {number}"
+                    tags = "".join(regional.lora_tags(str(region.prompt)))
+                    log.info("REGION LORAS %s: %s at %.2f, %dx%d, %.2f s", name, tags,
+                             denoise, width, height, time.monotonic() - began)
+                    if index == 0:
+                        notes.append(f"{name}: {tags} ({denoise:g})")
+                images[index] = image
+        finally:
+            if telemetry is not None:
+                telemetry.stop("region_loras", regions=ran)
+        if not ran:
+            return 0
+        processed.images = images
+        infotexts = list(getattr(processed, "infotexts", []) or [])
+        if infotexts:
+            info = _with_setting(str(infotexts[0]), "Region LoRAs", _infotext_value("; ".join(notes)))
+            info = _with_lora_hashes(
+                info, [str((list(getattr(r, "infotexts", []) or [""]) or [""])[0]) for r in results])
+            processed.infotexts = [info] + infotexts[1:]
+        return ran
 
     def _region_passes(self, request: Any, processing: Any, source: Any) -> Any:
         """RG3. One inpaint pass per region, composited (the Extension's

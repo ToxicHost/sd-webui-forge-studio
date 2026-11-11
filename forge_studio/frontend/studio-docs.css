@@ -5,9 +5,16 @@
  * Thin tab bar for multi-file document switching in Studio tab.
  */
 
+/* DT1 (owner, 2026-11-09): the document tabs sit at the very top of the
+   canvas area, above the options bar, as in a browser or an editor. The
+   options bar moves down by the strip's height (--doc-strip-h), and anything
+   placed below the bar adds both. */
+.canvas-area.has-docs { --doc-strip-h: 26px; }
+.canvas-area.has-docs .options-dock { top: var(--doc-strip-h); }
+
 .doc-strip {
-  position: absolute; top: var(--options-dock-h, 0px); left: 0; right: 0; z-index: 6;
-  display: flex; align-items: center; gap: 1px;
+  position: absolute; top: 0; left: 0; right: 0; z-index: 9;
+  display: flex; align-items: flex-end; gap: 1px;
   height: 26px; flex-shrink: 0;
   background: var(--bg-void); border-bottom: 1px solid var(--border);
   padding: 0 4px; overflow-x: auto; overflow-y: hidden;
@@ -17,7 +24,7 @@
 
 /* Push viewport down when doc strip is present */
 /* WS1: below the docked options bar as well (--options-dock-h, app.js). */
-.canvas-area.has-docs #studio-viewport { top: calc(var(--options-dock-h, 0px) + 26px) !important; }
+.canvas-area.has-docs #studio-viewport { top: calc(var(--doc-strip-h) + var(--options-dock-h, 0px)) !important; }
 
 .doc-tab {
   display: flex; align-items: center; gap: 4px;
@@ -32,6 +39,11 @@
 .doc-tab.active {
   color: var(--text-1); background: var(--bg-raised);
   border-color: var(--border); border-bottom-color: var(--bg-raised);
+}
+/* DT1: the active tab opens into the options bar under it. */
+.canvas-area.has-docs .doc-tab.active {
+  background: var(--bg-surface); border-bottom-color: var(--bg-surface);
+  margin-bottom: -1px;
 }
 
 .doc-tab-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }

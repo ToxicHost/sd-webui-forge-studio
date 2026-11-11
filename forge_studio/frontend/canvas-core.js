@@ -49,7 +49,8 @@
  *      (correctly sRGB-tagged) export. Don't reintroduce.
  *
  *   2. EXPORT is lossless to the backend. exportFlattened() always returns
- *      `data:image/png;...` regardless of the user's chosen output format.
+ *      `data:image/png;...` regardless of the user's chosen output format,
+ *      and exportCanvas() (the picture Generate works from) is PNG too.
  *      The backend does the single, intentional lossy encode (JPEG/WebP)
  *      with the appropriate ICC profile. Encoding lossy on the frontend
  *      causes a double-encode and visibly degrades color (this was
@@ -7089,6 +7090,9 @@ function addRegion(name) {
     const region = {
         id, name: name || ("Region " + id),
         prompt: "", negPrompt: "", denoising: 0.55, weight: 1.0,
+        // RL1. The region's own LoRAs, `{name, weight}` each: they act on
+        // this region only, in a pass of its own after the picture is made.
+        loras: [],
         color: REGION_COLORS[colorIdx],
         canvas: c, ctx: c.getContext("2d", { colorSpace: "srgb" }), visible: true
     };
@@ -7119,6 +7123,8 @@ function serializeRegions() {
             name: r.name, prompt: r.prompt, negPrompt: r.negPrompt,
             denoising: r.denoising,
             weight: r.weight,
+            // RL1. Compiled into the region's prompt by `RegionMethod`.
+            loras: (r.loras || []).map(l => ({ name: l.name, weight: l.weight })),
             color: r.color,
             // RG2. A hidden region (the eye toggle) is not sent with Generate.
             visible: r.visible !== false,
@@ -7993,7 +7999,7 @@ function exportCanvas() {
     const c = _createCanvas(S.W, S.H);
     const x = c.getContext("2d", { colorSpace: "srgb" });
     x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
-    // JPEG needs a white background (no alpha channel)
+    // The engine reads RGB: what is transparent is sent as white.
     x.fillStyle = "#ffffff";
     x.fillRect(0, 0, S.W, S.H);
     for (const L of S.layers) {
@@ -8005,9 +8011,16 @@ function exportCanvas() {
     }
     x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
     _applyDevelop(x, S.W, S.H, S.developParams);
-    // JPEG q=0.95 is visually lossless and ~10x smaller than PNG.
-    // The image is only used as an img2img init — it gets denoised anyway.
-    return c.toDataURL("image/jpeg", 0.95);
+    // CL1. PNG: rule 2 of the colourspace contract at the top of this file.
+    // This was a JPEG at 0.95 "only used as an img2img init -- it gets
+    // denoised anyway". Only the masked part is. Outside the mask an inpaint
+    // returns THIS picture's own pixels (Neo's overlay, then the server's
+    // clip), the result comes back to the Canvas, and the next inpaint sent
+    // it through the encoder again. A browser's JPEG below quality 1 halves
+    // colour resolution (4:2:0) and does not settle: measured, reds lost 2%
+    // of their saturation on the first round and 6% by the tenth. PNG: none.
+    // Evidence/source-review/CL1-canvas-lossless.md
+    return c.toDataURL("image/png");
 }
 
 function isCanvasBlank() {

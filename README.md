@@ -59,7 +59,9 @@ See [what works and what doesn't](docs/studio/FEATURE_STATUS.md).
   unit can also take its picture from Stage.
 - **FLUX.2 Klein reference images**, which can also take a ControlNet map.
 - **Regions:** besides the methods above, One pass per region repaints each
-  region of a canvas picture separately.
+  region of a canvas picture separately. A region can carry its own LoRAs,
+  applied in a repaint of that region after the picture is made, so a character
+  LoRA shapes one figure and not the one beside it.
 - **Extra samplers and scheduler:** BFS (Bandwise Flow), BFS Heun and Beta 57.
 - **Upscaling:** an Upscale panel, and a faster half-precision option (off by
   default; fine detail can differ slightly).
