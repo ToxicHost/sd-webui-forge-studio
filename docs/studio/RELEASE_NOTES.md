@@ -41,7 +41,7 @@ then close Studio and run Start-Studio.bat again. Nothing new is installed.
   out three times in four. Weights work inside `{2$$a|b|c}` too. Until now
   `3::red` reached the prompt as text. One change to watch for: a stray blank,
   as in `{a|b|}`, is now a third choice. The Codex's Wildcards article has a
-  Choices section.
+  Choices section. Added in a follow-up the same day: choice groups work when no wildcard folder is set. On a fresh install `{red|blue}` used to reach the model as typed, and the setting for it started switched off.
 - **Stage: no pose is off limits.**
   - Dragging the hips moves the whole figure, up and down too. A figure can be
     raised off the floor, and it settles on the floor when it comes close.

@@ -101,9 +101,10 @@ class WildcardService:
         return self._mode != "disabled"
 
     def enabled(self) -> bool:
-        """The owner's stored choice, defaulting to what the folder allows.
+        """The owner's stored choice, on by default (DP2, at the return).
 
-        Both flat constants are wrong. A flat False made the page claim the
+        What follows is the reasoning from before DP2, kept because its WP0.4
+        note still holds. It called both flat constants wrong. A flat False made the page claim the
         feature was running while the server skipped expansion -- every control
         correct, tokens reaching the sampler verbatim. A flat True is the same
         lie reversed: with no folder resolved there is nothing to expand
@@ -121,7 +122,14 @@ class WildcardService:
         Recorded for the owner rather than decided here.
         """
 
-        return bool(self._stored().get(ENABLED_KEY, self._capable()))
+        # DP2. ON by default, as the Extension's `DEFAULT_CONFIG` is, and not
+        # "what the folder allows": the docstring's "with no folder resolved
+        # there is nothing to expand against" was true of `__name__` and
+        # stopped being true when `{a|b}` groups arrived, which read no file.
+        # On a fresh install (no wildcard folder) the toggle started off and
+        # `a {red|blue} dress` reached the model braces and all. `status()`
+        # still reports the folder separately, as `available`.
+        return bool(self._stored().get(ENABLED_KEY, True))
 
     def config(self) -> dict[str, Any]:
         """What the settings panel renders.

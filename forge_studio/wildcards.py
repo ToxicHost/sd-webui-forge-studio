@@ -319,11 +319,15 @@ class WildcardLibrary:
         """
 
         result = Expansion(text=prompt or "")
-        if not prompt or not self.available:
-            if prompt and TOKEN.search(prompt):
-                result.missing = sorted(set(TOKEN.findall(prompt)))
+        if not prompt:
             return result
 
+        # DP2. No return for want of a folder. It was written when a
+        # `__name__` was all there was to expand; `{a|b}` groups came three
+        # days later, below it, and read no file. With no folder every name
+        # has no lines, so `_one_pass` reports it missing and leaves it as
+        # typed, which is all the early return did, and the groups expand,
+        # as the Extension's do with no wildcard directory.
         self.load()
         chooser = random.Random(seed if seed is not None and seed >= 0 else None)
         # DP1. The marker for a drawn "nothing" is Studio's alone.
