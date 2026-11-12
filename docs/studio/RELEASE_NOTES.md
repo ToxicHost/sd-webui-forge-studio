@@ -3,6 +3,19 @@
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. Studio is in public beta on Windows/NVIDIA.
 
+## 0.9.19: Soft Inpainting fix — 2026-11-12
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Soft Inpainting works.** With Soft Inpainting switched on, every inpaint
+  failed straight away with "ModuleNotFoundError". The engine's Soft Inpainting
+  code asked for Gradio, the old Forge interface, which Studio does not install,
+  only to build a settings panel Studio never shows. It now loads without it.
+  Nothing else about inpainting changes. If it ever fails to load again, the
+  error says "Soft Inpainting could not be loaded" and why; please include that
+  line in a report.
+
 ## 0.9.18: Send to Canvas colour fix, ADetailer colour match — 2026-11-11
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

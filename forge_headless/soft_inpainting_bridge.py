@@ -60,8 +60,11 @@ release adds, which is the case a hand-written list of stubs would get wrong.
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 from typing import Any, Callable
+
+from .contracts import HeadlessError
 
 
 def _noop(*_args: Any, **_kwargs: Any) -> None:
@@ -78,41 +81,100 @@ def _noop(*_args: Any, **_kwargs: Any) -> None:
 #: is the honest way in rather than mutating `sys.path` for the whole process.
 #:
 #: It is loaded LAZILY, from inside the hooks, because its own imports pull in
-#: gradio, torch and `modules.scripts`. Routing tests decide whether this
-#: bridge is armed at all, and none of them should need the engine present to
-#: answer that.
+#: torch and `modules.scripts`. Routing tests decide whether this bridge is
+#: armed at all, and none of them should need the engine present to answer
+#: that.
 _MODULE: Any = None
+
+_SOURCE = (Path(__file__).resolve().parents[1] / "extensions-builtin"
+           / "soft-inpainting" / "scripts" / "soft_inpainting.py")
+
+
+# -- without Gradio ----------------------------------------------------------
+#
+# THE DEFECT (0.9.18, a tester). `soft_inpainting.py:9` does `import gradio as
+# gr` and `:17` imports `InputAccordion` from `modules.ui_components`, which
+# subclasses Gradio components at definition. Studio ships no Gradio, so every
+# job with Soft Inpainting on failed with a bare "ModuleNotFoundError". WP1.6
+# was built while the dev venv still had Gradio; GF1 removed it, and no test
+# loads Neo's real module. Review:
+# `Evidence/source-review/SI-G-soft-inpainting-without-gradio.md`.
+#
+# Both names are read only in `Script.ui()`, Neo's panel, which Studio never
+# builds. So the module's own imports go through `_import_without_gradio`:
+# Gradio becomes ControlNet's placeholder (CN-G, the same defect and the same
+# loader) and `modules.ui_components` a stand-in. Neither enters `sys.modules`.
+
+class _NoInputAccordion:
+    """What `from modules.ui_components import InputAccordion` binds."""
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError(
+            "InputAccordion: Studio runs without Gradio. This is Neo's Soft "
+            "Inpainting panel code, which Studio never builds.")
+
+
+_UI_COMPONENTS = types.ModuleType(
+    "modules.ui_components",
+    "Studio's headless stand-in (forge_headless/soft_inpainting_bridge.py).")
+_UI_COMPONENTS.InputAccordion = _NoInputAccordion  # type: ignore[attr-defined]
+
+
+def _import_without_gradio(name: str, globals_: Any = None, locals_: Any = None,
+                           fromlist: Any = (), level: int = 0) -> Any:
+    if level == 0 and name == "modules.ui_components" and fromlist:
+        return _UI_COMPONENTS
+    from .controlnet_port import _import_without_gradio as without_gradio
+
+    return without_gradio(name, globals_, locals_, fromlist, level)
 
 
 def _soft_inpainting() -> Any:
     global _MODULE
     if _MODULE is None:
+        import builtins
         import importlib.util
 
-        source = (Path(__file__).resolve().parents[1] / "extensions-builtin"
-                  / "soft-inpainting" / "scripts" / "soft_inpainting.py")
-        if not source.is_file():
+        if not _SOURCE.is_file():
             raise SoftInpaintingUnavailable(
                 "Soft Inpainting is not installed in this build.")
         spec = importlib.util.spec_from_file_location(
-            "studio_soft_inpainting", source)
+            "studio_soft_inpainting", _SOURCE)
         if spec is None or spec.loader is None:
             raise SoftInpaintingUnavailable(
                 "Soft Inpainting could not be loaded.")
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        # `exec` keeps a `__builtins__` that is already there, so only this
+        # module's imports are affected.
+        module.__dict__["__builtins__"] = {
+            **builtins.__dict__, "__import__": _import_without_gradio}
+        try:
+            spec.loader.exec_module(module)
+        except Exception as error:
+            raise SoftInpaintingUnavailable(
+                f"Soft Inpainting could not be loaded: "
+                f"{type(error).__name__}: {error}") from error
         _MODULE = module
     return _MODULE
 
 
-class SoftInpaintingUnavailable(RuntimeError):
+class SoftInpaintingUnavailable(HeadlessError):
     """The engine's module is missing or will not import.
 
     Named rather than swallowed. An owner who switched the feature on and got
     ordinary hard-edged inpainting back, silently, would have no way to tell
     that from the feature simply not working -- and that is the exact defect
     class this work package exists to remove.
+
+    A `HeadlessError`, so the job reports this message. Anything else reaches
+    the owner as its class name only (`studio_generation.py`'s catch-all),
+    which is how a tester saw just "ModuleNotFoundError" (SI-G).
     """
+
+    CODE = "SOFT_INPAINTING_UNAVAILABLE"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(self.CODE, message)
 
 
 class SoftInpaintingBridge:

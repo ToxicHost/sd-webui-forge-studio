@@ -160,9 +160,11 @@ class _NoGradio(types.ModuleType):
     def __getattr__(self, attribute: str) -> Any:
         if attribute.startswith("__"):
             raise AttributeError(attribute)
+        # Shared with Soft Inpainting (`soft_inpainting_bridge`, SI-G), so the
+        # message names no single script.
         raise AttributeError(
-            f"gradio.{attribute}: Studio runs without Gradio. This is Neo's ControlNet "
-            "panel code, which Studio never builds.")
+            f"gradio.{attribute}: Studio runs without Gradio. Only Neo's panel code "
+            "uses it, and Studio never builds a panel.")
 
 
 _NO_GRADIO = _NoGradio("gradio", "Studio's placeholder: Studio runs without Gradio.")
