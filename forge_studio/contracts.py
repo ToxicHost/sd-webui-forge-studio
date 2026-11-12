@@ -365,6 +365,11 @@ class GenerationRequest(Contract):
     #: by the SERVER at assembly like the two above. False (the default) loads
     #: ESRGAN-family upscalers in fp32, as Neo does unless told otherwise.
     upscaler_half_precision_requested: bool = False
+    #: AC1. The owner's "ADetailer: match colors" setting, snapshotted by
+    #: the SERVER at assembly like the three above. True (the default) matches
+    #: each Auto Detail pass's colours to the crop it started from, so the
+    #: repainted box does not stand out; False leaves the pass as sampled.
+    auto_detail_color_match_requested: bool = True
     #: The wildcard resolution, snapshotted by the SERVER at assembly.
     #:
     #: On the request rather than beside it because every consumer that needs

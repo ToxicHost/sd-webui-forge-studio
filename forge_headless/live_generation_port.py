@@ -2610,13 +2610,22 @@ class StudioLiveGenerationPort:
             return DetectionResult(bboxes=[[float(v) for v in box]], masks=[mask],
                                    confidences=[1.0], image_size=image.size), note
 
+        # AC1. The owner's "ADetailer: match colors" setting, as the server
+        # snapshotted it into this job. False for a request without the field.
+        match_color = bool(getattr(request, "auto_detail_color_match_requested", False))
+        passes = [0]
+
+        def detail(image: object, mask: object, slot: object) -> object:
+            passes[0] += 1
+            return self._detail_pass(
+                request, processing, image, mask, slot, match_color=match_color
+            )
+
         detailed, outcomes = run_auto_detail(
             images,
             slots,
             detect=detect,
-            detail=lambda image, mask, slot: self._detail_pass(
-                request, processing, image, mask, slot
-            ),
+            detail=detail,
             on_slot_start=on_slot_start,
             cancelled=cancelled,
             keep_region=_inpaint_region_filter(request, images[0].size),
@@ -2625,6 +2634,13 @@ class StudioLiveGenerationPort:
         # In place, so `_publish` reads the detailed image without knowing a
         # detector ever ran.
         processed.images = detailed  # type: ignore[attr-defined]
+        if match_color and passes[0]:
+            # Said in the picture's own parameters, and only when a pass ran.
+            infotexts = list(getattr(processed, "infotexts", []) or [])
+            if infotexts:
+                processed.infotexts = [  # type: ignore[attr-defined]
+                    _with_setting(str(infotexts[0]), "ADetailer color match", "on")
+                ] + infotexts[1:]
         return outcomes
 
     def _img2img_hires(self, request, source, processed, progress) -> None:
@@ -2939,11 +2955,16 @@ class StudioLiveGenerationPort:
         slot: object,
         *,
         results: list | None = None,
+        match_color: bool = False,
     ) -> object:
         """One Neo-compatible inpaint over one mask. Returns the new image.
 
         `results`, when given, receives the pass's Neo result (RG3's region
         passes publish from it).
+
+        `match_color` (AC1, Auto Detail only) runs the pass with Neo's own
+        `img2img_color_correction` in force: the repainted crop's colours are
+        matched to the crop it started from before it is pasted back.
 
         `mask=`, never `image_mask=`: the latter is `init=False` and
         `__post_init__` moves `mask` into it, so naming it directly is a
@@ -3093,7 +3114,21 @@ class StudioLiveGenerationPort:
         # between the two stages, which is what the retention plan targets.
         if telemetry is not None:
             telemetry.stop("prepare_detail")
-        result = process_images_inner(pass_)
+        # AC1. On SDXL a repaint of an existing picture at a low Denoise comes
+        # out darker and more saturated (measured on two checkpoints with a
+        # neutral VAE: Evidence/vae-crystal-2026-11-11), and Auto Detail's box
+        # gets one more such pass than the picture around it: a rectangle.
+        # Neo already has the cure, `opts.img2img_color_correction`
+        # (`processing.py` 1799-1850 and 1095-1100): the decoded crop's LAB
+        # histograms are matched to the crop it started from, before the
+        # overlay. This call skips `process_images`, so `override_settings`
+        # cannot carry it; the job's option scope can, for this pass only.
+        import contextlib
+
+        from .job_options import also
+
+        with (also(img2img_color_correction=True) if match_color else contextlib.nullcontext()):
+            result = process_images_inner(pass_)
         if results is not None:
             results.append(result)
         images = list(getattr(result, "images", []) or [])

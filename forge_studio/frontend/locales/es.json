@@ -1078,6 +1078,8 @@
   "settings.heatmap.where.default": "Carpeta de datos propia de Studio",
   "settings.generation.clearSession": "Vaciar sesión",
   "settings.generation.clearSession.tooltip": "Vacía el historial de sesión y elimina sus vistas previas temporales. Los archivos de salida guardados nunca se eliminan.",
+  "settings.generation.adColorMatch": "ADetailer: igualar colores",
+  "settings.generation.adColorMatch.description": "Después de que ADetailer repinta una cara o una mano, sus colores y su brillo se igualan a lo que había, para que la zona repintada no destaque. El nuevo detalle se conserva. Activado por defecto.",
   "settings.generation.livePreview": "Vista previa en directo",
   "settings.generation.livePreviewQuality": "Calidad de la vista previa en directo",
   "settings.generation.livePreviewQuality.auto": "Automática (recomendada)",

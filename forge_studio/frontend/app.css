@@ -1031,10 +1031,16 @@ body {
 .prompt-neg::placeholder { color: var(--text-4); }
 
 /* ── LoRA Stack ────────────────────────────────────────── */
-.lora-stack-box { padding: 6px 8px 8px; }
+/* LB1: the list resizes the way the prompt boxes do -- the browser's own
+   corner grip, up and down only, no maximum, and a height that lasts until
+   the page reloads. Until the owner drags it the list is as tall as its rows,
+   as before. The box's right and bottom padding moved INTO the list, so the
+   grip and the scrollbar sit in that margin and never on a row's remove
+   button. */
+.lora-stack-box { padding: 6px 0 0 8px; }
 .lora-stack-header {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; padding: 2px 2px 6px;
+  gap: 8px; padding: 2px 10px 6px 2px; flex-shrink: 0;
 }
 .lora-stack-label {
   font-size: 10px; font-weight: 600; letter-spacing: 0.8px;
@@ -1068,7 +1074,14 @@ body {
 }
 .lora-stack-add-btn { color: var(--text-2); }
 
-.lora-stack-rows { display: flex; flex-direction: column; gap: 3px; }
+.lora-stack-rows {
+  display: flex; flex-direction: column; gap: 3px;
+  resize: vertical; overflow-y: auto; min-height: 38px;
+  padding: 0 8px 8px 0;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+/* A list shorter than its rows scrolls; it never squashes them. */
+.lora-stack-row, .lora-stack-empty { flex-shrink: 0; }
 .lora-stack-empty {
   padding: 8px 4px; font-size: 11px; color: var(--text-4);
   text-align: center; font-style: italic;
@@ -1118,7 +1131,7 @@ body {
   transition: color 0.12s;
 }
 .lora-stack-remove:hover { color: var(--red); }
-.lora-stack-preview { display: none; margin-top: 6px; }
+.lora-stack-preview { display: none; margin: 0 8px 8px 0; flex-shrink: 0; }
 .lora-stack-preview.open { display: block; }
 .lora-stack-preview-text {
   display: block;
@@ -3495,7 +3508,12 @@ input[type="color"]:focus-visible { outline: 2px solid var(--accent); outline-of
 [data-layout="deck"] .deck-zone > [data-block] { margin-bottom: 0; min-width: 0; flex: 1 1 160px; }
 [data-layout="deck"] .deck-zone > [data-block="prompt"]   { flex: 2.4; }
 [data-layout="deck"] .deck-zone > [data-block="negative"] { flex: 1.4; }
-[data-layout="deck"] .deck-zone > [data-block="lora"]     { flex: 1.2; max-height: 170px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+[data-layout="deck"] .deck-zone > [data-block="lora"]     { flex: 1.2; max-height: 170px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; display: flex; flex-direction: column; }
+/* LB1: in the deck the 170px cap is only the DEFAULT. As a column the box
+   keeps its header and scrolls the list inside the cap; once the owner has
+   dragged the list (the browser writes an inline height on it) the list's
+   height is theirs and the cap lifts, as for the prompt boxes beside it. */
+[data-layout="deck"] .deck-zone > [data-block="lora"]:has(> .lora-stack-rows[style*="height"]) { max-height: none; }
 [data-layout="deck"] .deck-zone > [data-block="generate"] {
   flex: 0 0 230px;
   display: flex; flex-direction: column; justify-content: center;

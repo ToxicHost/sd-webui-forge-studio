@@ -199,6 +199,20 @@ function add(loraOrName, weight) {
 
   state.push({ name: name, weight: w, enabled: true, triggers: true });
   _commit();
+  // LB1: the list can be shorter than its rows now, and a LoRA added below
+  // the fold would look like nothing happened. Show the new row.
+  if (rowsEl) rowsEl.scrollTop = rowsEl.scrollHeight;
+}
+
+// LB1: bring a row into view by moving the LIST's own scroll. The list is
+// the scroller since it became resizable; scrollIntoView would move the
+// panel around it as well.
+function _revealRow(row) {
+  if (!rowsEl || !row) return;
+  var box = rowsEl.getBoundingClientRect();
+  var r = row.getBoundingClientRect();
+  if (r.top < box.top) rowsEl.scrollTop += r.top - box.top;
+  else if (r.bottom > box.bottom) rowsEl.scrollTop += r.bottom - box.bottom;
 }
 
 function _flashRow(idx) {
@@ -206,15 +220,7 @@ function _flashRow(idx) {
   var row = rowsEl.querySelector('.lora-stack-row[data-idx="' + idx + '"]');
   if (!row) return;
   row.classList.add("flash");
-  // Smooth-scroll only when off-screen — avoid jumping the panel
-  // around for a row already in view.
-  if (typeof row.scrollIntoView === "function") {
-    var box = container && container.getBoundingClientRect();
-    var r = row.getBoundingClientRect();
-    if (box && (r.top < box.top || r.bottom > box.bottom)) {
-      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
-  }
+  _revealRow(row);
   setTimeout(function () { row.classList.remove("flash"); }, 700);
 }
 
@@ -363,6 +369,8 @@ function _renderPreview() {
 
 function render() {
   if (!rowsEl) return;
+  // LB1: every change rebuilds the rows; a scrolled list stays where it was.
+  var keepScroll = rowsEl.scrollTop;
   rowsEl.innerHTML = "";
 
   if (state.length === 0) {
@@ -377,6 +385,7 @@ function render() {
     }
     rowsEl.appendChild(frag);
   }
+  if (keepScroll) rowsEl.scrollTop = keepScroll;
 
   _renderPreview();
 }

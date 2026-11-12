@@ -1078,6 +1078,8 @@
   "settings.heatmap.where.default": "Studios eigener Datenordner",
   "settings.generation.clearSession": "Sitzung leeren",
   "settings.generation.clearSession.tooltip": "Leert den Sitzungsverlauf und löscht die temporären Vorschau-Dateien. Gespeicherte Ausgabedateien werden niemals gelöscht.",
+  "settings.generation.adColorMatch": "ADetailer: Farben angleichen",
+  "settings.generation.adColorMatch.description": "Nachdem ADetailer ein Gesicht oder eine Hand neu gemalt hat, werden Farben und Helligkeit an das angeglichen, was vorher dort war, damit der neu gemalte Bereich nicht auffällt. Die neuen Details bleiben erhalten. Standardmäßig an.",
   "settings.generation.livePreview": "Live-Vorschau",
   "settings.generation.livePreviewQuality": "Qualität der Live-Vorschau",
   "settings.generation.livePreviewQuality.auto": "Auto (empfohlen)",

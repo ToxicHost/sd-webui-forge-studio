@@ -67,6 +67,23 @@ def job_scope(**overrides: Any) -> Iterator[dict[str, Any]]:
         _DECISIONS.reset(decision_token)
 
 
+@contextlib.contextmanager
+def also(**more: Any) -> Iterator[None]:
+    """Add these overrides to whatever the job already has, for one block.
+
+    AC1. `job_scope` replaces the set, which is right for a job and wrong for
+    one pass inside it: Auto Detail's pass must read
+    `img2img_color_correction` as on while the job's own answers (GPU tile
+    compositing, clip skip, emphasis) stay in force. The decision record is
+    left alone. Put back by token, like `job_scope`.
+    """
+    token = _OPTIONS.set({**_OPTIONS.get(), **more})
+    try:
+        yield
+    finally:
+        _OPTIONS.reset(token)
+
+
 def option(name: str, default: Any = None) -> Any:
     """This job's override for `name`, or `default` when it did not set one."""
     return _OPTIONS.get().get(name, default)
@@ -100,6 +117,7 @@ def recorded() -> dict[str, Any]:
 
 
 __all__ = (
+    "also",
     "has_option",
     "job_scope",
     "option",

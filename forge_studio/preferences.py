@@ -97,6 +97,10 @@ PREFERENCE_KEYS = frozenset({
     # the owner turns it off. (Where its files live is NOT a preference: it
     # changes only with the files, `attention_store.write_location`.)
     "attention_capture",
+    # AC1. Settings > Generation > "ADetailer: match colors": on unless the
+    # owner turns it off. Neo's `img2img_color_correction`, for Auto Detail's
+    # passes only, applied per job.
+    "auto_detail_color_match",
     "auto_unload",
     "component_memory",
     "education",
@@ -153,6 +157,7 @@ MAX_DOCUMENT_BYTES = 256 * 1024
 #: sites for the rest. Enumerations are only pinned where the source pins them.
 PREFERENCE_SHAPES: dict[str, Any] = {
     "attention_capture": bool,
+    "auto_detail_color_match": bool,
     "auto_unload": dict,
     "component_memory": dict,
     "education": dict,

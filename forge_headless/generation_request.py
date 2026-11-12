@@ -519,6 +519,10 @@ class FirstImageRequest:
     #: `live_generation_port.generate`, which scopes it as Neo's
     #: `prefer_fp16_upscalers` for this job only.
     upscaler_half_precision_requested: bool = False
+    #: AC1. Whether Auto Detail's passes match the colours they found (the
+    #: owner's "ADetailer: match colors" setting, snapshotted server-side).
+    #: Consumed by `live_generation_port._auto_detail`.
+    auto_detail_color_match_requested: bool = True
     #: BM1. How many pictures this job makes: Batch count x Batch size in
     #: Batch mode, 1 otherwise. `batch_size` above stays 1 on the JOB: the
     #: port sets it per sampling pass, from `pass_size`.

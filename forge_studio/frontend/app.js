@@ -6044,12 +6044,19 @@ function handleProgress(data) {
 // every real result URL is `/studio/file?path=<opaque handle>` and the test
 // never matched — the server branch was unreachable for every image it was
 // written for, and the fallback ran every time.
+//
+// SC1. It happened again. Since NM2 (0.9.15) a result with a name is
+// addressed `/studio/file/<name>?path=<handle>` (`API.file`), and this asked
+// for the path `/studio/file` exactly: every named result fell through to the
+// browser's own decode, silently. On a calibrated Firefox that bakes the
+// display's profile into the pixels on every Send to Canvas ("greener and
+// greener"). Both shapes are a result; the server selects by the handle alone.
 function _studioResultHandle(src) {
   if (typeof src !== "string" || !src) return "";
   try {
     const url = new URL(src, window.location.origin);
     if (url.origin !== window.location.origin) return "";
-    if (url.pathname !== "/studio/file") return "";
+    if (url.pathname !== "/studio/file" && !url.pathname.startsWith("/studio/file/")) return "";
     return url.searchParams.get("path") || "";
   } catch (_) {
     return "";
@@ -6128,6 +6135,36 @@ async function _loadUploadedImagePixels(dataUrl) {
     body: JSON.stringify({ image_b64: dataUrl }),
   });
   return _parsePixelResponse(resp);
+}
+
+// SC1. The same contract for a picture that is only an address: its bytes are
+// fetched as they are and uploaded for the server's decode. Throws on any
+// failure (a cross-origin address, a 404) so the caller can fall back.
+async function _loadFetchedImagePixels(src) {
+  const reply = await fetch(src);
+  if (!reply.ok) throw new Error("fetch failed: " + reply.status);
+  const blob = await reply.blob();
+  if (!blob.type.startsWith("image/")) throw new Error("not an image: " + (blob.type || "unknown type"));
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("file read failed"));
+    reader.readAsDataURL(blob);
+  });
+  return _loadUploadedImagePixels(dataUrl);
+}
+
+// What kind of thing a source is, for the console: never its contents.
+function _sourceKind(src) {
+  if (typeof src !== "string" || !src) return "an empty source";
+  if (src.startsWith("data:")) return "a data URL";
+  if (src.startsWith("blob:")) return "a blob";
+  try {
+    const url = new URL(src, window.location.origin);
+    return (url.origin === window.location.origin ? "this server's " : "another site's ") + url.pathname;
+  } catch (_) {
+    return "an unreadable address";
+  }
 }
 
 // Shared import path for local image files (Load Image button + canvas
@@ -6279,9 +6316,24 @@ function displayOnCanvas(imgSrc, opts) {
         console.warn("[Studio] Uploaded pixel import failed, falling back to image import:", e.message || e);
         decoded = null;
       }
+    } else if (typeof imgSrc === "string" && imgSrc) {
+      // SC1. Any other address (a blob, another same-origin file): fetch the
+      // bytes and give them the same server decode, before the browser's
+      // decode is considered at all.
+      try {
+        decoded = await _loadFetchedImagePixels(imgSrc);
+      } catch (e) {
+        console.warn("[Studio] Fetched pixel import failed, falling back to image import:", e.message || e);
+        decoded = null;
+      }
     }
 
     if (!decoded) {
+      // SC1. Said out loud: this is the path that changes colours on a
+      // calibrated Firefox, and twice it has been taken for every picture
+      // with nobody the wiser.
+      console.warn("[Studio] displayOnCanvas: using the browser's own image decode for",
+        _sourceKind(imgSrc), "- colours can shift on a colour-managed browser.");
       imgEl = new Image();
       imgEl.src = imgSrc;
       try {
@@ -9359,6 +9411,18 @@ function bindUI() {
   _gpuTileCompositeToggle?.addEventListener("click", () => {
     const on = _gpuTileCompositeToggle?.classList.contains("on") ?? false;
     window.Prefs?.set("gpu_tile_compositing", on);
+  });
+
+  // ===== AUTO DETAIL: MATCH COLOURS (AC1) =====
+  // On unless the owner turns it off. Server-snapshotted at Generate, like the
+  // toggle above: the page stores the preference and sends nothing with a job.
+  const _adColorMatchToggle = document.getElementById("toggleAdColorMatch");
+  if (window.Prefs?.get("auto_detail_color_match", true) !== false) {
+    _adColorMatchToggle?.classList.add("on");
+  }
+  _adColorMatchToggle?.addEventListener("click", () => {
+    const on = _adColorMatchToggle?.classList.contains("on") ?? false;
+    window.Prefs?.set("auto_detail_color_match", on);
   });
 
   // ===== UPSCALER HALF PRECISION (SP1) =====

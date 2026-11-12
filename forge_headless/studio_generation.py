@@ -342,6 +342,8 @@ STUDIO_REQUEST_FIELDS = (
     # SP1. The upscaler half-precision setting: it reaches the port's option
     # scope, which the ESRGAN loader reads per upscale.
     "upscaler_half_precision_requested",
+    # AC1. "ADetailer: match colors": the port reads it in `_auto_detail`.
+    "auto_detail_color_match_requested",
     # BM1. Batch mode's count and size, carried as ONE group: they become the
     # job's `output_count` and its per-picture prompts and sizes.
     "batch",
@@ -1016,6 +1018,8 @@ def translate_request(
             getattr(request, "attention_capture_requested", True)),
         upscaler_half_precision_requested=bool(
             getattr(request, "upscaler_half_precision_requested", False)),
+        auto_detail_color_match_requested=bool(
+            getattr(request, "auto_detail_color_match_requested", True)),
         **_handoff_fields(getattr(request, "handoff", None)),
         **_refiner_fields(request),
     )

@@ -3,6 +3,38 @@
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. Studio is in public beta on Windows/NVIDIA.
 
+## 0.9.18: Send to Canvas colour fix, ADetailer colour match — 2026-11-11
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **Send to Canvas no longer shifts a picture's colours.** Since 0.9.15 a result
+  sent or dragged to the Canvas went through the browser's own image decoding,
+  not Studio's exact copy. On a colour-managed browser with a calibrated display,
+  Firefox most of all, that changed the colours a little on every send, so a
+  picture that went back and forth turned greener or duller each time. Results
+  take the exact path again. A picture that has already drifted stays that way:
+  send the original from the Gallery again. If colours ever shift on a send
+  again, the browser console now has a line that says "using the browser's own
+  image decode"; please include it in a report.
+- **ADetailer: match colors** (Settings > Generation, on by default). On SDXL a
+  face that ADetailer repainted could come back darker and more saturated than
+  the picture around it, a visible box, strongest with a VAE that changes
+  colours itself. After each ADetailer pass the repainted area's colours and
+  brightness are now matched to what was there before it is pasted back; the
+  new detail is kept. Checked on a real GPU on an SDXL checkpoint with two VAEs:
+  the box went from 4.4 levels darker to within half a level. It is not exact
+  (saturation ends 2 to 5% under what was there), and it changes every ADetailer
+  result a little, so it can be turned off. A picture made with it says
+  `ADetailer color match: on` in its parameters.
+  - What causes the box, measured: on SDXL any repaint of an existing picture at
+    a low Denoise comes out a little darker and more saturated with samplers
+    such as Euler and Euler a. DPM++ 2M SDE nearly avoids it, and the Karras
+    scheduler halves it. Hires does this to the whole picture once and ADetailer
+    to the face once more.
+- **The LoRA list in the Generate panel can be resized** by its corner, like the
+  prompt boxes.
+
 ## 0.9.17: A LoRA on one region, colour fix, freer Stage poses — 2026-11-11
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

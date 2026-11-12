@@ -1078,6 +1078,8 @@
   "settings.heatmap.where.default": "Dossier de données de Studio",
   "settings.generation.clearSession": "Vider la session",
   "settings.generation.clearSession.tooltip": "Vide l'historique de session et supprime ses aperçus temporaires. Les fichiers de sortie enregistrés ne sont jamais supprimés.",
+  "settings.generation.adColorMatch": "ADetailer : harmoniser les couleurs",
+  "settings.generation.adColorMatch.description": "Après qu'ADetailer a repeint un visage ou une main, ses couleurs et sa luminosité sont alignées sur ce qu'il y avait, pour que la zone repeinte ne ressorte pas. Le nouveau détail est conservé. Activé par défaut.",
   "settings.generation.livePreview": "Aperçu en direct",
   "settings.generation.livePreviewQuality": "Qualité de l'aperçu en direct",
   "settings.generation.livePreviewQuality.auto": "Auto (recommandé)",

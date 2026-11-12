@@ -2150,10 +2150,16 @@ class StudioPresentation:
         # changes the upscaler's output (by ~0.01/255 for Remacri, measured in
         # Evidence/speed-rnd-2026-10-22), so it is never a silent default.
         half = document.get("upscaler_half_precision")
+        # AC1. Auto Detail matches the colours it found, ON unless the owner
+        # turned it off: without it an SDXL face box comes back darker and
+        # more saturated than the picture around it (measured,
+        # Evidence/vae-crystal-2026-11-11).
+        match = document.get("auto_detail_color_match")
         return {
             "gpu_tile_compositing_requested": requested,
             "attention_capture_requested": True if capture is None else bool(capture),
             "upscaler_half_precision_requested": bool(half) if half is not None else False,
+            "auto_detail_color_match_requested": True if match is None else bool(match),
         }
 
     #: Decorrelates the negative prompt's draw from the positive one. Without

@@ -1078,6 +1078,8 @@
   "settings.heatmap.where.default": "Studio's own data folder",
   "settings.generation.clearSession": "Clear session",
   "settings.generation.clearSession.tooltip": "Empty the session history and delete its temporary scratch previews. Saved output files are never deleted.",
+  "settings.generation.adColorMatch": "ADetailer: match colors",
+  "settings.generation.adColorMatch.description": "After ADetailer repaints a face or hand, its colors and brightness are matched to what was there, so the repainted box doesn't stand out. The new detail is kept. On by default.",
   "settings.generation.livePreview": "Live preview",
   "settings.generation.livePreviewQuality": "Live preview quality",
   "settings.generation.livePreviewQuality.auto": "Auto (recommended)",
