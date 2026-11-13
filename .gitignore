@@ -28,6 +28,8 @@ __pycache__
 /styles.csv.bak
 /sysinfo*.json
 /tmp
+# U4: an update keeps the owner's replaced files here.
+/update-backups/
 /ui-config.json
 /user.css
 /venv

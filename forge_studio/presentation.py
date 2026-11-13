@@ -5117,8 +5117,14 @@ class _StudioRequestHandler(BaseHTTPRequestHandler):
                 if not self._is_allowed_origin_strict():
                     self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "forbidden"})
                     return
-                self._read_json_optional()
-                self._send_json(HTTPStatus.OK, self.server.updater.apply())
+                # U4. The owner's answer when the update changes files they
+                # edited: "replace" or "keep". Anything else is no answer.
+                payload = self._read_json_optional()
+                answer = payload.get("edited") if isinstance(payload, dict) else None
+                if answer in ("replace", "keep"):
+                    self._send_json(HTTPStatus.OK, self.server.updater.apply(edited=answer))
+                else:
+                    self._send_json(HTTPStatus.OK, self.server.updater.apply())
                 return
             # P11. Export-time watermark stamp, and the folder button.
             if path == "/studio/export_watermark":

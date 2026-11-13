@@ -17,8 +17,16 @@ command, run for the owner:
     restart, because the running server is still the old code.
 
 It refuses, with a reason the page shows, when the copy is not a Git checkout,
-tracks no remote branch, has its own commits (diverged), or has edited files.
-A developer tree is one of those, so it is never touched.
+tracks no remote branch, or has its own commits (diverged). A developer tree is
+one of those, so it is never touched.
+
+U4. Edited files no longer refuse an update. One the update does not change
+is kept, as Git's fast-forward keeps it. One the update DOES change is named
+to the page, which asks the owner: replace it (their copy is backed up in
+`update-backups/` first) or keep theirs (the update then can't promise the two
+work together). Owner's decision, 2026-11-13; the Extension overwrites without
+asking. Every check and update is logged. Review:
+Evidence/source-review/U4-edited-files-ask.md
 
 U3. Releases moved from `release/tester-alpha-prep` to `main`. Installed copies
 fetch their branch by name, so a copy that follows the old one is pointed at
@@ -32,12 +40,21 @@ Evidence/source-review/U3-move-to-main.md
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
+
+logger = logging.getLogger("studio.update")
+
+#: U4. Where a replaced file's edited copy goes, inside the Studio folder.
+BACKUP_FOLDER = "update-backups"
+#: The page's answers when the update changes a file the owner edited.
+REPLACE, KEEP = "replace", "keep"
 
 _FETCH_TIMEOUT = 120
 _LOCAL_TIMEOUT = 30
@@ -56,7 +73,10 @@ class UpdateService:
 
     # -- git --------------------------------------------------------------------
 
-    def _git(self, *args: str, timeout: int = _LOCAL_TIMEOUT) -> tuple[int, str, str]:
+    def _git(self, *args: str, timeout: int = _LOCAL_TIMEOUT, raw: bool = False) -> tuple[int, str, str]:
+        """`raw` keeps stdout exactly as Git wrote it: a porcelain line starts
+        with a meaningful space (" M path"), which stripping would eat."""
+
         git = shutil.which("git")
         if git is None:
             raise _Refusal("Git isn't installed, so Studio can't update itself. "
@@ -79,7 +99,8 @@ class UpdateService:
             raise _Refusal("Git took too long to answer.", offline=args[:1] == ("fetch",)) from None
         except OSError as error:
             raise _Refusal(f"Git could not be run: {error.strerror or error}") from None
-        return done.returncode, (done.stdout or "").strip(), (done.stderr or "").strip()
+        out = done.stdout or ""
+        return done.returncode, (out if raw else out.strip()), (done.stderr or "").strip()
 
     def _tracked(self) -> tuple[str, str, str]:
         """`(remote, branch, upstream)` for the checked-out branch, or a refusal."""
@@ -167,6 +188,89 @@ class UpdateService:
         ahead, behind = (int(n) for n in counts.split()) if code == 0 and counts else (0, 0)
         return {"head": head, "remote": remote_head, "ahead": ahead, "behind": behind}
 
+    # -- U4: edited files ---------------------------------------------------------
+
+    def _edited(self) -> list[str]:
+        """Tracked files that differ from HEAD (modified, deleted or staged),
+        as Git names them. Untracked files are not Studio's."""
+
+        code, out, err = self._git("status", "--porcelain=v1", "-z", "--untracked-files=no", raw=True)
+        if code != 0:
+            raise _Refusal("Git couldn't list Studio's files.", detail=err)
+        paths: list[str] = []
+        fields = out.split("\0")
+        index = 0
+        while index < len(fields):
+            entry = fields[index]
+            index += 1
+            if len(entry) < 4:
+                continue
+            paths.append(entry[3:])
+            if entry[0] in "RC":
+                # A rename's source follows as its own field.
+                paths.append(fields[index])
+                index += 1
+        return sorted(set(path for path in paths if path))
+
+    def _changed_by(self, upstream: str) -> set[str]:
+        """Every path the update changes, a rename's both ends included."""
+
+        code, out, err = self._git("diff", "--name-only", "--no-renames", "-z", "HEAD", upstream,
+                                   raw=True)
+        if code != 0:
+            raise _Refusal("Git couldn't compare this copy with the update.", detail=err)
+        return {path for path in out.split("\0") if path}
+
+    def _clashes(self, upstream: str) -> list[str]:
+        """Edited files the update would overwrite. Edits elsewhere survive a
+        fast-forward untouched, so they are nobody's concern."""
+
+        changed = self._changed_by(upstream)
+        return [path for path in self._edited() if path in changed]
+
+    def _file(self, path: str) -> Path:
+        return self._root / Path(*path.split("/"))
+
+    def _back_up(self, paths: list[str]) -> tuple[str, list[str]]:
+        """Copy the owner's versions into `update-backups/<date_time>/`.
+        Returns that folder, relative to the Studio folder, and the files
+        copied. A file the owner deleted has nothing to keep."""
+
+        stamp = time.strftime("%Y-%m-%d_%H%M%S")
+        folder = self._root / BACKUP_FOLDER / stamp
+        suffix = 1
+        while folder.exists():
+            suffix += 1
+            folder = self._root / BACKUP_FOLDER / f"{stamp}-{suffix}"
+        copied: list[str] = []
+        for path in paths:
+            source = self._file(path)
+            if source.is_file():
+                target = folder / Path(*path.split("/"))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                copied.append(path)
+        return (folder.relative_to(self._root).as_posix() if copied else ""), copied
+
+    def _hold(self, paths: list[str]) -> dict[str, bytes | None]:
+        """The owner's bytes for each file; None where they deleted it."""
+
+        held: dict[str, bytes | None] = {}
+        for path in paths:
+            source = self._file(path)
+            held[path] = source.read_bytes() if source.is_file() else None
+        return held
+
+    def _put_back(self, held: dict[str, bytes | None]) -> None:
+        for path, data in held.items():
+            target = self._file(path)
+            if data is None:
+                if target.is_file():
+                    target.unlink()
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+
     # -- routes -----------------------------------------------------------------
 
     def check(self) -> dict[str, Any]:
@@ -177,15 +281,22 @@ class UpdateService:
             self._fetch(remote, branch)
             state = self._status(upstream)
         except _Refusal as refusal:
+            logger.warning("UPDATE check refused: %s%s", refusal.message,
+                           f" ({refusal.detail})" if refusal.detail else "")
             return refusal.reply()
         current = state["head"][:8]
         if state["behind"] == 0:
+            logger.info("UPDATE check: up to date at %s (%s)", current, branch)
             return {"update_available": False, "current_commit": current}
         if state["ahead"]:
+            logger.warning("UPDATE check: %s has %d commit(s) of its own; not updating",
+                           current, state["ahead"])
             return {"update_available": False, "current_commit": current,
                     "error": "This copy has its own commits, so it can't update itself. "
                              "Update it with Git directly."}
         _, log, _ = self._git("log", "--format=%h %s", "-20", f"HEAD..{upstream}")
+        logger.info("UPDATE check: %d new commit(s), %s -> %s (%s)", state["behind"],
+                    current, state["remote"][:8], branch)
         return {"update_available": True, "current_commit": current,
                 "remote_commit": state["remote"][:8], "commits_behind": state["behind"],
                 "changelog": [line for line in log.splitlines() if line.strip()]}
@@ -196,19 +307,21 @@ class UpdateService:
     def _phase(self, phase: str, pct: int, message: str = "") -> None:
         self._progress = {"phase": phase, "pct": pct, "message": message}
 
-    def apply(self) -> dict[str, Any]:
+    def apply(self, edited: str | None = None) -> dict[str, Any]:
         """`/studio/api/update`: fetch, then fast-forward. Synchronous, as the
-        page expects; it polls `status()` meanwhile."""
+        page expects; it polls `status()` meanwhile.
+
+        `edited` is the owner's answer when the update changes files they
+        edited: "replace" (back theirs up, take the release's) or "keep". With
+        no answer, such an update stops before touching anything and names
+        the files, and the page asks.
+        """
 
         if not self._lock.acquire(blocking=False):
             return {"ok": False, "error": "An update is already running."}
         try:
             self._phase("checking", 5, "Checking update")
             remote, branch, upstream = self._follow_release_branch(*self._tracked())
-            code, edited, _ = self._git("status", "--porcelain", "--untracked-files=no")
-            if code != 0 or edited:
-                raise _Refusal("Some of Studio's own files have been edited, so the update "
-                               "would overwrite them. Update it with Git directly.")
             self._phase("downloading", 10, "Downloading")
             self._fetch(remote, branch)
             state = self._status(upstream)
@@ -218,21 +331,66 @@ class UpdateService:
             if state["ahead"]:
                 raise _Refusal("This copy has its own commits, so it can't update itself. "
                                "Update it with Git directly.")
-            self._phase("copying", 60, "Copying files")
-            code, _, err = self._git("merge", "--ff-only", "--quiet", upstream, timeout=_FETCH_TIMEOUT)
-            if code != 0:
-                raise _Refusal("Git could not apply the update.", detail=err)
-            self._phase("finishing", 95, "Finishing")
-            _, head, _ = self._git("rev-parse", "HEAD")
-            self._phase("restart", 100, "Restart required")
-            return {"ok": True, "restart_required": True, "new_commit": head[:8] or "latest",
-                    "message": "Updated. Close Studio and run Start-Studio.bat again to "
-                               "finish; refresh the browser afterwards."}
+            clashes = self._clashes(upstream)
+            if clashes and edited not in (REPLACE, KEEP):
+                self._phase("idle", 0)
+                logger.info("UPDATE waiting for the owner: the update changes edited file(s) %s",
+                            ", ".join(clashes))
+                return {"ok": False, "needs_choice": True, "files": clashes,
+                        "error": "This update changes files you edited: " + ", ".join(clashes)}
+            return self._fast_forward(upstream, state, clashes, edited)
         except _Refusal as refusal:
             self._phase("error", 0, refusal.message)
+            logger.warning("UPDATE refused: %s%s", refusal.message,
+                           f" ({refusal.detail})" if refusal.detail else "")
             return {"ok": False, "error": refusal.message + (f" ({refusal.detail})" if refusal.detail else "")}
         finally:
             self._lock.release()
+
+    def _fast_forward(self, upstream: str, state: dict[str, Any], clashes: list[str],
+                      edited: str | None) -> dict[str, Any]:
+        """Restore the clashing files, fast-forward, then keep or back up the
+        owner's versions. Their bytes are held throughout, so an update that
+        fails puts them back exactly as they were."""
+
+        self._phase("copying", 60, "Copying files")
+        held = self._hold(clashes)
+        backup, backed_up = "", []
+        if clashes and edited == REPLACE:
+            backup, backed_up = self._back_up(clashes)
+        if clashes:
+            code, _, err = self._git("checkout", "HEAD", "--", *clashes)
+            if code != 0:
+                self._put_back(held)
+                raise _Refusal("Git couldn't set your edited files aside.", detail=err)
+        code, _, err = self._git("merge", "--ff-only", "--quiet", upstream, timeout=_FETCH_TIMEOUT)
+        if code != 0:
+            self._put_back(held)
+            raise _Refusal("Git could not apply the update.", detail=err)
+        kept: list[str] = []
+        if clashes and edited == KEEP:
+            self._put_back(held)
+            kept = clashes
+        self._phase("finishing", 95, "Finishing")
+        _, head, _ = self._git("rev-parse", "HEAD")
+        self._phase("restart", 100, "Restart required")
+        logger.info("UPDATE applied: %s -> %s (%d commit(s))%s%s", state["head"][:8], head[:8],
+                    state["behind"],
+                    f"; backed up {', '.join(backed_up)} to {backup}" if backed_up else "",
+                    f"; kept the owner's {', '.join(kept)}" if kept else "")
+        reply: dict[str, Any] = {
+            "ok": True, "restart_required": True, "new_commit": head[:8] or "latest",
+            "message": "Updated. Close Studio and run Start-Studio.bat again to "
+                       "finish; refresh the browser afterwards."}
+        if backed_up:
+            reply["backed_up"] = backed_up
+            reply["backup_folder"] = backup
+        if clashes and edited == REPLACE:
+            # Files the owner deleted: restored, with nothing to back up.
+            reply["replaced"] = clashes
+        if kept:
+            reply["kept"] = kept
+        return reply
 
 
 class _Refusal(Exception):

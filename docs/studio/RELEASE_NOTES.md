@@ -3,6 +3,26 @@
 Studio's version is shown in Settings > About. Run `git rev-parse HEAD` for the
 exact installed revision. Studio is in public beta on Windows/NVIDIA.
 
+## 0.9.20: Updates no longer stop over files you changed — 2026-11-13
+
+Update from Settings > About > Check for Updates, or with `git pull --ff-only`,
+then close Studio and run Start-Studio.bat again. Nothing new is installed.
+
+- **An update no longer stops because you changed one of Studio's files.**
+  Before, adding a launch option to Start-Studio.bat (for example) made every
+  update stop with "Some of Studio's own files have been edited". Now:
+  - A file you changed that the update doesn't touch is simply kept.
+  - If the update changes a file you changed too, Studio names it and asks.
+    **Replace** puts in the new version and first saves your copy in the
+    `update-backups` folder inside Studio's folder. **Keep mine** keeps yours;
+    Studio then can't promise your version and the update work together.
+  - Every update check and its result is now written to `studio.log`.
+- **If that message stops you from getting this update**, the old updater is
+  still the one running, so it needs one step by hand. In Studio's folder, put
+  back the file you changed (usually `Start-Studio.bat`; save a copy first if
+  you want your change), then check for updates again. With Git:
+  `git checkout -- Start-Studio.bat`. From 0.9.20 on, Studio asks instead.
+
 ## 0.9.19: Soft Inpainting fix — 2026-11-12
 
 Update from Settings > About > Check for Updates, or with `git pull --ff-only`,

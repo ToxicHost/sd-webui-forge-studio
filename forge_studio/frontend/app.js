@@ -96,7 +96,9 @@ const API = {
 
   // Auto-update
   checkUpdate:   ()       => API.get("/studio/api/check-update"),
-  applyUpdate:   ()       => API.post("/studio/api/update", {}),
+  // U4: `edited` is the owner's answer ("replace" | "keep") when the update
+  // changes files they edited.
+  applyUpdate:   (edited) => API.post("/studio/api/update", edited ? { edited } : {}),
   updateStatus:  ()       => API.get("/studio/api/update-status"),
 
   // Live Painting
@@ -3092,7 +3094,7 @@ const UpdateBanner = {
     document.body.appendChild(overlay);
   },
 
-  async _applyUpdate() {
+  async _applyUpdate(edited) {
     // Render an in-place progress dialog instead of the old single
     // "Updating..." toast. The backend POST /studio/api/update is
     // synchronous and can take 30–120s; while it runs, we poll
@@ -3132,8 +3134,16 @@ const UpdateBanner = {
     poll();
 
     try {
-      const res = await API.applyUpdate();
+      const res = await API.applyUpdate(edited);
       stopPolling = true;
+      // U4. The update changes files the owner edited, and nothing has been
+      // touched yet: ask, then run it again with the answer.
+      if (res && res.needs_choice) {
+        dlg.overlay.remove();
+        const answer = await this._askEdited(res.files || []);
+        if (answer) this._applyUpdate(answer);
+        return;
+      }
       if (!res.ok) {
         renderPhase("error", 0, res.error || "Update failed");
         showToast(res.error || "Update failed", "error");
@@ -3153,6 +3163,22 @@ const UpdateBanner = {
         </span>
         <button class="update-banner-dismiss" title="Dismiss">&times;</button>
       `;
+      // U4. Say what happened to the owner's edited files.
+      const notes = [];
+      if (res.backed_up && res.backed_up.length) {
+        notes.push(_i18n("update.edited.backedUp", "Your copies of {files} were saved in the {folder} folder inside Studio's folder.",
+          { files: res.backed_up.join(", "), folder: res.backup_folder || "update-backups" }));
+      }
+      if (res.kept && res.kept.length) {
+        notes.push(_i18n("update.edited.keptWarning", "You kept your own {files}. This update also changed it, so Studio can't promise your version and the update work together. If something stops working, look there first.",
+          { files: res.kept.join(", ") }));
+      }
+      if (notes.length) {
+        const note = document.createElement("span");
+        note.className = "update-banner-text update-edited-note";
+        note.textContent = " " + notes.join(" ");
+        banner.querySelector(".update-banner-text").after(note);
+      }
       banner.querySelector(".update-banner-dismiss").onclick = () => banner.remove();
       document.body.appendChild(banner);
       this._el = banner;
@@ -3162,6 +3188,42 @@ const UpdateBanner = {
       showToast(I18N.t("toast.updateFailed", "Update failed: {error}", {error: e.message}), "error");
       setTimeout(() => dlg.overlay.remove(), 2500);
     }
+  },
+
+  // U4. The update changes files the owner edited (Start-Studio.bat, most
+  // likely). Their choice: take the new version, with their copy saved in
+  // update-backups/ first, or keep theirs. Resolves "replace", "keep" or null.
+  _askEdited(files) {
+    return new Promise(resolve => {
+      const overlay = document.createElement("div");
+      overlay.className = "update-dialog-overlay";
+      overlay.innerHTML = `
+        <div class="update-dialog">
+          <div class="update-dialog-title"></div>
+          <div class="update-dialog-hint update-edited-text"></div>
+          <ul class="update-edited-files"></ul>
+          <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;flex-wrap:wrap;">
+            <button class="update-banner-btn" data-answer="">${_i18n("update.edited.cancel", "Cancel")}</button>
+            <button class="update-banner-btn" data-answer="keep">${_i18n("update.edited.keep", "Keep mine")}</button>
+            <button class="update-banner-btn" data-answer="replace">${_i18n("update.edited.replace", "Replace (back mine up)")}</button>
+          </div>
+        </div>
+      `;
+      overlay.querySelector(".update-dialog-title").textContent =
+        _i18n("update.edited.title", "You changed some of Studio's files");
+      overlay.querySelector(".update-edited-text").textContent =
+        _i18n("update.edited.text", "This update also changes the files below. Replace them with the new version (your copies are saved in the update-backups folder inside Studio's folder first), or keep yours.");
+      const list = overlay.querySelector(".update-edited-files");
+      files.forEach(name => {
+        const item = document.createElement("li");
+        item.textContent = name;
+        list.appendChild(item);
+      });
+      overlay.querySelectorAll("button[data-answer]").forEach(button => {
+        button.onclick = () => { overlay.remove(); resolve(button.dataset.answer || null); };
+      });
+      document.body.appendChild(overlay);
+    });
   },
 
   _showProgressDialog() {
